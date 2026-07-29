@@ -293,6 +293,19 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .jb.no{border-color:var(--bad-line);background:var(--bad-bg)}
 .jb.man{border-color:var(--warn-line);background:var(--warn-bg)}
 .jb.fill{border-color:var(--acc-line);background:var(--acc-bg);margin-top:14px}
+.jb .man-note{margin:6px 0 8px;font-weight:600}
+.jb .w{font-style:normal;font-size:11.5px;font-weight:800;color:var(--accent);
+  background:var(--acc-bg);border:1px solid var(--acc-line);border-radius:5px;padding:0 4px;margin-left:2px}
+.man-more{margin:6px 0 4px}
+.man-more summary{cursor:pointer;font-weight:700;font-size:12.5px;color:var(--muted);padding:3px 0}
+.man-more summary:hover{color:var(--ink)}
+
+/* 자동으로 채워진 입력 칸은 접어 둔다 — 볼 일이 없는데 펼쳐져 있으면 할 일처럼 보인다 */
+.card.folded > *:not(h2){display:none}
+.fold-btn{float:right;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface-2);
+  border:1px solid var(--line);border-radius:8px;padding:4px 10px;cursor:pointer}
+.fold-btn:hover{color:var(--ink);border-color:var(--muted)}
+.fold-sum{font-size:12.5px;color:var(--muted);font-weight:600;margin-left:8px}
 .jb b{font-size:13px;display:block;margin-bottom:6px}
 .jb ul{margin:0;padding-left:18px;font-size:13px;line-height:1.75}
 .jb li b{display:inline;font-size:13px;margin:0}
@@ -445,7 +458,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   </section>
 
   <!-- STEP 1 -->
-  <section class="card">
+  <section class="card" id="sec1">
     <h2><span class="step-no">1</span> 내 플레이스 정보</h2>
     <p class="desc">네이버 스마트플레이스에 <b>지금 등록되어 있는 그대로</b> 넣으세요. 이 값으로 적합도를 직접 계산합니다.</p>
 
@@ -477,7 +490,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   </section>
 
   <!-- STEP 2 -->
-  <section class="card">
+  <section class="card" id="sec2">
     <h2><span class="step-no">2</span> 목표 키워드 · 현재 소개글</h2>
     <p class="desc">
       <b>적합도 자동 분석에 쓰이는 핵심 입력입니다.</b>
@@ -1445,6 +1458,7 @@ $("p-run").addEventListener("click", async ()=>{
     ${miss.length?`<div class="trend">찾지 못한 값: ${miss.join(", ")} —
       네이버 화면에서 해당 숫자가 보이는 부분까지 포함해 복사하면 인식됩니다.</div>`:""}
   </div>`;
+  foldFilledInputs();
   save();
   showToast(`${p.found}종 인식 · 입력 ${filled.length}곳 · 판정 ${judged.auto}개`);
 });
@@ -1604,6 +1618,39 @@ const FIELD_LABEL = {
 
 /* 서버가 내린 판정을 체크박스에 반영한다.
    ok가 null 인 항목은 손대지 않는다 — 근거 없이 체크하면 점수가 거짓이 된다. */
+/* 자동으로 채워진 뒤에도 입력 칸이 펼쳐져 있으면 "아직 할 일"처럼 보인다.
+   그래서 접어 두고, 고칠 사람만 펼치게 한다. 칸 자체를 없애지는 않는다 —
+   서버 없이 휴대폰만 쓸 때는 이 칸이 유일한 입력 경로다. */
+function foldSection(id, summary){
+  const sec = $(id); if(!sec) return;
+  const h2 = sec.querySelector("h2"); if(!h2) return;
+  if(!h2.querySelector(".fold-btn")){
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "fold-btn";
+    btn.addEventListener("click", ()=>{
+      btn.textContent = sec.classList.toggle("folded") ? "펼치기" : "접기";
+    });
+    const sum = document.createElement("span");
+    sum.className = "fold-sum";
+    h2.appendChild(btn); h2.appendChild(sum);
+  }
+  h2.querySelector(".fold-sum").textContent = summary || "";
+  sec.classList.add("folded");
+  h2.querySelector(".fold-btn").textContent = "펼치기";
+}
+
+/* 채워진 칸만 접는다. 비어 있는 칸을 접으면 사장님이 넣을 곳을 못 찾는다. */
+function foldFilledInputs(){
+  const name = $("i-name").value.trim(), area = $("i-area").value.trim();
+  const intro = ($("i-intro").value || "").trim();
+  const kw = ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value.trim()).filter(Boolean);
+
+  if(name && area) foldSection("sec1", `${name} · ${area}`);
+  if(kw.length)    foldSection("sec2", intro
+    ? `소개글 ${intro.length}자 · 키워드 ${kw.length}개`
+    : `소개글 없음 (0자) · 키워드 ${kw.length}개`);
+}
+
 function applyJudgement(judge){
   const ITEM = Object.fromEntries(ITEMS.map(x=>[x.id,x]));
   const done = [], todo = [], manual = [];
@@ -1633,14 +1680,23 @@ function applyJudgement(judge){
   save();
 
   const line = ({item,v}) => `<li><b>${item.t}</b> — ${v.evidence}</li>`;
+  // 직접 확인은 무게 순으로 세운다. 열한 개를 한 번에 들이밀면 아무것도 안 하게 된다.
+  manual.sort((a,b)=> b.item.w - a.item.w);
+  const lineW = ({item,v}) => `<li><b>${item.t}</b> <em class="w">${item.w}점</em> — ${v.evidence}</li>`;
+  const first = manual.slice(0,3), rest = manual.slice(3);
+
   const html = `
     <div class="judge">
       <h5>자동 판정 ${done.length+todo.length}개</h5>
       ${done.length?`<div class="jb ok"><b>충족 ${done.length}개</b><ul>${done.map(line).join("")}</ul></div>`:""}
       ${todo.length?`<div class="jb no"><b>미달 ${todo.length}개</b><ul>${todo.map(line).join("")}</ul></div>`:""}
       ${manual.length?`<div class="jb man"><b>직접 확인 ${manual.length}개</b>
-        <ul>${manual.map(line).join("")}</ul>
-        <p>이 항목들은 사진을 눈으로 보거나 지도를 직접 확인해야 알 수 있어서 자동으로 판정하지 않습니다.
+        <p class="man-note">체크 안 하셔도 진단은 그대로 실행됩니다. 점수만 그만큼 낮게(보수적으로) 나옵니다.
+           다 하실 필요 없고, 무게가 큰 아래 ${first.length}개만 보시면 됩니다.</p>
+        <ul>${first.map(lineW).join("")}</ul>
+        ${rest.length?`<details class="man-more"><summary>나머지 ${rest.length}개 (무게 작음)</summary>
+          <ul>${rest.map(lineW).join("")}</ul></details>`:""}
+        <p>사진을 눈으로 보거나 지도를 직접 봐야 알 수 있어서 자동으로 판정하지 않습니다.
            추측으로 채우면 점수가 거짓이 되므로 비워 둡니다.</p></div>`:""}
     </div>`;
   return { html, auto: done.length + todo.length, manual: manual.length };
@@ -1697,6 +1753,7 @@ $("s-collect")?.addEventListener("click", async ()=>{
 
     // 자동 판정 적용 — 근거가 있는 항목만 체크하고, 어떤 근거인지 화면에 남긴다
     const judged = applyJudgement(res.judge || {});
+    foldFilledInputs();   // 채워진 1·2단계는 접는다
 
     $("s-out").innerHTML = `<div class="srv-res">
       <h5>수집 완료 — ${res.fields}개 항목 (플레이스 ID ${res.placeId})</h5>

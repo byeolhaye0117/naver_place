@@ -157,12 +157,20 @@ function tryJson(text) {
 
 /* 트리 전체를 훑어 원하는 필드명의 값을 주워담는다.
    경로가 바뀌어도 필드명만 남아 있으면 계속 동작한다. */
+/* 같은 필드명이 트리 안에 여러 번 나온다. 예를 들어 menus 가 어떤 노드에서는
+   빈 배열이고 다른 노드에서는 실제 목록이다. 먼저 만난 값을 그대로 쓰면
+   "메뉴 0개"로 읽고 끝나므로, 빈 값은 채워진 값으로 덮어쓴다.
+   반대로 이미 채워진 값은 덮지 않는다 (목록에 섞인 남의 가게 이름이 이기지 않게). */
+const isEmptyVal = v => v === undefined || v === null || v === '' || v === 0 || v === false;
+
 function harvest(node, fields, out = {}, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 12) return out;
   for (const [k, v] of Object.entries(node)) {
-    if (fields.includes(k) && out[k] === undefined) {
-      if (v !== null && typeof v !== 'object') out[k] = v;
-      else if (Array.isArray(v)) out[k] = v.length;
+    if (fields.includes(k)) {
+      const cur = out[k];
+      const next = (v !== null && typeof v !== 'object') ? v
+                 : Array.isArray(v) ? v.length : undefined;
+      if (next !== undefined && (cur === undefined || (isEmptyVal(cur) && !isEmptyVal(next)))) out[k] = next;
     }
     if (v && typeof v === 'object') harvest(v, fields, out, depth + 1);
   }
@@ -228,14 +236,28 @@ const PLACE_FIELDS = [
   'reviewReplyCount', 'replyCount', 'answeredReviewCount', 'ownerReplyCount',
   'lastPhotoUpdatedAt', 'photoUpdatedAt', 'lastFeedAt', 'lastNewsAt',
   'homepages', 'socials', 'snsUrl', 'instagramUrl',
+  // ↓ 리뷰·저장 수는 페이지마다 이름이 다르게 나온다. 후보를 넓게 걸어둔다.
+  'visitorReviewsTotal', 'visitorReviewTotal', 'visitorReviewsCount',
+  'blogCafeReviewTotal', 'blogReviewCount', 'cafeReviewCount', 'ugcReviewCount',
+  'reviewCount', 'reviewTotal', 'fsasReviewCount',
+  'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount',
+  'photoTotal', 'imageTotal', 'totalImageCount',
 ];
 
+/* 필요한 값이 한 페이지에 다 있지 않다. 리뷰 수는 리뷰 탭에만 있는 경우가 많다.
+   그래서 첫 성공에서 멈추지 않고, 아래 항목이 다 채워질 때까지 이어서 시도한다. */
 const PLACE_STRATEGIES = [
   id => `https://m.place.naver.com/place/${id}/home`,
   id => `https://pcmap.place.naver.com/place/${id}/home`,
+  id => `https://m.place.naver.com/place/${id}/review/visitor`,
+  id => `https://m.place.naver.com/place/${id}/review/ugc`,
+  id => `https://m.place.naver.com/place/${id}/information`,
   id => `https://m.place.naver.com/hairshop/${id}/home`,
   id => `https://map.naver.com/p/api/place/summary/${id}`,
 ];
+
+/* 이게 다 모이면 더 요청하지 않는다 (불필요한 왕복을 줄이려는 것) */
+const KEY_FIELDS = ['description', 'imageCount', 'visitorReviewCount', 'blogCafeReviewCount', 'bookmarkCount'];
 
 /* harvest 는 스칼라와 배열만 담는다.
    businessHours 처럼 객체로 오는 필드는 "값이 있느냐"만 따로 확인한다. */
@@ -310,10 +332,15 @@ function guessPrice(menus) {
   return pick ? pick.toLocaleString('ko-KR') + '원' : '';
 }
 
-function deriveInputs(data, json) {
-  const kwList = (harvestList(json, 'keywords') || [])
+function deriveInputs(data, jsons) {
+  const all = Array.isArray(jsons) ? jsons : [jsons];
+  const pick = (...names) => {
+    for (const j of all) for (const nm of names) { const v = harvestList(j, nm); if (v) return v; }
+    return [];
+  };
+  const kwList = pick('keywords')
     .map(k => String(k?.name ?? k).trim()).filter(Boolean);
-  const menus  = harvestList(json, 'menus') || harvestList(json, 'menuInfo') || [];
+  const menus  = pick('menus', 'menuInfo');
   const fromAddr = areaCandidates(data.roadAddress || data.address);
 
   // 이미 등록해 둔 대표키워드가 가장 강한 신호다.
@@ -343,7 +370,7 @@ function deriveInputs(data, json) {
  * ========================================================================== */
 function judgeItems(data, present, userType) {
   const n = (...k) => { for (const x of k) { const v = Number(data[x]); if (isFinite(v)) return v; } return null; };
-  const has = (...k) => k.some(x => present.has(x) || (data[x] != null && data[x] !== '' && data[x] !== 0));
+  const has = (...k) => k.some(x => present.has(x) || !isEmptyVal(data[x]));
 
   const J = {};
   const put = (id, ok, evidence) => { J[id] = { ok, evidence }; };
@@ -351,19 +378,21 @@ function judgeItems(data, present, userType) {
   const unknown = (id, why) => { J[id] = { ok: null, evidence: why }; };
 
   // ── 수치가 그대로 있는 항목 ──────────────────────────────
-  const photo = n('imageCount', 'photoCount');
+  const photo = n('imageCount', 'photoCount', 'photoTotal', 'imageTotal', 'totalImageCount');
   photo == null ? unknown('p2', '사진 수를 가져오지 못했습니다')
                 : put('p2', photo >= 30, `사진 ${photo}장`);
 
-  const rev = n('visitorReviewCount', 'totalReviewCount');
+  const rev = n('visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal',
+                'visitorReviewsCount', 'totalReviewCount', 'fsasReviewCount', 'reviewCount', 'reviewTotal');
   rev == null ? unknown('p6', '리뷰 수를 가져오지 못했습니다')
               : put('p6', rev >= 50, `방문자 리뷰 ${rev}개`);
 
-  const blog = n('blogCafeReviewCount');
+  const blog = n('blogCafeReviewCount', 'blogCafeReviewTotal', 'blogReviewCount',
+                 'cafeReviewCount', 'ugcReviewCount');
   blog == null ? unknown('p7', '블로그 리뷰 수를 가져오지 못했습니다')
                : put('p7', blog >= 10, `블로그 리뷰 ${blog}개`);
 
-  const save = n('bookmarkCount');
+  const save = n('bookmarkCount', 'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount');
   save == null ? unknown('p10', '저장 수를 가져오지 못했습니다')
                : put('p10', save >= 100, `저장 ${save}회`);
 
@@ -378,9 +407,16 @@ function judgeItems(data, present, userType) {
     ? put('r8', true, '영업시간 등록됨 (공휴일 반영 여부는 직접 확인)')
     : unknown('r8', '영업시간 정보를 가져오지 못했습니다');
 
-  has('menus', 'menuInfo', 'hasMenu', 'priceInfo', 'prices', 'menuImages')
-    ? put('r6', true, '메뉴·가격 정보 등록됨')
-    : unknown('r6', '가격 정보를 확인하지 못했습니다 (등록 안 했거나 수집 실패)');
+  /* 개수를 읽었다면 개수를 믿는다. 0개인데 "등록됨"으로 찍으면 점수가 거짓이 된다. */
+  const menuN = n('menus', 'menuImages', 'prices');
+  if (menuN === 0 && !has('menuInfo', 'priceInfo', 'hasMenu'))
+    put('r6', false, '메뉴·가격 등록 0개');
+  else if (menuN != null && menuN > 0)
+    put('r6', true, `메뉴·가격 ${menuN}개 등록`);
+  else if (has('menus', 'menuInfo', 'hasMenu', 'priceInfo', 'prices', 'menuImages'))
+    put('r6', true, '메뉴·가격 정보 등록됨');
+  else
+    unknown('r6', '가격 정보를 확인하지 못했습니다 (등록 안 했거나 수집 실패)');
 
   const conv = n('conveniences', 'amenities', 'facilities', 'options');
   conv == null ? unknown('r7', '편의시설 정보를 가져오지 못했습니다')
@@ -420,6 +456,10 @@ function judgeItems(data, present, userType) {
 async function collectPlace(idOrUrl, userType) {
   const id = await resolvePlaceId(idOrUrl);
   const attempts = [];
+  const data = {};
+  const present = new Set();
+  const jsons = [];
+  const sources = [];
 
   for (const build of PLACE_STRATEGIES) {
     const url = build(id);
@@ -430,24 +470,39 @@ async function collectPlace(idOrUrl, userType) {
         attempts.push({ url, status: r.status, result: 'JSON/상태객체를 찾지 못함', bytes: r.text.length });
         continue;
       }
-      const data = harvest(json, PLACE_FIELDS);
-      const found = Object.keys(data).length;
-      if (found < 2) {
-        attempts.push({ url, status: r.status, result: `필드 ${found}개만 발견`, bytes: r.text.length });
+      const before = Object.keys(data).length;
+      harvest(json, PLACE_FIELDS, data);          // 빈 값은 채워진 값으로 덮인다
+      harvestPresence(json, PLACE_FIELDS, present);
+      const gained = Object.keys(data).length - before;
+      if (gained <= 0 && before === 0) {
+        attempts.push({ url, status: r.status, result: '필드를 찾지 못함', bytes: r.text.length });
         continue;
       }
-      const present = harvestPresence(json, PLACE_FIELDS);
-      return {
-        ok: true, placeId: id, source: url, fields: found, data, attempts,
-        judge: judgeItems(data, present, userType),
-        derived: deriveInputs(data, json),
-      };
+      jsons.push(json);
+      sources.push({ url, gained });
+
+      // 필요한 값이 다 모였으면 남은 주소는 두드리지 않는다
+      if (KEY_FIELDS.every(f => data[f] !== undefined)) break;
     } catch (e) {
       attempts.push({ url, result: `요청 실패: ${e.message}` });
     }
   }
-  return { ok: false, placeId: id, attempts,
-    error: '네이버 응답에서 플레이스 정보를 읽지 못했습니다. 구조가 변경되었을 수 있습니다.' };
+
+  const found = Object.keys(data).length;
+  if (found < 2) {
+    return { ok: false, placeId: id, attempts,
+      error: '네이버 응답에서 플레이스 정보를 읽지 못했습니다. 구조가 변경되었을 수 있습니다.' };
+  }
+
+  return {
+    ok: true, placeId: id,
+    source: sources[0].url,
+    sources,                       // 어느 주소가 무엇을 보탰는지
+    fields: found, data, attempts,
+    missing: KEY_FIELDS.filter(f => data[f] === undefined),
+    judge: judgeItems(data, present, userType),
+    derived: deriveInputs(data, jsons),
+  };
 }
 
 /* ============================================================================
