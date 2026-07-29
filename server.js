@@ -201,6 +201,87 @@ function harvestPresence(node, fields, found = new Set(), depth = 0) {
   return found;
 }
 
+/* 배열 필드의 '실제 값'을 꺼낸다. harvest 는 길이만 담기 때문에
+   대표키워드·메뉴처럼 내용이 필요한 것은 따로 주워야 한다. */
+function harvestList(node, field, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return null;
+  for (const [k, v] of Object.entries(node)) {
+    if (k === field && Array.isArray(v) && v.length) return v;
+    if (v && typeof v === 'object') {
+      const hit = harvestList(v, field, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/* ============================================================================
+ * 입력란 자동 채우기
+ *
+ * 사장님이 직접 타이핑할 것을 최대한 줄인다.
+ * 플레이스 주소만 넣으면 지역·업종·가격·대표키워드까지 채워지도록,
+ * 수집한 값에서 끌어낼 수 있는 것은 전부 끌어낸다.
+ * ========================================================================== */
+
+/* 주소에서 검색에 쓸 지역명을 뽑는다. 동 > 구 > 시 순으로 구체적이다. */
+function areaCandidates(addr) {
+  const out = [];
+  for (const tok of String(addr || '').split(/\s+/)) {
+    const m = tok.match(/^(.{2,6})(동|구|시|군|읍|면)$/);
+    if (!m) continue;
+    // "서울특별시" → "서울특별" 같은 광역자치단체 조각은 검색어로 못 쓴다
+    if (/(특별|광역|자치)$/.test(m[1])) continue;
+    const rank = { '동': 0, '읍': 0, '면': 0, '구': 1, '시': 2, '군': 2 }[m[2]];
+    out.push({ name: m[1], rank });
+  }
+  return out.sort((a, b) => a.rank - b.rank).map(x => x.name);
+}
+
+function guessType(category) {
+  const c = String(category || '');
+  if (/필라테스/.test(c)) return '필라테스';
+  if (/크로스핏/.test(c)) return '크로스핏';
+  if (/(PT|피티|퍼스널)/i.test(c)) return 'PT 전문';
+  return '헬스장';
+}
+
+/* 메뉴에서 1개월 이용권 가격을 찾는다 */
+function guessPrice(menus) {
+  if (!Array.isArray(menus)) return '';
+  const priceOf = m => {
+    const raw = m?.price ?? m?.amount ?? m?.cost;
+    const n = Number(String(raw ?? '').replace(/[^\d]/g, ''));
+    return isFinite(n) && n > 0 ? n : null;
+  };
+  const monthly = menus.find(m => /(1개월|한달|1달|월 ?회원|1개월권)/.test(String(m?.name ?? '')));
+  const pick = priceOf(monthly) ?? menus.map(priceOf).find(v => v != null);
+  return pick ? pick.toLocaleString('ko-KR') + '원' : '';
+}
+
+function deriveInputs(data, json) {
+  const kwList = (harvestList(json, 'keywords') || [])
+    .map(k => String(k?.name ?? k).trim()).filter(Boolean);
+  const menus  = harvestList(json, 'menus') || harvestList(json, 'menuInfo') || [];
+  const fromAddr = areaCandidates(data.roadAddress || data.address);
+
+  // 이미 등록해 둔 대표키워드가 가장 강한 신호다.
+  // 주소는 "어디에 있는가"일 뿐이고, 대표키워드는 "어디로 검색되고 싶은가"다.
+  // 예: 주소는 역삼동이지만 대표키워드가 "강남역헬스장"이면 목표는 강남역이다.
+  const station = kwList.map(k => (k.match(/^(.{2,8}?역)/) || [])[1]).find(Boolean);
+  const areas = [...new Set([station, ...fromAddr].filter(Boolean))];
+
+  return {
+    areas,
+    area:  areas[0] || '',
+    areaFrom: station ? '대표키워드' : (fromAddr.length ? '주소' : ''),
+    type:  guessType(data.category),
+    price: guessPrice(menus),
+    repkw: kwList.join(', '),
+    // 목표 키워드 제안: 등록한 대표키워드가 있으면 그것을 그대로 쓴다
+    kwSuggest: kwList.slice(0, 3),
+  };
+}
+
 /* ============================================================================
  * 자가 체크 항목 자동 판정
  *
@@ -307,6 +388,7 @@ async function collectPlace(idOrUrl, userType) {
       return {
         ok: true, placeId: id, source: url, fields: found, data, attempts,
         judge: judgeItems(data, present, userType),
+        derived: deriveInputs(data, json),
       };
     } catch (e) {
       attempts.push({ url, result: `요청 실패: ${e.message}` });

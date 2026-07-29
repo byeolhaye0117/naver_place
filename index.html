@@ -292,6 +292,7 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .jb.ok{border-color:var(--ok-line);background:var(--ok-bg)}
 .jb.no{border-color:var(--bad-line);background:var(--bad-bg)}
 .jb.man{border-color:var(--warn-line);background:var(--warn-bg)}
+.jb.fill{border-color:var(--acc-line);background:var(--acc-bg);margin-top:14px}
 .jb b{font-size:13px;display:block;margin-bottom:6px}
 .jb ul{margin:0;padding-left:18px;font-size:13px;line-height:1.75}
 .jb li b{display:inline;font-size:13px;margin:0}
@@ -1359,12 +1360,40 @@ $("s-collect")?.addEventListener("click", async ()=>{
       `/api/place?url=${encodeURIComponent(url)}&type=${encodeURIComponent($("i-type").value)}`))).json();
     if(!res.ok){ $("s-out").innerHTML = srvError("플레이스 정보를 가져오지 못했습니다", res); return; }
 
-    // 가져온 값 중 입력란에 채울 수 있는 것은 자동으로 채운다
-    const d = res.data;
-    if(d.name && !$("i-name").value) $("i-name").value = d.name;
-    if(d.description && !$("i-intro").value){
-      $("i-intro").value = d.description;
-      $("i-intro").dispatchEvent(new Event("input"));
+    // 입력란을 최대한 채운다. 이미 손으로 넣은 값은 덮어쓰지 않는다.
+    const d = res.data, dv = res.derived || {};
+    const filled = [];
+    const put = (id, val, label) => {
+      const el = $(id);
+      if(!el || !val || el.value.trim()) return;
+      el.value = val; filled.push(label);
+      if(id === "i-intro") el.dispatchEvent(new Event("input"));
+    };
+
+    put("i-name",  d.name,        "업체명");
+    put("i-intro", d.description, "소개글");
+    put("i-area",  dv.area,       "지역");
+    put("i-price", dv.price,      "가격");
+    put("i-repkw", dv.repkw,      "대표키워드");
+
+    if(dv.type && $("i-type").value !== dv.type){
+      $("i-type").value = dv.type; filled.push("주력 업종");
+    }
+
+    // 목표 키워드는 플레이스에 없는 값(사장님의 목표)이라 가져올 수 없다.
+    // 대신 지역·업종으로 흔히 쓰는 조합을 제안해 넣어둔다. 고쳐 쓰면 된다.
+    let suggested = "";
+    if(!["i-kw1","i-kw2","i-kw3"].some(id=>$(id).value.trim())){
+      // 등록해 둔 대표키워드가 있으면 그것이 곧 사장님이 정한 목표다.
+      // 없을 때만 지역·업종 조합으로 추측한다.
+      const base = (dv.kwSuggest && dv.kwSuggest.length)
+        ? dv.kwSuggest
+        : (dv.area ? (KEYWORD_BASE[$("i-type").value] || KEYWORD_BASE["헬스장"])(dv.area) : []);
+      if(base.length){
+        ["i-kw1","i-kw2","i-kw3"].forEach((id,i)=>{ if(base[i]) $(id).value = base[i]; });
+        suggested = (dv.kwSuggest && dv.kwSuggest.length) ? "대표키워드" : "지역·업종 추측";
+        filled.push(`목표 키워드(${suggested})`);
+      }
     }
 
     const rows = Object.entries(d).map(([k,v])=>
@@ -1376,10 +1405,20 @@ $("s-collect")?.addEventListener("click", async ()=>{
     $("s-out").innerHTML = `<div class="srv-res">
       <h5>수집 완료 — ${res.fields}개 항목 (플레이스 ID ${res.placeId})</h5>
       <dl class="kv-grid">${rows}</dl>
+      ${filled.length ? `<div class="jb fill"><b>입력란 ${filled.length}곳 자동 입력</b>
+        <ul><li>${filled.join(" · ")}</li></ul>
+        ${suggested === "대표키워드"
+          ? `<p>목표 키워드는 <b>이미 등록해 두신 대표키워드</b>를 그대로 넣었습니다.
+             다른 키워드를 노리신다면 2단계에서 바꾸세요.</p>`
+          : suggested
+            ? `<p>등록된 대표키워드가 없어 <b>지역·업종으로 추측</b>했습니다. 2단계에서 꼭 확인해 주세요.
+               ${(dv.areas||[]).length>1 ? `지역 후보는 <b>${dv.areas.join(", ")}</b>입니다 —
+                 손님이 실제로 검색하는 쪽(대개 가까운 역 이름)으로 바꾸면 더 정확합니다.` : ""}</p>`
+            : ""}
+        ${dv.areaFrom ? `<p style="margin-top:6px">지역은 ${dv.areaFrom}에서 뽑았습니다.</p>` : ""}</div>` : ""}
       ${judged.html}
-      <div class="trend">업체명·소개글은 1·2단계 입력란에 자동으로 채웠습니다.</div>
     </div>`;
-    if(judged.auto) showToast(`${judged.auto}개 항목을 자동 판정했습니다`);
+    showToast(`입력 ${filled.length}곳 · 판정 ${judged.auto}개 자동 완료`);
   }catch(e){
     $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
   }finally{ btn.disabled=false; btn.textContent="정보 자동 수집"; }
