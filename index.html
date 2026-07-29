@@ -421,7 +421,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     </p>
     <textarea id="p-raw" class="xfer-code" rows="5" spellcheck="false"
       style="font-family:inherit;font-size:14px;margin-top:14px"
-      placeholder="여기에 붙여넣으세요.&#10;&#10;예) 스트롱짐 피트니스 / 헬스장 / 방문자리뷰 132 / 블로그리뷰 18 / 저장 210 …"></textarea>
+      placeholder="여기에 붙여넣으세요.&#10;&#10;· 화면 텍스트 → 리뷰수·시설·가격·소개글을 찾아 채웁니다&#10;· 플레이스 링크 → 복사하러 갈 페이지를 열어 드립니다"></textarea>
     <div class="btn-row">
       <button class="btn dark" id="p-run" type="button">붙여넣은 내용으로 채우기</button>
     </div>
@@ -1244,9 +1244,47 @@ function judgeFromPaste(p){
   return J;
 }
 
-$("p-run").addEventListener("click", ()=>{
+/* 링크를 붙여넣은 경우를 따로 다룬다.
+   브라우저는 다른 사이트(네이버)의 내용을 읽을 수 없다 — 우회 방법이 없는 보안 규칙이다.
+   대신 링크에서 플레이스 ID를 뽑아 보관하고, 복사하러 갈 페이지를 한 번에 열어준다. */
+const isLink   = s => /^https?:\/\//i.test(s) || /naver\.(me|com)/i.test(s);
+const placeIdOf = s => (s.match(/(?:entry\/place|place|restaurant|hairshop)\/(\d{5,})/)
+                     || s.match(/[?&]id=(\d{5,})/) || s.match(/(\d{9,})/) || [])[1] || null;
+
+$("p-run").addEventListener("click", async ()=>{
   const raw = $("p-raw").value.trim();
   if(!raw){ $("p-raw").focus(); showToast("네이버 화면 내용을 붙여넣으세요"); return; }
+
+  if(isLink(raw) && raw.split(/\s+/).length <= 2){
+    const id = placeIdOf(raw);
+    if(!$("s-url").value.trim()){ $("s-url").value = raw; save(); }
+
+    // PC 도우미가 켜져 있으면 링크만으로 진짜 수집이 된다
+    if(SERVER){
+      $("p-out").innerHTML = `<div class="trend">PC 도우미가 연결돼 있어 링크로 바로 수집합니다…</div>`;
+      $("s-collect").click();
+      $("srv").scrollIntoView({behavior:"smooth", block:"start"});
+      return;
+    }
+
+    const open = id ? `https://m.place.naver.com/place/${id}/home` : raw;
+    $("p-out").innerHTML = `<div class="jb man" style="margin-top:14px">
+      <b>링크만으로는 내용을 가져올 수 없습니다</b>
+      <p>브라우저는 다른 사이트(네이버)의 내용을 읽지 못하도록 막혀 있습니다.
+        보안 규칙이라 우회할 방법이 없습니다. 대신 두 번만 누르시면 됩니다.</p>
+      <ol style="margin:10px 0 0;padding-left:20px;font-size:13.5px;line-height:1.9">
+        <li>아래 버튼으로 네이버 페이지 열기</li>
+        <li>화면 길게 눌러 <b>전체 선택 → 복사</b></li>
+        <li>여기로 돌아와 붙여넣고 다시 누르기</li>
+      </ol>
+      <div class="btn-row" style="margin-top:12px">
+        <a class="btn dark" href="${open}" target="_blank" rel="noopener">네이버에서 열기 →</a>
+      </div>
+      <p style="margin-top:10px">${id ? `플레이스 ID <b>${id}</b>를 저장해 뒀습니다. ` : ""}
+        PC에서 도우미를 켜면 이 링크만으로 전부 자동 수집됩니다.</p>
+    </div>`;
+    return;
+  }
 
   const p = parsePasted(raw);
   if(!p.found){
