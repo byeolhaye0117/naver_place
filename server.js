@@ -159,12 +159,23 @@ async function resolvePlaceId(input) {
  * 플레이스 정보 수집
  * ========================================================================== */
 
+/* 네이버는 응답 구조를 예고 없이 바꾸고 페이지 유형마다 필드명이 다르다.
+   그래서 같은 뜻의 후보 이름을 여러 개 걸어두고, 잡히는 것을 쓴다. */
 const PLACE_FIELDS = [
-  'name', 'category', 'description', 'phone', 'virtualPhone',
+  'name', 'category', 'categoryCode', 'description', 'phone', 'virtualPhone',
   'visitorReviewCount', 'visitorReviewScore', 'blogCafeReviewCount',
   'totalReviewCount', 'imageCount', 'photoCount', 'bookmarkCount',
   'roadAddress', 'address', 'x', 'y', 'homepage', 'bookingUrl', 'talktalkUrl',
   'businessHours', 'conveniences', 'keywords', 'microReviews',
+  // ↓ 자동 판정을 위해 추가한 후보들
+  'newBusinessHours', 'businessHoursInfo', 'operationTime', 'businessStatus',
+  'menus', 'menuInfo', 'menuImages', 'hasMenu', 'priceInfo', 'prices',
+  'amenities', 'facilities', 'options', 'conveniencesInfo',
+  'isBusinessRegistered', 'businessRegistration', 'certified', 'isCertified', 'ownerVerified',
+  'newsCount', 'feedCount', 'announcementCount', 'newsList', 'feedList',
+  'reviewReplyCount', 'replyCount', 'answeredReviewCount', 'ownerReplyCount',
+  'lastPhotoUpdatedAt', 'photoUpdatedAt', 'lastFeedAt', 'lastNewsAt',
+  'homepages', 'socials', 'snsUrl', 'instagramUrl',
 ];
 
 const PLACE_STRATEGIES = [
@@ -174,7 +185,106 @@ const PLACE_STRATEGIES = [
   id => `https://map.naver.com/p/api/place/summary/${id}`,
 ];
 
-async function collectPlace(idOrUrl) {
+/* harvest 는 스칼라와 배열만 담는다.
+   businessHours 처럼 객체로 오는 필드는 "값이 있느냐"만 따로 확인한다. */
+function harvestPresence(node, fields, found = new Set(), depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return found;
+  for (const [k, v] of Object.entries(node)) {
+    if (fields.includes(k) && v != null) {
+      const empty = (Array.isArray(v) && v.length === 0)
+                 || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0)
+                 || v === '' || v === false;
+      if (!empty) found.add(k);
+    }
+    if (v && typeof v === 'object') harvestPresence(v, fields, found, depth + 1);
+  }
+  return found;
+}
+
+/* ============================================================================
+ * 자가 체크 항목 자동 판정
+ *
+ * 수집한 값으로 확실히 판정되는 것만 true/false 를 낸다.
+ * 근거가 없으면 null 을 반환해 "직접 확인"으로 남긴다.
+ * 애매한 것을 추측으로 채우면 점수가 거짓이 되므로, 모르면 모른다고 한다.
+ * ========================================================================== */
+function judgeItems(data, present, userType) {
+  const n = (...k) => { for (const x of k) { const v = Number(data[x]); if (isFinite(v)) return v; } return null; };
+  const has = (...k) => k.some(x => present.has(x) || (data[x] != null && data[x] !== '' && data[x] !== 0));
+
+  const J = {};
+  const put = (id, ok, evidence) => { J[id] = { ok, evidence }; };
+  // 근거 없음 → 직접 확인으로 남긴다
+  const unknown = (id, why) => { J[id] = { ok: null, evidence: why }; };
+
+  // ── 수치가 그대로 있는 항목 ──────────────────────────────
+  const photo = n('imageCount', 'photoCount');
+  photo == null ? unknown('p2', '사진 수를 가져오지 못했습니다')
+                : put('p2', photo >= 30, `사진 ${photo}장`);
+
+  const rev = n('visitorReviewCount', 'totalReviewCount');
+  rev == null ? unknown('p6', '리뷰 수를 가져오지 못했습니다')
+              : put('p6', rev >= 50, `방문자 리뷰 ${rev}개`);
+
+  const blog = n('blogCafeReviewCount');
+  blog == null ? unknown('p7', '블로그 리뷰 수를 가져오지 못했습니다')
+               : put('p7', blog >= 10, `블로그 리뷰 ${blog}개`);
+
+  const save = n('bookmarkCount');
+  save == null ? unknown('p10', '저장 수를 가져오지 못했습니다')
+               : put('p10', save >= 100, `저장 ${save}회`);
+
+  // ── 있으면 충족인 항목 ──────────────────────────────────
+  put('p11', has('bookingUrl', 'talktalkUrl'),
+      has('bookingUrl', 'talktalkUrl') ? '예약 또는 톡톡 연결됨' : '예약·톡톡 연결 없음');
+
+  put('d3', has('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials'),
+      has('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials') ? '외부 채널 연결됨' : '홈페이지·SNS 연결 없음');
+
+  has('businessHours', 'newBusinessHours', 'businessHoursInfo', 'operationTime')
+    ? put('r8', true, '영업시간 등록됨 (공휴일 반영 여부는 직접 확인)')
+    : unknown('r8', '영업시간 정보를 가져오지 못했습니다');
+
+  has('menus', 'menuInfo', 'hasMenu', 'priceInfo', 'prices', 'menuImages')
+    ? put('r6', true, '메뉴·가격 정보 등록됨')
+    : unknown('r6', '가격 정보를 확인하지 못했습니다 (등록 안 했거나 수집 실패)');
+
+  const conv = n('conveniences', 'amenities', 'facilities', 'options');
+  conv == null ? unknown('r7', '편의시설 정보를 가져오지 못했습니다')
+               : put('r7', conv >= 4, `편의시설 ${conv}개 등록`);
+
+  has('isBusinessRegistered', 'businessRegistration', 'certified', 'isCertified', 'ownerVerified')
+    ? put('d2', true, '사업자 인증 확인됨')
+    : unknown('d2', '인증 여부를 확인하지 못했습니다');
+
+  // ── 카테고리: 주력 업종과 맞는지 ────────────────────────
+  const cat = String(data.category || '');
+  if (!cat) unknown('r2', '카테고리를 가져오지 못했습니다');
+  else {
+    const want = { '헬스장': ['헬스', '피트니스'], 'PT 전문': ['PT', '피티', '퍼스널'],
+                   '헬스+PT': ['헬스', '피트니스', 'PT'], '필라테스': ['필라테스'],
+                   '크로스핏': ['크로스핏'] }[userType] || ['헬스', '피트니스'];
+    const hit = want.some(w => cat.toLowerCase().includes(w.toLowerCase()));
+    put('r2', hit, `카테고리 "${cat}"` + (hit ? ' — 주력 업종과 일치' : ` — 주력(${userType})과 다름`));
+  }
+
+  // ── 소식 ────────────────────────────────────────────────
+  const news = n('newsCount', 'feedCount', 'announcementCount', 'newsList', 'feedList');
+  news == null ? unknown('p5', '소식 게시 여부를 확인하지 못했습니다')
+               : put('p5', news > 0, `소식 ${news}건`);
+
+  // ── 원리적으로 자동 판정이 불가능한 것 ──────────────────
+  unknown('p1', '대표사진이 시설 전경인지는 사진을 봐야 압니다');
+  unknown('p3', '어느 구역 사진이 있는지는 사진을 봐야 압니다');
+  unknown('p4', '사진 업로드 시점은 공개 정보로 확인되지 않습니다');
+  unknown('p8', '리뷰별 답글 유무는 리뷰를 하나씩 열어봐야 합니다');
+  unknown('p9', '리뷰 작성일은 리뷰 목록을 열어봐야 합니다');
+  unknown('d1', '핀이 실제 출입구인지는 지도를 직접 봐야 합니다');
+
+  return J;
+}
+
+async function collectPlace(idOrUrl, userType) {
   const id = await resolvePlaceId(idOrUrl);
   const attempts = [];
 
@@ -193,7 +303,11 @@ async function collectPlace(idOrUrl) {
         attempts.push({ url, status: r.status, result: `필드 ${found}개만 발견`, bytes: r.text.length });
         continue;
       }
-      return { ok: true, placeId: id, source: url, fields: found, data, attempts };
+      const present = harvestPresence(json, PLACE_FIELDS);
+      return {
+        ok: true, placeId: id, source: url, fields: found, data, attempts,
+        judge: judgeItems(data, present, userType),
+      };
     } catch (e) {
       attempts.push({ url, result: `요청 실패: ${e.message}` });
     }
@@ -606,7 +720,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/place') {
       const target = q.get('url');
       if (!target) return sendJson(res, 400, { ok: false, error: 'url 파라미터가 필요합니다.' });
-      return sendJson(res, 200, await collectPlace(target));
+      return sendJson(res, 200, await collectPlace(target, q.get('type')));
     }
 
     if (u.pathname === '/api/rank') {
