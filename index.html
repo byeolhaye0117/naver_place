@@ -298,6 +298,22 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .jb li b{display:inline;font-size:13px;margin:0}
 .jb p{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.7}
 
+/* 개선 기록 */
+.done-btn{margin-top:11px}
+.todo-item.done{opacity:.5}
+.done-mark{display:inline-block;margin-top:11px;font-size:12.5px;font-weight:700;
+  color:var(--ok-fg);background:var(--ok-bg);border:1px solid var(--ok-line);padding:6px 12px;border-radius:8px}
+.wl{margin-top:6px;border-left:2px solid var(--line);padding-left:2px}
+.wl-row{display:flex;align-items:baseline;gap:10px;padding:8px 0 8px 14px;position:relative;font-size:13.5px}
+.wl-row.rank{background:color-mix(in srgb,var(--info-bg) 60%,transparent);border-radius:0 8px 8px 0}
+.wl-d{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;flex:none;min-width:34px}
+.wl-dot{position:absolute;left:-5px;top:14px;width:8px;height:8px;border-radius:50%;flex:none}
+.wl-t{flex:1;min-width:0}
+.wl-up{color:var(--ok-fg);font-weight:800;font-size:12.5px;margin-left:4px}
+.wl-dn{color:var(--bad-fg);font-weight:800;font-size:12.5px;margin-left:4px}
+.wl-eq{color:var(--muted);font-size:12.5px;margin-left:4px}
+.wl-note{font-size:12.5px;color:var(--muted);line-height:1.75;margin-top:12px}
+
 /* 안내 박스 */
 .lan{border:1px solid var(--acc-line);background:var(--acc-bg);border-radius:11px;padding:14px 16px}
 .lan b{font-size:14px;display:block;margin-bottom:6px}
@@ -554,6 +570,16 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <h2>할 일 <span id="r-todo-count" style="font-size:14px;color:var(--muted);font-weight:600"></span></h2>
       <p class="desc">순위 영향이 큰 순서입니다. 위에서부터 처리하세요.</p>
       <div id="r-todo"></div>
+    </div>
+
+    <div class="card">
+      <h2>📒 개선 기록 <span id="wl-count" class="srv-badge" style="background:var(--info-bg);color:var(--info-fg);border-color:transparent"></span></h2>
+      <p class="desc">
+        할 일을 처리하셨으면 <b>완료</b>를 눌러 기록하세요.
+        순위 조회 기록과 겹쳐 보면 <b>어떤 작업 뒤에 순위가 움직였는지</b> 남습니다.
+        남의 사례보다 내 가게 데이터가 정확합니다.
+      </p>
+      <div id="wl-body"></div>
     </div>
   </section>
 
@@ -1024,11 +1050,13 @@ $("btn-run").addEventListener("click", ()=>{
         return `<div class="todo-item" style="border-left-color:${P.color}">
           <div class="h"><em style="background:${P.color}">+${lost}점</em><span>${x.t}</span>
             <u style="background:${c.c}">${P.name} · ${c.t}</u></div>
-          <p class="a">${x.act}${note}</p></div>`;
+          <p class="a">${x.act}${note}</p>
+          <button class="btn sm ghost done-btn" type="button" data-done="${x.id}">✓ 완료</button></div>`;
       }).join("")
     : `<div class="all-good">22개 항목 전부 통과했습니다. 이 상태를 유지하면서 리뷰와 소식만 꾸준히 관리하세요.</div>`;
 
   buildWriter(o);
+  renderWorklog();
   ["result","writer"].forEach(id=>$(id).style.display="block");
   $("result").scrollIntoView({behavior:"smooth", block:"start"});
 });
@@ -1177,6 +1205,100 @@ function showToast(){
   const t=$("toast"); t.classList.add("on");
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("on"),1600);
 }
+
+/* ============================================================
+   개선 기록 — 내 가게의 실전 데이터를 쌓는 장치
+
+   컨설팅 사례가 없으니 남의 900건을 흉내 낼 수는 없다.
+   대신 "무엇을 고쳤고 그 뒤 순위가 어떻게 됐는지"를 내 가게에서 직접 쌓는다.
+   시간이 갈수록 이 기록이 어떤 항목이 효과 있었는지 알려준다.
+
+   저장은 localStorage — 서버 없이 휴대폰에서도 기록되고, 이어쓰기 코드로 옮겨진다.
+   ============================================================ */
+const WORK_KEY = "gym-place-check/worklog";
+const readWork  = () => { try{ return JSON.parse(localStorage.getItem(WORK_KEY)) || []; }catch{ return []; } };
+const writeWork = a => { try{ localStorage.setItem(WORK_KEY, JSON.stringify(a.slice(-300))); }catch{} };
+const dstr = ts => { const d = new Date(ts); return `${d.getMonth()+1}/${d.getDate()}`; };
+
+function logWork(item){
+  const a = readWork();
+  a.push({ ts: new Date().toISOString(), id: item.id, title: item.t, pillar: item.p, w: item.w });
+  writeWork(a);
+  renderWorklog();
+}
+
+/* 작업 기록과 순위 기록을 시간순으로 합쳐 보여준다.
+   인과로 단정하지 않는다 — 순서일 뿐이고 다른 요인도 있다. */
+async function renderWorklog(){
+  const work = readWork();
+  $("wl-count").textContent = work.length ? `${work.length}건` : "";
+
+  if(!work.length){
+    $("wl-body").innerHTML = `<div class="trend" style="margin-top:4px">
+      아직 기록이 없습니다. 위 <b>할 일</b>에서 처리한 항목의 <b>완료</b>를 눌러 보세요.</div>`;
+    return;
+  }
+
+  // 순위 기록은 서버에 있다. 없으면 작업 기록만 보여준다.
+  let ranks = [];
+  if(SERVER){
+    const kw = $("i-kw1").value.trim();
+    try{
+      const r = await (await fetch(apiUrl(`/api/history${kw?`?keyword=${encodeURIComponent(kw)}`:""}`))).json();
+      ranks = (r.records||[]).filter(x=>x.rank!=null);
+    }catch{}
+  }
+
+  const rows = [
+    ...work.map(w=>({ ts:w.ts, type:"work", title:w.title, pillar:w.pillar })),
+    ...ranks.map(r=>({ ts:r.ts, type:"rank", title:r.keyword, rank:r.rank })),
+  ].sort((a,b)=> new Date(a.ts) - new Date(b.ts));
+
+  let prev = null;
+  const html = rows.map(r=>{
+    if(r.type === "work"){
+      const c = PILLARS[r.pillar]?.color || "var(--muted)";
+      return `<div class="wl-row"><span class="wl-d">${dstr(r.ts)}</span>
+        <span class="wl-dot" style="background:${c}"></span>
+        <span class="wl-t"><b>${r.title}</b> 완료</span></div>`;
+    }
+    const diff = prev==null ? null : prev - r.rank;
+    prev = r.rank;
+    const badge = diff==null ? ""
+      : diff>0 ? `<span class="wl-up">▲ ${diff}</span>`
+      : diff<0 ? `<span class="wl-dn">▼ ${-diff}</span>`
+      : `<span class="wl-eq">—</span>`;
+    return `<div class="wl-row rank"><span class="wl-d">${dstr(r.ts)}</span>
+      <span class="wl-dot" style="background:var(--muted)"></span>
+      <span class="wl-t">"${r.title}" <b>${r.rank}위</b> ${badge}</span></div>`;
+  }).join("");
+
+  const note = ranks.length
+    ? `<p class="wl-note">시간 순서일 뿐 인과가 증명된 것은 아닙니다. 경쟁사 변화·계절 같은 다른 요인도 순위를 움직입니다.
+       다만 같은 작업이 여러 번 순위 상승 앞에 나온다면, 그건 신호로 볼 만합니다.</p>`
+    : `<p class="wl-note">PC 도우미를 켜고 순위를 조회하면, 작업 기록과 순위 변화가 여기서 겹쳐 보입니다.</p>`;
+
+  $("wl-body").innerHTML = `<div class="wl">${html}</div>${note}
+    <div class="btn-row"><button class="btn ghost" id="wl-clear" type="button"
+      style="width:auto;padding:9px 15px;font-size:13.5px">기록 지우기</button></div>`;
+
+  $("wl-clear").addEventListener("click", ()=>{
+    if(!confirm("개선 기록을 전부 지웁니다. 계속할까요?")) return;
+    writeWork([]); renderWorklog();
+  });
+}
+
+/* 할 일 목록의 "완료" 버튼 */
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-done]");
+  if(!b) return;
+  const item = ITEMS.find(x=>x.id === b.dataset.done);
+  if(!item) return;
+  logWork(item);
+  b.closest(".todo-item")?.classList.add("done");
+  b.outerHTML = `<span class="done-mark">기록됨</span>`;
+  showToast("개선 기록에 남겼습니다");
+});
 
 /* ============================================================
    붙여넣기 파싱 — 서버 없이 휴대폰에서 쓰는 자동 입력
@@ -1342,6 +1464,7 @@ function snapshot(){
   TEXT_IDS.forEach(id => { const el=$(id); if(el) o[id] = el.value; });
   o.fac  = [...document.querySelectorAll("[data-fac]:checked")].map(e=>e.value);
   o.chk  = [...document.querySelectorAll("[data-item]:checked")].map(e=>e.dataset.item);
+  o.work = readWork();          // 개선 기록도 함께 옮긴다
   o.at   = new Date().toISOString();
   return o;
 }
@@ -1351,6 +1474,7 @@ function restore(o){
   TEXT_IDS.forEach(id => { const el=$(id); if(el && o[id]!=null) el.value = o[id]; });
   document.querySelectorAll("[data-fac]").forEach(e => e.checked = (o.fac||[]).includes(e.value));
   document.querySelectorAll("[data-item]").forEach(e => e.checked = (o.chk||[]).includes(e.dataset.item));
+  if(Array.isArray(o.work)) writeWork(o.work);
   $("i-intro").dispatchEvent(new Event("input"));
 }
 
