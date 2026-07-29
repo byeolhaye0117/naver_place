@@ -168,6 +168,24 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .adm > button{background:none;border:0;color:var(--muted);font-size:13px;padding:0;text-decoration:underline}
 .adm-panel{display:none;margin-top:14px;background:#f9fafc;border:1px solid var(--line);border-radius:10px;padding:16px}
 
+/* 서버 연동 */
+.srv-badge{font-size:11.5px;font-weight:700;background:#eefaf2;color:#0b7a3d;border:1px solid #bfe6cf;
+  padding:3px 10px;border-radius:999px;margin-left:auto}
+.srv-res{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:15px;background:#fbfcfe}
+.srv-res h5{font-size:13.5px;font-weight:800;margin:0 0 10px}
+.kv-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13.5px}
+.kv-grid dt{color:var(--muted);white-space:nowrap}
+.kv-grid dd{margin:0;font-weight:600}
+.rank-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.rank-row:last-child{border-bottom:0}
+.rank-row .k{font-weight:700;font-size:14px;flex:1;min-width:120px}
+.rank-row .v{font-size:20px;font-weight:800;letter-spacing:-.03em}
+.rank-row .v small{font-size:12px;font-weight:600;color:var(--muted);margin-left:2px}
+.rank-row .d{font-size:12px;font-weight:700;padding:2px 8px;border-radius:6px}
+.trend{font-size:12.5px;color:var(--muted);margin-top:10px}
+.srv-err{background:#fff5f5;border:1px solid #f6cfd0;border-radius:10px;padding:13px 15px;font-size:13px;color:#8a2b2e;margin-top:14px}
+.srv-err pre{margin:8px 0 0;font-size:11.5px;white-space:pre-wrap;word-break:break-all;color:#6b2224}
+
 footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted);line-height:1.9}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
   background:var(--navy);color:#fff;padding:11px 20px;border-radius:999px;font-size:14px;font-weight:600;
@@ -191,6 +209,35 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 </header>
 
 <main class="wrap">
+
+  <!-- 서버 연동 (로컬 서버 실행 중일 때만 표시) -->
+  <section class="card" id="srv" style="display:none">
+    <h2>🔗 자동 수집 · 순위 추적 <span id="srv-badge" class="srv-badge">서버 연결됨</span></h2>
+    <p class="desc">내 플레이스 주소를 넣으면 네이버에서 정보를 직접 가져오고, 목표 키워드의 현재 순위를 조회합니다.</p>
+
+    <label class="f" style="margin-top:16px"><span>내 플레이스 주소 또는 ID</span>
+      <input id="s-url" type="text" placeholder="https://map.naver.com/p/entry/place/1234567890  또는  naver.me 단축링크">
+      <div class="hint">네이버 지도에서 내 가게 → 공유 → 링크 복사</div></label>
+
+    <div class="btn-row">
+      <button class="btn dark" id="s-collect" type="button">정보 자동 수집</button>
+      <button class="btn ghost" id="s-rank" type="button">목표 키워드 순위 조회</button>
+    </div>
+
+    <div id="s-out"></div>
+  </section>
+
+  <!-- 서버 미실행 안내 -->
+  <section class="card" id="srv-off">
+    <h2>💡 자동 수집을 쓰시려면</h2>
+    <p class="desc">지금은 <b>수동 입력 모드</b>입니다. 이대로도 진단은 다 됩니다.
+      다만 로컬 서버를 켜면 네이버에서 리뷰수·사진수·저장수를 직접 가져오고, <b>목표 키워드 순위까지 추적</b>할 수 있습니다.</p>
+    <div class="box" style="padding:14px;margin-top:12px">터미널에서 이 폴더로 이동한 뒤:
+
+  node server.js
+
+그리고 http://localhost:5173 로 접속하세요.</div>
+  </section>
 
   <!-- STEP 1 -->
   <section class="card">
@@ -909,18 +956,154 @@ function showToast(){
 }
 
 /* ============================================================
-   AI 소개글 재작성 (개인용 전제 · 브라우저 직접 호출)
+   로컬 서버 연동 — 자동 수집 · 순위 추적
+   서버가 없으면 조용히 수동 모드로 남는다.
+   ============================================================ */
+let SERVER = null;   // { ai:boolean } 이면 연결됨
+
+(async function detectServer(){
+  // file:// 로 연 경우엔 시도 자체를 하지 않는다.
+  // 어차피 서버가 있을 수 없고, 콘솔에 CORS 에러만 남는다.
+  if(location.protocol === "file:") return;
+  try{
+    const r = await fetch("/api/health", { signal: AbortSignal.timeout(1500) });
+    if(!r.ok) return;
+    SERVER = await r.json();
+    $("srv").style.display = "block";
+    $("srv-off").style.display = "none";
+    if(SERVER.ai) $("srv-badge").textContent = "서버 연결됨 · AI 프록시 사용 가능";
+  }catch{ /* file:// 로 열었거나 서버 미실행 — 수동 모드 유지 */ }
+})();
+
+function srvError(title, res){
+  const tried = (res.attempts||[]).map(a=>
+    `· ${a.result}${a.status?` (HTTP ${a.status})`:""}\n  ${a.url||""}`).join("\n");
+  return `<div class="srv-err"><b>${title}</b><br>${res.error||""}
+    ${tried?`<pre>${tried}</pre>`:""}
+    <div style="margin-top:8px">터미널에서 <b>node server.js --probe "키워드" "플레이스URL"</b> 을 실행하고
+    출력을 알려주시면 파서를 맞출 수 있습니다.</div></div>`;
+}
+
+const FIELD_LABEL = {
+  name:"업체명", category:"카테고리", description:"소개글", phone:"전화번호",
+  visitorReviewCount:"방문자 리뷰", blogCafeReviewCount:"블로그 리뷰",
+  visitorReviewScore:"평점", totalReviewCount:"전체 리뷰",
+  imageCount:"사진 수", photoCount:"사진 수", bookmarkCount:"저장 수",
+  roadAddress:"도로명 주소", address:"지번 주소",
+  homepage:"홈페이지", bookingUrl:"네이버 예약", talktalkUrl:"톡톡",
+  businessHours:"영업시간", conveniences:"편의시설", keywords:"키워드"
+};
+
+$("s-collect")?.addEventListener("click", async ()=>{
+  const url = $("s-url").value.trim();
+  if(!url){ alert("플레이스 주소를 입력해 주세요."); return; }
+  const btn = $("s-collect");
+  btn.disabled = true; btn.textContent = "수집 중…";
+  try{
+    const res = await (await fetch(`/api/place?url=${encodeURIComponent(url)}`)).json();
+    if(!res.ok){ $("s-out").innerHTML = srvError("플레이스 정보를 가져오지 못했습니다", res); return; }
+
+    // 가져온 값 중 입력란에 채울 수 있는 것은 자동으로 채운다
+    const d = res.data;
+    if(d.name && !$("i-name").value) $("i-name").value = d.name;
+    if(d.description && !$("i-intro").value){
+      $("i-intro").value = d.description;
+      $("i-intro").dispatchEvent(new Event("input"));
+    }
+
+    const rows = Object.entries(d).map(([k,v])=>
+      `<dt>${FIELD_LABEL[k]||k}</dt><dd>${String(v).slice(0,120)}</dd>`).join("");
+
+    // 수집값으로 판단 가능한 체크 항목을 안내 (자동 체크는 하지 않는다 — 오판 위험)
+    const hints = [];
+    const rev = Number(d.visitorReviewCount ?? d.totalReviewCount);
+    if(!isNaN(rev)) hints.push(`방문자 리뷰 ${rev}개 → 항목 "방문자 리뷰가 50개 이상" ${rev>=50?"충족 ✅":"미달 ❌"}`);
+    const blog = Number(d.blogCafeReviewCount);
+    if(!isNaN(blog)) hints.push(`블로그 리뷰 ${blog}개 → "블로그 리뷰 10개 이상" ${blog>=10?"충족 ✅":"미달 ❌"}`);
+    const img = Number(d.imageCount ?? d.photoCount);
+    if(!isNaN(img)) hints.push(`사진 ${img}장 → "사진 30장 이상" ${img>=30?"충족 ✅":"미달 ❌"}`);
+    const save = Number(d.bookmarkCount);
+    if(!isNaN(save)) hints.push(`저장 ${save}회 → "저장수 100 이상" ${save>=100?"충족 ✅":"미달 ❌"}`);
+    if(d.bookingUrl || d.talktalkUrl) hints.push(`예약/톡톡 연결됨 → 해당 항목 충족 ✅`);
+    if(d.homepage) hints.push(`홈페이지 연결됨 → 해당 항목 충족 ✅`);
+
+    $("s-out").innerHTML = `<div class="srv-res">
+      <h5>수집 완료 — ${res.fields}개 항목 (플레이스 ID ${res.placeId})</h5>
+      <dl class="kv-grid">${rows}</dl>
+      ${hints.length?`<div class="trend"><b>3단계 체크 참고</b><br>${hints.join("<br>")}</div>`:""}
+      <div class="trend">업체명·소개글은 위 1·2단계 입력란에 자동으로 채웠습니다. 체크 항목은 오판을 막기 위해 직접 확인 후 체크하세요.</div>
+    </div>`;
+  }catch(e){
+    $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
+  }finally{ btn.disabled=false; btn.textContent="정보 자동 수집"; }
+});
+
+$("s-rank")?.addEventListener("click", async ()=>{
+  const url = $("s-url").value.trim();
+  const kws = ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value.trim()).filter(Boolean);
+  if(!url){ alert("플레이스 주소를 입력해 주세요."); return; }
+  if(!kws.length){ alert("2단계에서 목표 키워드를 먼저 입력해 주세요."); $("i-kw1").focus(); return; }
+
+  const btn = $("s-rank");
+  btn.disabled = true; btn.textContent = "조회 중…";
+  const out = [];
+  try{
+    for(const kw of kws){
+      const res = await (await fetch(`/api/rank?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`)).json();
+      if(!res.ok){ out.push(srvError(`"${kw}" 순위 조회 실패`, res)); continue; }
+
+      // 직전 기록과 비교
+      const hist = await (await fetch(`/api/history?keyword=${encodeURIComponent(kw)}`)).json();
+      const recs = (hist.records||[]).filter(r=>r.rank!=null);
+      let delta = "";
+      if(recs.length>=2){
+        const prev = recs[recs.length-2].rank, now = recs[recs.length-1].rank;
+        const diff = prev - now;   // 숫자가 줄면 순위 상승
+        delta = diff>0 ? `<span class="d" style="background:#eefaf2;color:#0b7a3d">▲ ${diff}칸 상승</span>`
+              : diff<0 ? `<span class="d" style="background:#fff5f5;color:#b3282c">▼ ${-diff}칸 하락</span>`
+              : `<span class="d" style="background:#eef1f6;color:#5f6b7a">변동 없음</span>`;
+      }
+
+      const val = res.found
+        ? `<span class="v">${res.rank}<small>위</small></span>`
+        : `<span class="v" style="color:var(--muted);font-size:15px">${res.scanned}위 밖</span>`;
+
+      const top = res.top5.map(p=>`${p.rank}. ${p.name}`).join("  ·  ");
+      out.push(`<div class="rank-row"><span class="k">${kw}</span>${val}${delta}</div>
+        <div class="trend">상위 ${res.top5.length}곳 — ${top}<br>스캔 범위 ${res.scanned}곳 · 기록 ${recs.length}회 누적</div>`);
+    }
+    $("s-out").innerHTML = `<div class="srv-res"><h5>키워드 순위</h5>${out.join("")}</div>`;
+  }catch(e){
+    $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
+  }finally{ btn.disabled=false; btn.textContent="목표 키워드 순위 조회"; }
+});
+
+/* ============================================================
+   AI 소개글 재작성
+   서버가 있으면 /api/ai 프록시를 쓴다 (키가 브라우저에 노출되지 않음).
+   서버가 없으면 브라우저에서 직접 호출한다 (개인용 전제).
    ============================================================ */
 $("adm-toggle").addEventListener("click", ()=>{
   const p=$("adm-panel"), open=p.style.display==="block";
   p.style.display = open?"none":"block";
-  if(!open) $("adm-key").value = sessionStorage.getItem("ak") || "";
+  if(open) return;
+
+  if(SERVER?.ai){
+    // 서버가 키를 들고 있으므로 브라우저에 입력받을 이유가 없다
+    $("adm-key").closest("label").style.display = "none";
+    $("adm-panel").querySelector(".danger").outerHTML =
+      `<div class="srv-res" style="margin:0 0 14px"><b>서버 프록시 사용</b> —
+       API 키는 서버 환경변수에만 있고 브라우저로 내려오지 않습니다.</div>`;
+  }else{
+    $("adm-key").value = sessionStorage.getItem("ak") || "";
+  }
 });
 
 $("adm-run").addEventListener("click", async ()=>{
+  const useProxy = Boolean(SERVER?.ai);
   const key = $("adm-key").value.trim();
-  if(!key){ alert("API 키를 입력해 주세요."); return; }
-  sessionStorage.setItem("ak", key);
+  if(!useProxy && !key){ alert("API 키를 입력해 주세요."); return; }
+  if(!useProxy) sessionStorage.setItem("ak", key);
 
   const o = getInfo();
   const btn = $("adm-run");
@@ -951,22 +1134,30 @@ ${o.keywords.map((k,i)=>`${i+1}. "${k}"`).join("\n")}
 
 소개글 본문만 출력해라. 설명이나 머리말은 붙이지 마라.`;
 
+  const payload = {
+    model: CONFIG.aiModel,
+    max_tokens: 4000,
+    output_config:{ effort:"medium" },
+    messages:[{role:"user",content:prompt}]
+  };
+
   try{
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{
-        "content-type":"application/json",
-        "x-api-key":key,
-        "anthropic-version":"2023-06-01",
-        "anthropic-dangerous-direct-browser-access":"true"
-      },
-      body: JSON.stringify({
-        model: CONFIG.aiModel,
-        max_tokens: 4000,
-        output_config:{ effort:"medium" },
-        messages:[{role:"user",content:prompt}]
-      })
-    });
+    const res = useProxy
+      ? await fetch("/api/ai", {
+          method:"POST",
+          headers:{ "content-type":"application/json" },
+          body: JSON.stringify(payload)
+        })
+      : await fetch("https://api.anthropic.com/v1/messages",{
+          method:"POST",
+          headers:{
+            "content-type":"application/json",
+            "x-api-key":key,
+            "anthropic-version":"2023-06-01",
+            "anthropic-dangerous-direct-browser-access":"true"
+          },
+          body: JSON.stringify(payload)
+        });
     if(!res.ok){ throw new Error(`API 오류 ${res.status}\n${(await res.text()).slice(0,300)}`); }
     const data = await res.json();
     if(data.stop_reason === "refusal") throw new Error("모델이 요청을 거절했습니다. 입력값을 확인해 주세요.");
