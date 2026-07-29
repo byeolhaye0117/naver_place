@@ -256,10 +256,15 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
   <!-- 서버 미실행 안내 -->
   <section class="card" id="srv-off">
-    <h2>💡 자동 수집을 쓰시려면</h2>
-    <p class="desc">지금은 <b>수동 입력 모드</b>입니다. 이대로도 진단은 다 됩니다.
-      다만 로컬 서버를 켜면 네이버에서 리뷰수·사진수·저장수를 직접 가져오고, <b>목표 키워드 순위까지 추적</b>할 수 있습니다.</p>
-    <div class="box" style="padding:14px;margin-top:12px">터미널에서 이 폴더로 이동한 뒤:
+    <h2>💡 지금은 수동 입력 모드</h2>
+    <p class="desc"><b>이대로도 진단·키워드 분석·문장 생성은 전부 됩니다.</b> 휴대폰에서도 그대로 쓰세요.<br>
+      아래 3가지는 PC에서 로컬 서버를 켜야 동작합니다 — 네이버에 직접 요청을 보내야 해서 휴대폰 브라우저만으로는 안 됩니다.</p>
+    <ul style="font-size:14px;color:var(--muted);margin:12px 0 0;padding-left:20px;line-height:1.9">
+      <li>플레이스 정보 자동 수집 (리뷰수·사진수·저장수)</li>
+      <li>목표 키워드 순위 조회 및 추적</li>
+      <li>상위 3곳 경쟁 분석</li>
+    </ul>
+    <div class="box" style="padding:14px;margin-top:14px">PC에서 이 폴더를 받은 뒤:
 
   node server.js
 
@@ -989,9 +994,9 @@ function showToast(){
 let SERVER = null;   // { ai:boolean } 이면 연결됨
 
 (async function detectServer(){
-  // file:// 로 연 경우엔 시도 자체를 하지 않는다.
-  // 어차피 서버가 있을 수 없고, 콘솔에 CORS 에러만 남는다.
-  if(location.protocol === "file:") return;
+  // 로컬 서버는 항상 localhost 에서 돈다.
+  // file:// 이나 외부 호스팅에서는 요청해봤자 실패하고 콘솔만 더럽히므로 건너뛴다.
+  if(!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
   try{
     const r = await fetch("/api/health", { signal: AbortSignal.timeout(1500) });
     if(!r.ok) return;
