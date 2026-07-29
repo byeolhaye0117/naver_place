@@ -854,12 +854,52 @@ const server = http.createServer(async (req, res) => {
 
 async function probe(keyword, placeUrl) {
   const line = s => console.log(s);
-  line('\n네이버 응답 점검\n' + '='.repeat(56));
 
-  if (placeUrl) {
+  /* URL이 없으면 점검할 게 없다. 조용히 빈 결과를 내지 말고 이유를 말한다. */
+  if (!placeUrl) {
+    console.error('\n❌ 플레이스 URL을 받지 못했습니다. 점검할 대상이 없어 아무것도 실행하지 않았습니다.\n');
+    console.error('  사용법  node server.js --probe "키워드" "플레이스URL"');
+    console.error('  예시    node server.js --probe "쌍용동 헬스장" "https://naver.me/xq3KrZES"\n');
+    console.error('  ⚠ 키워드와 URL 사이에 공백을 반드시 넣으세요.');
+    console.error('     "키워드""URL" 처럼 붙여 쓰면 PowerShell이 둘을 한 덩어리로 합칩니다.');
+    if (keyword) console.error(`\n  이번에 받은 값: ${JSON.stringify(keyword)}`);
+    console.error('');
+    process.exitCode = 1;
+    return;
+  }
+
+  line('\n네이버 응답 점검\n' + '='.repeat(56));
+  line(`  대상 URL : ${placeUrl}`);
+  line(`  키워드   : ${keyword || '(없음 — 순위 조회는 건너뜁니다)'}`);
+
+  /* ID 확인을 따로 떼어 놓는다. 여기서 막히면 뒤 단계는 의미가 없고,
+     단축링크가 안 열린 것과 네이버가 응답을 바꾼 것은 완전히 다른 문제다. */
+  line('\n[0] 플레이스 ID 확인');
+  let id;
+  try {
+    id = await resolvePlaceId(placeUrl);
+    line(`  ✅ ${id}`);
+  } catch (e) {
+    line(`  ❌ ${e.message}`);
+    if (/naver\.me/.test(placeUrl)) {
+      try {
+        const r = await get(placeUrl);
+        line(`     단축링크 응답: HTTP ${r.status} → ${r.url}`);
+      } catch (e2) {
+        line(`     단축링크 요청 자체가 실패: ${e2.message}`);
+      }
+      line('     👉 단축링크(naver.me)가 실제 주소로 넘어가지 않았습니다.');
+      line('        네이버 지도에서 내 가게를 열고, 브라우저 주소창의 긴 주소를');
+      line('        (map.naver.com/p/entry/place/숫자) 그대로 넣어 다시 실행해 보세요.');
+    }
+    line('\n' + '='.repeat(56) + '\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  {
     line('\n[1] 플레이스 정보 수집');
-    const r = await collectPlace(placeUrl);
-    line(`  플레이스 ID : ${r.placeId}`);
+    const r = await collectPlace(id);
     if (r.ok) {
       line(`  ✅ 성공 — ${r.source}`);
       line(`  수집 필드 ${r.fields}개:`);
@@ -875,9 +915,8 @@ async function probe(keyword, placeUrl) {
     }
   }
 
-  if (keyword && placeUrl) {
+  if (keyword) {
     line(`\n[2] 순위 조회 — "${keyword}"`);
-    const id = await resolvePlaceId(placeUrl);
     const r = await findRank(keyword, id);
     if (r.ok) {
       line(`  ✅ 성공 — ${r.scanned}개 업체 스캔`);
@@ -912,15 +951,33 @@ async function track(keyword, url) {
   console.log(`[${stamp}] "${keyword}" → ${r.found ? r.rank + '위' : `${r.scanned}위 밖`}`);
 }
 
+/* PowerShell에서 "키워드""URL" 처럼 공백 없이 붙여 넣으면 셸이 둘을 한 인자로 합친다.
+   흔한 실수라서, 붙은 자리를 찾아 갈라 주고 그렇게 했다고 알려 준다. */
+function splitArgs(rest) {
+  const parts = rest.map(a => String(a)).filter(a => a.trim() !== '');
+  if (parts.length >= 2) return { keyword: parts[0].trim(), url: parts[1].trim() };
+
+  const one = parts[0] || '';
+  const at = one.search(/https?:\/\/|naver\.me|map\.naver\.com/);
+  if (at > 0) {
+    const split = { keyword: one.slice(0, at).trim(), url: one.slice(at).trim() };
+    console.error(`\n⚠ 키워드와 URL이 공백 없이 붙어 있었습니다. 이렇게 나눠서 진행합니다:`);
+    console.error(`   키워드 ${JSON.stringify(split.keyword)}`);
+    console.error(`   URL    ${JSON.stringify(split.url)}`);
+    return split;
+  }
+  return { keyword: one.trim(), url: '' };
+}
+
 const argv = process.argv;
 if (argv.includes('--probe')) {
-  const rest = argv.slice(argv.indexOf('--probe') + 1);
-  probe(rest[0], rest[1]).catch(e => { console.error('오류:', e.message); process.exit(1); });
+  const a = splitArgs(argv.slice(argv.indexOf('--probe') + 1));
+  probe(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
 
 } else if (argv.includes('--track')) {
-  const rest = argv.slice(argv.indexOf('--track') + 1);
-  if (rest.length < 2) { console.error('사용법: node server.js --track "키워드" <플레이스URL>'); process.exit(1); }
-  track(rest[0], rest[1]).catch(e => { console.error('오류:', e.message); process.exit(1); });
+  const a = splitArgs(argv.slice(argv.indexOf('--track') + 1));
+  if (!a.keyword || !a.url) { console.error('사용법: node server.js --track "키워드" "플레이스URL"'); process.exit(1); }
+  track(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
 
 } else {
   server.listen(PORT, HOST, () => {
