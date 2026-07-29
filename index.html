@@ -183,6 +183,32 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .rank-row .v small{font-size:12px;font-weight:600;color:var(--muted);margin-left:2px}
 .rank-row .d{font-size:12px;font-weight:700;padding:2px 8px;border-radius:6px}
 .trend{font-size:12.5px;color:var(--muted);margin-top:10px}
+/* 경쟁 분석 */
+.cmp-scroll{overflow-x:auto;margin-top:12px;-webkit-overflow-scrolling:touch}
+table.cmp{border-collapse:collapse;width:100%;min-width:520px;font-size:13.5px}
+table.cmp th,table.cmp td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+table.cmp th:first-child,table.cmp td:first-child{text-align:left}
+table.cmp thead th{font-size:12px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line)}
+table.cmp thead th.me{color:var(--accent)}
+table.cmp td.me{font-weight:800;background:#fff8f5}
+table.cmp td.gap{font-size:12px;font-weight:700}
+.axis-grid{display:grid;gap:10px;margin-top:14px}
+.axis-item{display:flex;gap:11px;align-items:flex-start;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:#fff}
+.axis-item .ic{font-size:15px;line-height:1.4;flex:none}
+.axis-item b{font-size:14px;display:block}
+.axis-item p{font-size:13px;color:var(--muted);margin-top:3px}
+.axis-item.lose{border-color:#f6cfd0;background:#fff8f8}
+.gap-tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+.gap-tags span{font-size:12.5px;padding:5px 11px;border-radius:8px;border:1px solid var(--line);background:#fff}
+.gap-tags span.miss{border-color:#ffd0bf;background:#fff4ef;color:#b03a12;font-weight:600}
+.gap-tags span.have{opacity:.55}
+.act{margin-top:14px;border-radius:11px;padding:14px 16px;border:1px solid var(--line)}
+.act.now{border-color:#bfe6cf;background:#f4fcf7}
+.act.slow{border-color:#f5e2b8;background:#fffdf6}
+.act.cant{border-color:#e0dced;background:#faf9fd}
+.act h5{font-size:13.5px;font-weight:800;margin:0 0 8px}
+.act ul{margin:0;padding-left:19px;font-size:13.5px;line-height:1.75}
+.act li + li{margin-top:6px}
 .srv-err{background:#fff5f5;border:1px solid #f6cfd0;border-radius:10px;padding:13px 15px;font-size:13px;color:#8a2b2e;margin-top:14px}
 .srv-err pre{margin:8px 0 0;font-size:11.5px;white-space:pre-wrap;word-break:break-all;color:#6b2224}
 
@@ -221,7 +247,8 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
     <div class="btn-row">
       <button class="btn dark" id="s-collect" type="button">정보 자동 수집</button>
-      <button class="btn ghost" id="s-rank" type="button">목표 키워드 순위 조회</button>
+      <button class="btn ghost" id="s-rank" type="button">순위 조회</button>
+      <button class="btn" id="s-comp" type="button">🔍 상위 3곳 분석</button>
     </div>
 
     <div id="s-out"></div>
@@ -1076,6 +1103,79 @@ $("s-rank")?.addEventListener("click", async ()=>{
   }catch(e){
     $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
   }finally{ btn.disabled=false; btn.textContent="목표 키워드 순위 조회"; }
+});
+
+/* ============================================================
+   상위 3곳 경쟁 분석
+   ============================================================ */
+const fmt = (v,u="") => (v===null||v===undefined||v==="") ? "—" : `${v}${u}`;
+
+$("s-comp")?.addEventListener("click", async ()=>{
+  const url = $("s-url").value.trim();
+  const kw  = $("i-kw1").value.trim();
+  if(!url){ alert("플레이스 주소를 입력해 주세요."); return; }
+  if(!kw){ alert("2단계에서 1순위 목표 키워드를 먼저 입력해 주세요."); $("i-kw1").focus(); return; }
+
+  const btn = $("s-comp");
+  btn.disabled = true; btn.textContent = "분석 중… (30초 정도)";
+  try{
+    const r = await (await fetch(`/api/competitors?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`)).json();
+    if(!r.ok){ $("s-out").innerHTML = srvError(`"${kw}" 상위권 분석 실패 (${r.stage} 단계)`, r); return; }
+
+    const cols = r.rivals.map(v=>`${v.rank}위`).join("</th><th>");
+    const row = (c)=>{
+      const cells = c.rivals.map(v=>`<td>${fmt(v)}</td>`).join("");
+      const gap = c.unknown ? `<td class="gap" style="color:var(--muted)">비교 불가</td>`
+        : c.behind ? `<td class="gap" style="color:#b3282c">${c.gap}${c.unit} 부족</td>`
+                   : `<td class="gap" style="color:#0b7a3d">충족</td>`;
+      return `<tr><td>${c.label}</td><td class="me">${fmt(c.mine,c.unit)}</td>${cells}${gap}</tr>`;
+    };
+
+    const missing = r.gaps.filter(g=>!g.inMine);
+    const gapTags = r.gaps.slice(0,24).map(g=>
+      `<span class="${g.inMine?"have":"miss"}">${g.inMine?"✓":"＋"} ${g.term} <small style="opacity:.7">${g.usedBy}/${g.total}</small></span>`).join("");
+
+    const axes = ["R","P","D"].map(k=>{
+      const v = r.verdict[k];
+      return `<div class="axis-item ${v.lose?"lose":""}">
+        <span class="ic">${v.lose?"⚠":"✅"}</span>
+        <div><b>${v.name}${v.lose?" — 밀리고 있음":" — 대등하거나 우위"}</b><p>${v.note}</p></div></div>`;
+    }).join("");
+
+    const actBlock = (cls,title,items) => items.length
+      ? `<div class="act ${cls}"><h5>${title}</h5><ul>${items.map(t=>`<li>${t}</li>`).join("")}</ul></div>` : "";
+
+    const distLine = r.distance.mine!=null
+      ? `상위권 중심에서 우리 ${r.distance.mine}m · 상위권 평균 ${r.distance.rivalAvg}m`
+      : `좌표를 얻지 못해 거리 비교는 생략했습니다`;
+
+    $("s-out").innerHTML = `<div class="srv-res">
+      <h5>"${kw}" 상위 ${r.rivals.length}곳 분석 — 내 순위 ${r.myRank ? r.myRank+"위" : "순위권 밖"}</h5>
+
+      <div class="cmp-scroll"><table class="cmp">
+        <thead><tr><th>지표</th><th class="me">우리</th><th>${cols}</th><th>3위 진입선</th></tr></thead>
+        <tbody>${r.comparison.map(row).join("")}</tbody>
+      </table></div>
+      <div class="trend">${r.rivals.map(v=>`${v.rank}위 ${v.name}`).join("  ·  ")}<br>${distLine}
+        ${r.failedRivals.length?`<br>※ ${r.failedRivals.map(f=>f.rank+"위").join(", ")}는 정보를 가져오지 못해 비교에서 제외했습니다.`:""}</div>
+
+      <h5 style="margin-top:20px">왜 저들이 뜨는가 — 축별 판정</h5>
+      <div class="axis-grid">${axes}</div>
+
+      <h5 style="margin-top:20px">상위권이 공통으로 쓰는 표현 ${missing.length?`— ${missing.length}개 누락`:"— 누락 없음"}</h5>
+      <div class="trend" style="margin-top:0">상위 ${r.rivals.length}곳 중 2곳 이상이 소개글에 쓴 표현입니다. 주황색이 우리에게 없는 것입니다.</div>
+      <div class="gap-tags">${gapTags || '<span class="have">공통 표현을 찾지 못했습니다</span>'}</div>
+
+      <h5 style="margin-top:20px">그래서 뭘 할 것인가</h5>
+      ${actBlock("now","🟢 오늘 바로 할 수 있는 것", r.actions.now)}
+      ${actBlock("slow","🟡 시간이 걸리는 것 (몇 주~몇 달)", r.actions.slow)}
+      ${actBlock("cant","⚪ 바꿀 수 없는 것", r.actions.cant)}
+      ${(!r.actions.now.length && !r.actions.slow.length && !r.actions.cant.length)
+        ? `<div class="act now"><h5>🟢 격차 없음</h5><ul><li>측정 가능한 지표에서 상위권에 밀리는 항목이 없습니다. 순위가 낮다면 이 도구가 못 보는 요인(실제 클릭률·체류시간·재방문)이 원인일 가능성이 큽니다.</li></ul></div>` : ""}
+    </div>`;
+  }catch(e){
+    $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
+  }finally{ btn.disabled=false; btn.textContent="🔍 상위 3곳 분석"; }
 });
 
 /* ============================================================

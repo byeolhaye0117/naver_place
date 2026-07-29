@@ -210,6 +210,7 @@ async function findRank(keyword, placeId, maxPages = 3) {
         scanned: list.length,
         found: idx >= 0,
         top5: list.slice(0, 5).map((p, i) => ({ rank: i + 1, ...p })),
+        ranked: list.map((p, i) => ({ rank: i + 1, ...p })),   // 경쟁 분석용 전체 목록
         attempts,
       };
     }
@@ -217,6 +218,266 @@ async function findRank(keyword, placeId, maxPages = 3) {
 
   return { ok: false, keyword, placeId: String(placeId), attempts,
     error: '검색 결과를 읽지 못했습니다. 네이버 응답 구조가 변경되었을 수 있습니다.' };
+}
+
+/* ============================================================================
+ * 경쟁 분석 — 상위 N곳은 왜 뜨는가
+ *
+ * 핵심 원칙: 알아낸 격차를 "따라잡을 수 있는 것 / 시간이 걸리는 것 /
+ * 못 바꾸는 것" 으로 반드시 나눈다. 섞어서 보여주면 실행할 수 없는 목록이 된다.
+ * ========================================================================== */
+
+/* 헬스장 도메인 어휘.
+   상위권 소개글에 나오는데 우리에겐 없는 표현을 찾아낸다.
+   형태소 분석기 없이도 정확도가 높고, 바로 실행 가능한 결과가 나온다. */
+const GYM_LEXICON = {
+  '시설':   ['무료주차','주차','샤워실','샤워','락커','사물함','운동복','수건','사우나','탈의실',
+             '파우더룸','정수기','인바디','체성분','안마의자','휴게실','냉난방','환기'],
+  '프로그램':['PT','퍼스널트레이닝','개인레슨','그룹운동','GX','필라테스','요가','스피닝','크로스핏',
+             '다이어트','바디프로필','체형교정','재활','근력','유산소','식단'],
+  '운영조건':['24시간','연중무휴','무인','새벽','야간','주말운영','일일권','1일권','단기','환불',
+             '양도','연장','당일등록','무약정'],
+  '대상':   ['초보','입문','여성전용','여성','직장인','학생','시니어','1인'],
+  '기구':   ['프리웨이트','머신','덤벨','바벨','스미스머신','케이블','런닝머신','트레드밀','사이클','로잉'],
+  '신뢰':   ['무료상담','무료체험','체험','상담','경력','자격증','생활스포츠지도사','전문','자세지도'],
+};
+
+/* 두 좌표 사이 거리(m) */
+function distanceM(x1, y1, x2, y2) {
+  const toNum = v => Number(v);
+  [x1, y1, x2, y2] = [x1, y1, x2, y2].map(toNum);
+  if ([x1, y1, x2, y2].some(v => !isFinite(v) || v === 0)) return null;
+  const R = 6371000, rad = d => d * Math.PI / 180;
+  const dLat = rad(y2 - y1), dLon = rad(x2 - x1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(y1)) * Math.cos(rad(y2)) * Math.sin(dLon / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+}
+
+const numOr = (...vals) => { for (const v of vals) { const n = Number(v); if (isFinite(n)) return n; } return null; };
+
+/* 받침 판정 → 조사 선택. 사용자에게 보이는 문장이라 조사가 틀리면 눈에 띈다. */
+const EN_BATCHIM = new Set(['l', 'm', 'n', 'r', 'f', 'h', 's', 'x']);
+function josa(word, pair) {
+  const ch = String(word || '').trim().slice(-1);
+  const set = { '은': ['은', '는'], '이': ['이', '가'], '을': ['을', '를'] };
+  const [withB, noB] = set[pair] || [pair, pair];
+  if (!ch) return noB;
+  const code = ch.charCodeAt(0);
+  let batchim;
+  if (code >= 0xAC00 && code <= 0xD7A3) batchim = (code - 0xAC00) % 28 !== 0;
+  else if (/[a-zA-Z]/.test(ch)) batchim = EN_BATCHIM.has(ch.toLowerCase());
+  else batchim = false;
+  return batchim ? withB : noB;
+}
+
+/* 한 업체의 지표를 표준 형태로 정리 */
+function toMetrics(data = {}) {
+  return {
+    introLen : String(data.description || '').trim().length,
+    review   : numOr(data.visitorReviewCount, data.totalReviewCount),
+    blog     : numOr(data.blogCafeReviewCount),
+    photo    : numOr(data.imageCount, data.photoCount),
+    save     : numOr(data.bookmarkCount),
+    score    : numOr(data.visitorReviewScore),
+    booking  : Boolean(data.bookingUrl || data.talktalkUrl),
+    homepage : Boolean(data.homepage),
+    x        : data.x, y: data.y,
+    intro    : String(data.description || ''),
+    name     : String(data.name || ''),
+    category : String(data.category || ''),
+  };
+}
+
+/* 상위권이 공통으로 쓰는데 우리에겐 없는 표현 */
+function lexiconGap(mineIntro, rivalIntros) {
+  const mine = mineIntro.replace(/\s+/g, '').toLowerCase();
+  const rivals = rivalIntros.map(t => t.replace(/\s+/g, '').toLowerCase());
+  const out = [];
+
+  for (const [cat, terms] of Object.entries(GYM_LEXICON)) {
+    for (const term of terms) {
+      const t = term.toLowerCase();
+      const usedBy = rivals.filter(r => r.includes(t)).length;
+      if (usedBy < 2) continue;                 // 상위권 2곳 이상이 쓸 때만 신호로 본다
+      const inMine = mine.includes(t);
+      out.push({ term, category: cat, usedBy, total: rivals.length, inMine });
+    }
+  }
+  // 부분 문자열 흡수 — "무료주차"가 있으면 "주차"는 버린다.
+  // 긴 표현을 넣으면 짧은 쪽은 자동으로 충족되므로, 둘 다 보여주면 할 일이 부풀려 보인다.
+  const absorbed = out.filter(a =>
+    !out.some(b => b !== a && b.inMine === a.inMine && b.term.length > a.term.length
+                && b.term.toLowerCase().includes(a.term.toLowerCase())));
+
+  // 우리에게 없는 것 먼저, 많이 쓰이는 것 먼저
+  return absorbed.sort((a, b) => (a.inMine - b.inMine) || (b.usedBy - a.usedBy));
+}
+
+/* 지표 비교표 */
+function buildComparison(mine, rivals) {
+  const SPEC = [
+    { key:'introLen', label:'소개글 길이',   unit:'자',  higher:true,  axis:'R' },
+    { key:'review',   label:'방문자 리뷰',   unit:'개',  higher:true,  axis:'P' },
+    { key:'blog',     label:'블로그 리뷰',   unit:'개',  higher:true,  axis:'P' },
+    { key:'photo',    label:'사진',         unit:'장',  higher:true,  axis:'P' },
+    { key:'save',     label:'저장',         unit:'회',  higher:true,  axis:'P' },
+    { key:'score',    label:'평점',         unit:'점',  higher:true,  axis:'P' },
+  ];
+
+  return SPEC.map(s => {
+    const vals = rivals.map(r => r.m[s.key]).filter(v => v != null);
+    if (!vals.length || mine[s.key] == null) {
+      return { ...s, mine: mine[s.key], rivals: rivals.map(r => r.m[s.key]), unknown: true };
+    }
+    const min = Math.min(...vals);           // 3위 안에 들기 위한 최소선
+    const max = Math.max(...vals);
+    const gap = Math.round((min - mine[s.key]) * 10) / 10;
+    return {
+      ...s,
+      mine: mine[s.key],
+      rivals: rivals.map(r => r.m[s.key]),
+      min, max,
+      gap: gap > 0 ? gap : 0,
+      behind: gap > 0,
+    };
+  });
+}
+
+/* 어느 축에서 지고 있는가 */
+function axisVerdict(comparison, distance, kwHit) {
+  const behindIn = ax => comparison.filter(c => c.axis === ax && c.behind).length;
+  const v = {};
+
+  v.R = {
+    name: '적합도',
+    lose: behindIn('R') > 0 || !kwHit,
+    note: !kwHit
+      ? '목표 키워드가 내 소개글에 제대로 안 들어가 있습니다. 상위권과의 격차 이전에 매칭 자체가 안 되는 상태입니다.'
+      : behindIn('R') > 0
+        ? '키워드는 들어가 있지만 소개글 분량이 상위권보다 적습니다. 검색어와 매칭될 표면적이 좁습니다.'
+        : '적합도에서는 상위권과 대등하거나 앞섭니다.',
+  };
+
+  const pBehind = comparison.filter(c => c.axis === 'P' && c.behind);
+  v.P = {
+    name: '인기도',
+    lose: pBehind.length > 0,
+    note: pBehind.length
+      ? `${pBehind.map(c => c.label).join(', ')}에서 상위권에 밀립니다. 이 지표들은 손님이 만드는 결과라 하루아침에 못 뒤집습니다.`
+      : '인기도 지표는 상위권과 대등하거나 앞섭니다.',
+  };
+
+  v.D = {
+    name: '거리',
+    lose: distance.mine != null && distance.rivalAvg != null && distance.mine > distance.rivalAvg * 1.5,
+    note: distance.mine == null
+      ? '좌표를 가져오지 못해 거리 비교를 하지 못했습니다.'
+      : distance.mine > (distance.rivalAvg || 0) * 1.5
+        ? `상위권은 검색 중심에서 평균 ${distance.rivalAvg}m인데 우리는 ${distance.mine}m입니다. 거리는 바꿀 수 없는 조건이라, 이 키워드는 구조적으로 불리합니다.`
+        : `검색 중심에서 ${distance.mine}m로 상위권(평균 ${distance.rivalAvg}m)과 비슷합니다. 거리는 불리하지 않습니다.`,
+  };
+
+  return v;
+}
+
+/* 실행안 — 반드시 실행 가능성으로 나눈다 */
+function buildActions(comparison, gaps, verdict, distance, keyword) {
+  const now = [], slow = [], cant = [];
+
+  const introCmp = comparison.find(c => c.key === 'introLen');
+  if (introCmp?.behind) {
+    now.push(`소개글을 ${introCmp.min}자 이상으로 늘리세요. 상위 3곳 중 가장 짧은 곳이 ${introCmp.min}자입니다 (현재 ${introCmp.mine}자).`);
+  }
+
+  const missing = gaps.filter(g => !g.inMine);
+  if (missing.length) {
+    const top = missing.slice(0, 8);
+    now.push(`상위권이 공통으로 쓰는데 우리 소개글엔 없는 표현 ${missing.length}개를 넣으세요. 우선순위: ${top.map(g => `${g.term}(${g.usedBy}/${g.total}곳)`).join(', ')}`);
+  }
+  if (!verdict.R.lose && !missing.length) {
+    now.push('적합도 쪽은 이미 상위권 수준입니다. 여기서 더 밀어붙이기보다 인기도 쪽에 시간을 쓰세요.');
+  }
+
+  for (const c of comparison.filter(x => x.axis === 'P' && x.behind)) {
+    if (c.key === 'photo') {
+      now.push(`사진을 ${c.gap}장 더 올리세요. 상위권 최소가 ${c.min}장입니다. 사진은 오늘 바로 채울 수 있는 인기도 항목입니다.`);
+    } else if (c.key === 'review' || c.key === 'blog') {
+      slow.push(`${c.label} ${c.gap}개 부족합니다 (상위권 최소 ${c.min}개). 자연 유입으로만 채워야 하므로 몇 달 단위로 봐야 합니다. 구매는 제재 대상입니다.`);
+    } else if (c.key === 'save') {
+      slow.push(`저장 ${c.gap}회 부족합니다. 소식·이벤트를 꾸준히 올려 자연 저장을 늘리는 것 말고 안전한 방법이 없습니다.`);
+    } else if (c.key === 'score') {
+      slow.push(`평점이 상위권보다 ${c.gap}점 낮습니다. 불만 리뷰에 성실히 답하고 실제 불편 요인을 없애는 것 외엔 방법이 없습니다.`);
+    }
+  }
+
+  if (verdict.D.lose) {
+    cant.push(`거리는 바꿀 수 없습니다. 상위권은 검색 중심에서 평균 ${distance.rivalAvg}m인데 우리는 ${distance.mine}m입니다. `
+      + `"${keyword}"${josa(keyword, '은')} 이 위치에서 구조적으로 불리한 키워드라, 다른 항목을 다 채워도 상위권 진입이 어려울 수 있습니다. `
+      + `우리 가게가 중심이 되는 키워드(더 가까운 동네·역 이름)를 1순위로 바꾸는 편이 현실적입니다.`);
+  }
+
+  return { now, slow, cant };
+}
+
+async function analyzeCompetitors(keyword, myUrl, topN = 3) {
+  const myId = await resolvePlaceId(myUrl);
+
+  const rankRes = await findRank(keyword, myId);
+  if (!rankRes.ok) return { ok: false, stage: 'rank', error: rankRes.error, attempts: rankRes.attempts };
+
+  const top = (rankRes.ranked || []).slice(0, topN).filter(p => p.id !== myId);
+  if (!top.length) return { ok: false, stage: 'rank', error: '상위 업체 목록을 얻지 못했습니다.' };
+
+  // 내 정보 + 경쟁사 정보 (네이버에 부담을 주지 않도록 순차 요청)
+  const myPlace = await collectPlace(myId);
+  if (!myPlace.ok) return { ok: false, stage: 'place', error: '내 플레이스 정보를 가져오지 못했습니다.', attempts: myPlace.attempts };
+
+  const rivals = [];
+  for (const p of top) {
+    await new Promise(r => setTimeout(r, 300));
+    const c = await collectPlace(p.id);
+    rivals.push({ rank: p.rank, id: p.id, name: p.name, ok: c.ok, m: c.ok ? toMetrics(c.data) : {} });
+  }
+
+  const usable = rivals.filter(r => r.ok);
+  if (!usable.length) return { ok: false, stage: 'rivals', error: '상위 업체 정보를 하나도 가져오지 못했습니다.' };
+
+  const mine = toMetrics(myPlace.data);
+
+  // 검색 중심을 상위권 좌표의 중심으로 추정한다.
+  // 네이버의 실제 검색 좌표는 알 수 없지만, 상위권이 몰려 있는 지점이 곧 그 키워드의 중심이다.
+  const pts = usable.filter(r => r.m.x && r.m.y);
+  let distance = { mine: null, rivalAvg: null, rivals: [] };
+  if (pts.length) {
+    const cx = pts.reduce((a, r) => a + Number(r.m.x), 0) / pts.length;
+    const cy = pts.reduce((a, r) => a + Number(r.m.y), 0) / pts.length;
+    distance.rivals = pts.map(r => ({ rank: r.rank, d: distanceM(cx, cy, r.m.x, r.m.y) }));
+    const ds = distance.rivals.map(r => r.d).filter(d => d != null);
+    distance.rivalAvg = ds.length ? Math.round(ds.reduce((a, b) => a + b, 0) / ds.length) : null;
+    distance.mine = distanceM(cx, cy, mine.x, mine.y);
+  }
+
+  const comparison = buildComparison(mine, usable);
+  const gaps = lexiconGap(mine.intro, usable.map(r => r.m.intro));
+
+  const kwNorm = keyword.replace(/\s+/g, '').toLowerCase();
+  const kwHit = mine.intro.replace(/\s+/g, '').toLowerCase().includes(kwNorm);
+
+  const verdict = axisVerdict(comparison, distance, kwHit);
+  const actions = buildActions(comparison, gaps, verdict, distance, keyword);
+
+  return {
+    ok: true, keyword, myRank: rankRes.rank, myId,
+    mine: { name: mine.name, category: mine.category, ...comparison.reduce((o, c) => (o[c.key] = c.mine, o), {}) },
+    rivals: usable.map(r => ({
+      rank: r.rank, name: r.name, category: r.m.category,
+      introLen: r.m.introLen, review: r.m.review, blog: r.m.blog,
+      photo: r.m.photo, save: r.m.save, score: r.m.score,
+      booking: r.m.booking, homepage: r.m.homepage,
+    })),
+    comparison, gaps, distance, verdict, actions,
+    failedRivals: rivals.filter(r => !r.ok).map(r => ({ rank: r.rank, name: r.name })),
+  };
 }
 
 /* ============================================================================
@@ -306,6 +567,12 @@ const server = http.createServer(async (req, res) => {
         appendHistory({ keyword: kw, placeId, rank: r.rank, scanned: r.scanned });
       }
       return sendJson(res, 200, r);
+    }
+
+    if (u.pathname === '/api/competitors') {
+      const kw = q.get('keyword'), target = q.get('url');
+      if (!kw || !target) return sendJson(res, 400, { ok: false, error: 'keyword, url 파라미터가 필요합니다.' });
+      return sendJson(res, 200, await analyzeCompetitors(kw, target, Number(q.get('top') || 3)));
     }
 
     if (u.pathname === '/api/history') {
