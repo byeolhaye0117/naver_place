@@ -88,17 +88,69 @@ async function get(url, extraHeaders = {}) {
   return { ok: res.ok, status: res.status, url: res.url, text };
 }
 
+/* 여는 괄호의 짝을 직접 세어 객체를 통째로 잘라낸다.
+   정규식으로 `(\{[\s\S]*?\})\s*<\/script>` 처럼 자르면
+   상태 객체 뒤에 다른 자바스크립트가 한 줄이라도 붙는 순간 전부 실패한다.
+   문자열 안의 괄호와 백슬래시 이스케이프는 세지 않는다. */
+function extractBalanced(text, start) {
+  const open = text[start];
+  if (open !== '{' && open !== '[') return null;
+  const close = open === '{' ? '}' : ']';
+  let depth = 0, inStr = false, quote = '', esc = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (esc) { esc = false; continue; }
+    if (inStr) {
+      if (c === '\\') esc = true;
+      else if (c === quote) inStr = false;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = true; quote = c; continue; }
+    else if (c === open) depth++;
+    else if (c === close && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;   // 끝까지 안 닫힘 (응답이 잘렸다는 뜻)
+}
+
+/* HTML 안에 박혀 있는 상태 객체를 꺼낸다.
+   구체적인 이름을 먼저 보고, 다 실패하면 이름을 모르는 것까지 훑는다.
+   네이버가 변수명이나 프레임워크를 바꿔도 살아남게 하려는 것이다. */
+const STATE_MARKERS = [
+  /window\.__APOLLO_STATE__\s*=\s*/g,
+  /window\.__PLACE_STATE__\s*=\s*/g,
+  /window\.__INITIAL_STATE__\s*=\s*/g,
+  /window\.__PRELOADED_STATE__\s*=\s*/g,
+  /<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>\s*/g,
+  /<script[^>]*\btype=["']application\/json["'][^>]*>\s*/g,
+  /window\.__[A-Z0-9_]+__\s*=\s*/g,          // 이름을 모르는 경우
+  /:\s*window\.__[A-Z0-9_]+__\s*\|\|\s*/g,   // 번들러가 감싸 놓은 경우
+];
+
 function tryJson(text) {
-  try { return JSON.parse(text); } catch { /* not json */ }
-  // HTML 안에 박혀 있는 상태 객체를 꺼내본다 (네이버는 __APOLLO_STATE__ 를 자주 쓴다)
-  const patterns = [
-    /window\.__APOLLO_STATE__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/,
-    /window\.__PLACE_STATE__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/,
-    /__NEXT_DATA__[^>]*>\s*(\{[\s\S]*?\})\s*<\/script>/,
-  ];
-  for (const re of patterns) {
-    const m = text.match(re);
-    if (m) { try { return JSON.parse(m[1]); } catch { /* keep trying */ } }
+  try { return JSON.parse(text); } catch { /* HTML 이거나 JSONP */ }
+
+  // JSONP: fn({...}) 형태
+  const jp = text.match(/^[^(]{0,80}\(\s*(?=[{[])/);
+  if (jp) {
+    const raw = extractBalanced(text, jp[0].length);
+    if (raw) { try { return JSON.parse(raw); } catch { /* 계속 */ } }
+  }
+
+  for (const re of STATE_MARKERS) {
+    re.lastIndex = 0;
+    const blocks = [];
+    let m;
+    while ((m = re.exec(text)) && blocks.length < 8) {
+      const raw = extractBalanced(text, m.index + m[0].length);
+      if (!raw) continue;
+      try {
+        const o = JSON.parse(raw);
+        if (o && typeof o === 'object' && Object.keys(o).length) blocks.push(o);
+      } catch { /* 자바스크립트 리터럴이라 JSON 이 아님 */ }
+    }
+    if (blocks.length === 1) return blocks[0];
+    // 여러 개 잡히면 하나로 묶는다 — harvest 는 트리 전체를 훑으므로 문제없다
+    if (blocks.length > 1) return Object.fromEntries(blocks.map((o, i) => [`_block${i}`, o]));
   }
   return null;
 }
@@ -937,6 +989,104 @@ async function probe(keyword, placeUrl) {
 }
 
 /* ============================================================================
+ * --dump : 응답 안에 실제로 무엇이 들어있는지 지문을 뜬다
+ *
+ * --probe 는 "못 읽었다"까지만 알려준다. 왜 못 읽었는지는 응답 본문을 봐야 하는데,
+ * 본문은 수십만 자라서 그대로 옮길 수가 없다. 그래서 판단에 필요한 것만 추린다.
+ * 전문은 data/dump/ 에 저장하니 필요하면 파일로 보내면 된다.
+ * ========================================================================== */
+
+const DUMP_DIR = path.join(DATA_DIR, 'dump');
+
+function fingerprint(label, url, r) {
+  const t = r.text || '';
+  const line = s => console.log(s);
+  line(`\n${label}  ${url}`);
+  line(`   HTTP ${r.status} · ${t.length.toLocaleString('en-US')}자`);
+
+  if (!t.length) { line('   ⚠ 본문이 비어 있습니다'); return; }
+
+  // 로봇 차단 페이지인지
+  const blocked = /captcha|자동입력|로봇이 아닙니다|비정상적인 접근|접근이 차단/i.test(t);
+  if (blocked) line('   🚫 차단/캡차 문구가 보입니다');
+
+  // 어떤 상태 변수를 쓰고 있나
+  const vars = [...new Set([...t.matchAll(/window\.__([A-Z0-9_]+)__\s*=/g)].map(m => m[1]))];
+  line(`   window.__변수__ : ${vars.length ? vars.join(', ') : '없음'}`);
+
+  const ids = [...new Set([...t.matchAll(/<script[^>]*\bid=["']([^"']+)["']/g)].map(m => m[1]))];
+  line(`   <script id>     : ${ids.length ? ids.slice(0, 8).join(', ') : '없음'}`);
+
+  const jsonTags = (t.match(/<script[^>]*type=["']application\/json["']/g) || []).length;
+  line(`   JSON script 태그: ${jsonTags}개`);
+
+  // 우리 파서가 지금 성공하는지
+  const json = tryJson(t);
+  if (json) {
+    const got = harvest(json, PLACE_FIELDS);
+    line(`   ✅ 파서 추출 성공 — 필드 ${Object.keys(got).length}개: ${Object.keys(got).join(', ') || '(없음)'}`);
+  } else {
+    line('   ❌ 파서 추출 실패');
+  }
+
+  // 파서와 무관하게, 필드 이름이 본문에 원문으로 있는지
+  // 있다면 컨테이너만 못 찾는 것이고, 없다면 데이터가 애초에 이 응답에 없다는 뜻이다
+  const hits = [];
+  for (const f of ['name', 'description', 'visitorReviewCount', 'blogCafeReviewCount',
+                   'imageCount', 'bookmarkCount', 'roadAddress', 'category', 'keywords']) {
+    const n = (t.match(new RegExp(`["']${f}["']`, 'g')) || []).length;
+    if (n) hits.push(`${f}(${n})`);
+  }
+  line(`   필드명 원문 등장 : ${hits.length ? hits.join(' ') : '없음 — 이 응답에는 데이터가 없습니다'}`);
+
+  const sample = t.slice(0, 160).replace(/\s+/g, ' ');
+  line(`   앞부분          : ${sample}`);
+
+  try {
+    fs.mkdirSync(DUMP_DIR, { recursive: true });
+    const safe = label.replace(/[^\w가-힣]/g, '') + '-' + new URL(url).hostname + '.txt';
+    fs.writeFileSync(path.join(DUMP_DIR, safe), t);
+    line(`   전문 저장       : data/dump/${safe}`);
+  } catch (e) {
+    line(`   전문 저장 실패   : ${e.message}`);
+  }
+}
+
+async function dump(keyword, placeUrl) {
+  if (!placeUrl) {
+    console.error('\n사용법  node server.js --dump "키워드" "플레이스URL"\n');
+    process.exitCode = 1;
+    return;
+  }
+  console.log('\n네이버 응답 지문\n' + '='.repeat(56));
+
+  let id;
+  try { id = await resolvePlaceId(placeUrl); }
+  catch (e) { console.error(`\n❌ 플레이스 ID 확인 실패 — ${e.message}\n`); process.exitCode = 1; return; }
+  console.log(`  플레이스 ID : ${id}`);
+
+  console.log('\n── 플레이스 정보 ' + '─'.repeat(40));
+  for (let i = 0; i < PLACE_STRATEGIES.length; i++) {
+    const url = PLACE_STRATEGIES[i](id);
+    try { fingerprint(`정보${i + 1}`, url, await get(url)); }
+    catch (e) { console.log(`\n정보${i + 1}  ${url}\n   ❌ 요청 실패 — ${e.message}`); }
+  }
+
+  if (keyword) {
+    console.log('\n── 검색 결과 ' + '─'.repeat(43));
+    for (let i = 0; i < RANK_STRATEGIES.length; i++) {
+      const url = RANK_STRATEGIES[i](keyword, 1);
+      try { fingerprint(`검색${i + 1}`, url, await get(url)); }
+      catch (e) { console.log(`\n검색${i + 1}  ${url}\n   ❌ 요청 실패 — ${e.message}`); }
+    }
+  }
+
+  console.log('\n' + '='.repeat(56));
+  console.log('위 지문을 그대로 알려주시면 파서를 응답 구조에 맞춰 고칠 수 있습니다.');
+  console.log('전문은 data/dump/ 에 저장되어 있습니다 (git 에 올라가지 않습니다).\n');
+}
+
+/* ============================================================================
  * 진입점
  * ========================================================================== */
 
@@ -973,6 +1123,10 @@ const argv = process.argv;
 if (argv.includes('--probe')) {
   const a = splitArgs(argv.slice(argv.indexOf('--probe') + 1));
   probe(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
+
+} else if (argv.includes('--dump')) {
+  const a = splitArgs(argv.slice(argv.indexOf('--dump') + 1));
+  dump(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
 
 } else if (argv.includes('--track')) {
   const a = splitArgs(argv.slice(argv.indexOf('--track') + 1));
