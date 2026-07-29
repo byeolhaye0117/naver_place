@@ -22,11 +22,49 @@
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const os   = require('os');
+const crypto = require('crypto');
 
 const PORT     = Number(process.env.PORT || 5173);
+const HOST     = process.env.HOST || '0.0.0.0';   // 같은 와이파이의 휴대폰에서도 붙을 수 있게
 const ROOT     = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 const HISTORY  = path.join(DATA_DIR, 'rank-history.json');
+const KEYFILE  = path.join(DATA_DIR, 'access-key.txt');
+
+/* ============================================================================
+ * 접근 키
+ *
+ * 0.0.0.0 으로 열면 같은 와이파이의 다른 기기도 접근할 수 있다.
+ * 집이나 매장 와이파이라면 대개 문제없지만, 손님용 와이파이를 함께 쓴다면
+ * /api/ai 를 통해 API 키가 쓰일 수 있다. 그래서 외부 기기 요청에만 키를 요구한다.
+ * 키는 파일에 저장하므로 서버를 다시 켜도 휴대폰 북마크가 그대로 동작한다.
+ * ========================================================================== */
+function accessKey() {
+  try { return fs.readFileSync(KEYFILE, 'utf8').trim(); }
+  catch {
+    const k = crypto.randomBytes(9).toString('base64url');
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(KEYFILE, k);
+    return k;
+  }
+}
+const KEY = accessKey();
+
+function isLocal(req) {
+  const a = req.socket.remoteAddress || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
+/* 이 PC의 공유기 내부 주소 — 휴대폰이 붙을 곳 */
+function lanIp() {
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const n of list || []) {
+      if (n.family === 'IPv4' && !n.internal) return n.address;
+    }
+  }
+  return null;
+}
 
 /* ============================================================================
  * 공통 HTTP
@@ -548,8 +586,21 @@ const server = http.createServer(async (req, res) => {
 
   try {
     /* ---- API ---- */
+    // 외부 기기(휴대폰 등)는 접근 키가 있어야 API를 쓸 수 있다. 이 PC에서는 그냥 통과.
+    if (u.pathname.startsWith('/api/') && !isLocal(req)) {
+      const given = q.get('k') || req.headers['x-access-key'];
+      if (given !== KEY) {
+        return sendJson(res, 401, { ok: false, error: '접근 키가 없거나 틀렸습니다. PC 화면에 표시된 주소로 다시 접속하세요.' });
+      }
+    }
+
     if (u.pathname === '/api/health') {
-      return sendJson(res, 200, { ok: true, version: 1, ai: Boolean(process.env.ANTHROPIC_API_KEY) });
+      const ip = lanIp();
+      return sendJson(res, 200, {
+        ok: true, version: 2,
+        ai: Boolean(process.env.ANTHROPIC_API_KEY),
+        lanUrl: ip ? `http://${ip}:${PORT}/#k=${KEY}` : null,
+      });
     }
 
     if (u.pathname === '/api/place') {
@@ -654,15 +705,42 @@ async function probe(keyword, placeUrl) {
  * 진입점
  * ========================================================================== */
 
-if (process.argv.includes('--probe')) {
-  const rest = process.argv.slice(process.argv.indexOf('--probe') + 1);
+/* --track "키워드" <URL> : 순위만 한 번 기록하고 끝낸다.
+   윈도우 작업 스케줄러나 macOS cron 에 걸어두면 매일 알아서 쌓인다. */
+async function track(keyword, url) {
+  const id = await resolvePlaceId(url);
+  const r = await findRank(keyword, id);
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  if (!r.ok) { console.error(`[${stamp}] 실패 — ${r.error}`); process.exit(1); }
+  appendHistory({ keyword, placeId: id, rank: r.rank, scanned: r.scanned });
+  console.log(`[${stamp}] "${keyword}" → ${r.found ? r.rank + '위' : `${r.scanned}위 밖`}`);
+}
+
+const argv = process.argv;
+if (argv.includes('--probe')) {
+  const rest = argv.slice(argv.indexOf('--probe') + 1);
   probe(rest[0], rest[1]).catch(e => { console.error('오류:', e.message); process.exit(1); });
+
+} else if (argv.includes('--track')) {
+  const rest = argv.slice(argv.indexOf('--track') + 1);
+  if (rest.length < 2) { console.error('사용법: node server.js --track "키워드" <플레이스URL>'); process.exit(1); }
+  track(rest[0], rest[1]).catch(e => { console.error('오류:', e.message); process.exit(1); });
+
 } else {
-  server.listen(PORT, () => {
-    console.log(`\n  헬스장 플레이스 진단 서버`);
-    console.log(`  → http://localhost:${PORT}\n`);
-    console.log(`  AI 프록시: ${process.env.ANTHROPIC_API_KEY ? '사용 가능' : '꺼짐 (ANTHROPIC_API_KEY 미설정)'}`);
-    console.log(`  순위 기록: ${HISTORY}\n`);
-    console.log(`  응답 점검:  node server.js --probe "강남역 헬스장" <플레이스URL>\n`);
+  server.listen(PORT, HOST, () => {
+    const ip = lanIp();
+    console.log(`\n  헬스장 플레이스 진단 서버\n`);
+    console.log(`  이 PC에서       http://localhost:${PORT}`);
+    if (ip) {
+      console.log(`  휴대폰에서      http://${ip}:${PORT}/#k=${KEY}`);
+      console.log(`                  (같은 와이파이에 연결한 뒤 위 주소로 접속 → 북마크해두면 끝)`);
+    } else {
+      console.log(`  휴대폰 접속용 주소를 찾지 못했습니다 (네트워크 연결을 확인하세요)`);
+    }
+    console.log(`\n  AI 프록시       ${process.env.ANTHROPIC_API_KEY ? '사용 가능' : '꺼짐 (ANTHROPIC_API_KEY 미설정)'}`);
+    console.log(`  순위 기록       ${HISTORY}`);
+    console.log(`\n  응답 점검       node server.js --probe "강남역 헬스장" <플레이스URL>`);
+    console.log(`  순위만 기록     node server.js --track "강남역 헬스장" <플레이스URL>`);
+    console.log(`\n  종료하려면 Ctrl+C\n`);
   });
 }

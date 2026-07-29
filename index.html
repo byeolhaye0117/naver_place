@@ -281,6 +281,15 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .srv-err{background:var(--bad-bg);border:1px solid var(--bad-line);border-radius:10px;padding:13px 15px;font-size:13px;color:var(--bad-fg);margin-top:14px}
 .srv-err pre{margin:8px 0 0;font-size:11.5px;white-space:pre-wrap;word-break:break-all;color:var(--bad-fg)}
 
+/* 안내 박스 */
+.lan{border:1px solid var(--acc-line);background:var(--acc-bg);border-radius:11px;padding:14px 16px}
+.lan b{font-size:14px;display:block;margin-bottom:6px}
+.lan p{font-size:13.5px;color:var(--muted);line-height:1.75}
+.lan code{display:inline-block;margin-top:8px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;padding:9px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:13px;color:var(--ink);word-break:break-all;user-select:all}
+.lan p code{margin-top:0;padding:2px 6px;font-size:12.5px}
+
 /* 기기 간 이어쓰기 */
 .save-state{font-size:11.5px;font-weight:700;color:var(--ok-fg);background:var(--ok-bg);
   border:1px solid var(--ok-line);padding:3px 10px;border-radius:999px;margin-left:auto;
@@ -333,6 +342,13 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <h2>🔗 자동 수집 · 순위 추적 <span id="srv-badge" class="srv-badge">서버 연결됨</span></h2>
     <p class="desc">내 플레이스 주소를 넣으면 네이버에서 정보를 직접 가져오고, 목표 키워드의 현재 순위를 조회합니다.</p>
 
+    <div id="lan-row" style="display:none;margin-top:16px" class="lan">
+      <b>📱 휴대폰에서도 이 기능을 쓰려면</b>
+      <p>같은 와이파이에 연결한 뒤, 휴대폰 브라우저에 아래 주소를 입력하고 <b>북마크</b>해 두세요.
+        한 번만 하면 그다음부터는 북마크만 누르면 됩니다.</p>
+      <code id="lan-url"></code>
+    </div>
+
     <label class="f" style="margin-top:16px"><span>내 플레이스 주소 또는 ID</span>
       <input id="s-url" type="text" placeholder="https://map.naver.com/p/entry/place/1234567890  또는  naver.me 단축링크">
       <div class="hint">네이버 지도에서 내 가게 → 공유 → 링크 복사</div></label>
@@ -349,18 +365,27 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   <!-- 서버 미실행 안내 -->
   <section class="card" id="srv-off">
     <h2>💡 지금은 수동 입력 모드</h2>
-    <p class="desc"><b>이대로도 진단·키워드 분석·문장 생성은 전부 됩니다.</b> 휴대폰에서도 그대로 쓰세요.<br>
-      아래 3가지는 PC에서 로컬 서버를 켜야 동작합니다 — 네이버에 직접 요청을 보내야 해서 휴대폰 브라우저만으로는 안 됩니다.</p>
+    <p class="desc"><b>이대로도 진단·키워드 분석·문장 생성은 전부 됩니다.</b> 아래 3가지만 PC의 도우미 프로그램이 필요합니다 —
+      네이버에 직접 요청을 보내야 해서 브라우저 혼자서는 막혀 있습니다.</p>
     <ul style="font-size:14px;color:var(--muted);margin:12px 0 0;padding-left:20px;line-height:1.9">
       <li>플레이스 정보 자동 수집 (리뷰수·사진수·저장수)</li>
       <li>목표 키워드 순위 조회 및 추적</li>
       <li>상위 3곳 경쟁 분석</li>
     </ul>
-    <div class="box" style="padding:14px;margin-top:14px">PC에서 이 폴더를 받은 뒤:
 
-  node server.js
+    <div class="lan" style="margin-top:16px">
+      <b>💻 PC에서 — 한 번만 설정하면 그다음은 자동입니다</b>
+      <p>내려받은 폴더에서 <b>시작하기</b> 파일을 더블클릭하세요. 명령어를 칠 필요 없습니다.<br>
+        · 윈도우 → <code>start.bat</code>　· 맥 → <code>start.command</code><br>
+        브라우저가 알아서 열리고, 위 3가지 버튼이 나타납니다.
+        PC를 켤 때마다 자동 실행되게 하는 방법은 README에 있습니다.</p>
+    </div>
 
-그리고 http://localhost:5173 로 접속하세요.</div>
+    <div class="lan" style="margin-top:12px">
+      <b>📱 휴대폰에서 — PC가 켜져 있으면 폰에서도 됩니다</b>
+      <p>PC에서 도우미를 켜면 화면에 <b>휴대폰용 주소</b>가 나옵니다.
+        같은 와이파이에서 그 주소로 한 번 들어가 북마크해 두면, 이후로는 폰에서도 자동 수집·순위·경쟁 분석이 전부 됩니다.</p>
+    </div>
   </section>
 
   <!-- STEP 1 -->
@@ -1201,20 +1226,48 @@ $("btn-clear").addEventListener("click", ()=>{
    로컬 서버 연동 — 자동 수집 · 순위 추적
    서버가 없으면 조용히 수동 모드로 남는다.
    ============================================================ */
-let SERVER = null;   // { ai:boolean } 이면 연결됨
+let SERVER = null;   // 연결되면 서버 정보 객체
+const KEY_STORE = "gym-place-check/key";
+
+/* 휴대폰은 PC가 알려준 주소(#k=...)로 처음 한 번 들어온다.
+   그때 키를 저장해두면 이후로는 북마크만으로 계속 쓸 수 있다. */
+(function captureKey(){
+  const m = location.hash.match(/[#&]k=([\w-]+)/);
+  if(m){
+    try{ localStorage.setItem(KEY_STORE, m[1]); }catch{}
+    history.replaceState(null,"",location.pathname+location.search);
+  }
+})();
+
+function apiUrl(pathAndQuery){
+  let k = null;
+  try{ k = localStorage.getItem(KEY_STORE); }catch{}
+  if(!k) return pathAndQuery;
+  return pathAndQuery + (pathAndQuery.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(k);
+}
 
 (async function detectServer(){
-  // 로컬 서버는 항상 localhost 에서 돈다.
-  // file:// 이나 외부 호스팅에서는 요청해봤자 실패하고 콘솔만 더럽히므로 건너뛴다.
-  if(!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
+  // IP 대역으로 추측하지 않는다 — 공유기마다 다르고 VPN·IPv6에서 깨진다.
+  // 서버가 있을 수 있는 경우는 둘 뿐이다: 이 PC(localhost)이거나,
+  // PC가 알려준 주소로 들어와 접근 키를 받아둔 기기이거나.
+  const h = location.hostname;
+  let hasKey = false;
+  try{ hasKey = Boolean(localStorage.getItem(KEY_STORE)); }catch{}
+  const servable = location.protocol !== "file:"
+    && (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(h) || hasKey);
+  if(!servable) return;
   try{
-    const r = await fetch("/api/health", { signal: AbortSignal.timeout(1500) });
+    const r = await fetch(apiUrl("/api/health"), { signal: AbortSignal.timeout(2000) });
     if(!r.ok) return;
     SERVER = await r.json();
     $("srv").style.display = "block";
     $("srv-off").style.display = "none";
     if(SERVER.ai) $("srv-badge").textContent = "서버 연결됨 · AI 프록시 사용 가능";
-  }catch{ /* file:// 로 열었거나 서버 미실행 — 수동 모드 유지 */ }
+    if(SERVER.lanUrl && /^(localhost|127\.0\.0\.1)$/.test(h)){
+      $("lan-row").style.display = "block";
+      $("lan-url").textContent = SERVER.lanUrl;
+    }
+  }catch{ /* 서버 미실행 — 수동 모드 유지 */ }
 })();
 
 function srvError(title, res){
@@ -1242,7 +1295,7 @@ $("s-collect")?.addEventListener("click", async ()=>{
   const btn = $("s-collect");
   btn.disabled = true; btn.textContent = "수집 중…";
   try{
-    const res = await (await fetch(`/api/place?url=${encodeURIComponent(url)}`)).json();
+    const res = await (await fetch(apiUrl(`/api/place?url=${encodeURIComponent(url)}`))).json();
     if(!res.ok){ $("s-out").innerHTML = srvError("플레이스 정보를 가져오지 못했습니다", res); return; }
 
     // 가져온 값 중 입력란에 채울 수 있는 것은 자동으로 채운다
@@ -1291,11 +1344,11 @@ $("s-rank")?.addEventListener("click", async ()=>{
   const out = [];
   try{
     for(const kw of kws){
-      const res = await (await fetch(`/api/rank?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`)).json();
+      const res = await (await fetch(apiUrl(`/api/rank?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`))).json();
       if(!res.ok){ out.push(srvError(`"${kw}" 순위 조회 실패`, res)); continue; }
 
       // 직전 기록과 비교
-      const hist = await (await fetch(`/api/history?keyword=${encodeURIComponent(kw)}`)).json();
+      const hist = await (await fetch(apiUrl(`/api/history?keyword=${encodeURIComponent(kw)}`))).json();
       const recs = (hist.records||[]).filter(r=>r.rank!=null);
       let delta = "";
       if(recs.length>=2){
@@ -1334,7 +1387,7 @@ $("s-comp")?.addEventListener("click", async ()=>{
   const btn = $("s-comp");
   btn.disabled = true; btn.textContent = "분석 중… (30초 정도)";
   try{
-    const r = await (await fetch(`/api/competitors?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`)).json();
+    const r = await (await fetch(apiUrl(`/api/competitors?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`))).json();
     if(!r.ok){ $("s-out").innerHTML = srvError(`"${kw}" 상위권 분석 실패 (${r.stage} 단계)`, r); return; }
 
     const cols = r.rivals.map(v=>`${v.rank}위`).join("</th><th>");
@@ -1458,7 +1511,7 @@ ${o.keywords.map((k,i)=>`${i+1}. "${k}"`).join("\n")}
 
   try{
     const res = useProxy
-      ? await fetch("/api/ai", {
+      ? await fetch(apiUrl("/api/ai"), {
           method:"POST",
           headers:{ "content-type":"application/json" },
           body: JSON.stringify(payload)
