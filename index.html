@@ -242,9 +242,16 @@ label.f > span i{font-style:normal;color:var(--accent)}
   padding:3px 10px;border-radius:999px;margin-left:auto}
 .srv-res{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:15px;background:var(--surface-2)}
 .srv-res h5{font-size:13.5px;font-weight:800;margin:0 0 10px}
-.kv-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13.5px}
+/* 긴 주소(예약 링크·인스타)가 안 접혀 문서가 화면보다 넓어지면
+   페이지 전체가 옆으로 밀린다. 값 칸은 줄어들 수 있어야 하고, 글자는 꺾여야 한다.
+   1fr 은 최소폭이 내용 크기라서 안 줄어든다 — minmax(0,1fr) 이어야 줄어든다. */
+.kv-grid{display:grid;grid-template-columns:minmax(56px,auto) minmax(0,1fr);gap:6px 14px;font-size:13.5px}
 .kv-grid dt{color:var(--muted);white-space:nowrap}
-.kv-grid dd{margin:0;font-weight:600}
+.kv-grid dd{margin:0;font-weight:600;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+
+/* 한 군데만 삐져나가도 화면 전체가 밀리므로 공통으로 막아 둔다 */
+img,svg,video,table{max-width:100%}
+.card,.srv-res,.confirm,.jb,.box{min-width:0}
 .rank-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .rank-row:last-child{border-bottom:0}
 .rank-row .k{font-weight:700;font-size:14px;flex:1;min-width:120px}
