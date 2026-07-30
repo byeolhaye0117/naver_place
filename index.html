@@ -292,6 +292,8 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .jb.ok{border-color:var(--ok-line);background:var(--ok-bg)}
 .jb.no{border-color:var(--bad-line);background:var(--bad-bg)}
 .jb.man{border-color:var(--warn-line);background:var(--warn-bg)}
+.jb.na{border-color:var(--line);background:var(--surface-3);color:var(--muted)}
+.jb.na b{color:var(--ink)}
 .jb.fill{border-color:var(--acc-line);background:var(--acc-bg);margin-top:14px}
 .jb .man-note{margin:6px 0 8px;font-weight:600}
 .jb .w{font-style:normal;font-size:11.5px;font-weight:800;color:var(--accent);
@@ -744,9 +746,9 @@ const ITEMS = [
   {id:"p9",p:"P",w:3,c:"result", t:"최근 30일 안에 새 리뷰가 들어왔다",
    why:"오래된 리뷰 100개보다 최근 리뷰 5개가 순위에 유리합니다.",
    act:"리뷰가 끊겼다면 데스크 안내 문구를 붙이거나, 상담 후 자연스럽게 요청하는 흐름을 만드세요."},
-  {id:"p10",p:"P",w:3,c:"result", t:"저장수가 100 이상이다",
-   why:"저장은 '나중에 갈 곳'이라는 강한 관심 신호입니다.",
-   act:"인위적으로 늘리는 건 위험합니다. 소식·이벤트를 꾸준히 올려 자연 저장을 늘리는 쪽이 안전하고 오래갑니다."},
+  {id:"p10",p:"P",w:3,c:"result", t:"리뷰 평점이 4.5 이상이다",
+   why:"평점 자체보다 리뷰 수가 중요하지만, 낮은 평점은 검색 결과에서 클릭을 잃게 만듭니다. 노출돼도 안 눌리면 인기도가 쌓이지 않습니다.",
+   act:"평점은 직접 올릴 수 없습니다. 낮은 별점 리뷰에 성실히 답글을 달면 다음 손님이 그 답글을 보고 판단합니다. (원래 이 자리는 '저장수'였는데, 네이버가 더는 공개하지 않아 확인 가능한 지표로 바꿨습니다.)"},
 
   // ── 거리·신뢰 15
   {id:"d1",p:"D",w:4,c:"direct", t:"지도 핀이 우리 건물 위에 찍혀 있다 (옆 건물·도로 위가 아니다)",
@@ -1674,7 +1676,7 @@ function foldFilledInputs(){
 
 function applyJudgement(judge){
   const ITEM = Object.fromEntries(ITEMS.map(x=>[x.id,x]));
-  const done = [], todo = [], manual = [];
+  const done = [], todo = [], manual = [], unavail = [];
 
   document.querySelectorAll(".auto-badge").forEach(e=>e.remove());
   document.querySelectorAll(".item.judged").forEach(e=>e.classList.remove("judged"));
@@ -1683,7 +1685,7 @@ function applyJudgement(judge){
     const box = $("chk-"+id), item = ITEM[id];
     if(!item) continue;
 
-    if(v.ok === null){ manual.push({item,v}); continue; }
+    if(v.ok === null){ (v.na ? unavail : manual).push({item,v}); continue; }
     if(box){
       box.checked = v.ok;
       const label = box.closest(".item")?.querySelector(".t");
@@ -1719,8 +1721,13 @@ function applyJudgement(judge){
           <ul>${rest.map(lineW).join("")}</ul></details>`:""}
         <p>사진을 눈으로 보거나 지도를 직접 봐야 알 수 있어서 자동으로 판정하지 않습니다.
            추측으로 채우면 점수가 거짓이 되므로 비워 둡니다.</p></div>`:""}
+      ${unavail.length?`<div class="jb na"><b>네이버가 공개하지 않음 ${unavail.length}개</b>
+        <ul>${unavail.map(lineW).join("")}</ul>
+        <p>이 값들은 네이버가 아예 내주지 않아 <b>누구도 자동으로 확인할 수 없습니다.</b>
+           도구 문제가 아니니 신경 쓰지 않으셔도 됩니다.
+           스마트플레이스 관리자 화면에서 보고 직접 체크하시면 점수에 반영됩니다.</p></div>`:""}
     </div>`;
-  return { html, auto: done.length + todo.length, manual: manual.length };
+  return { html, auto: done.length + todo.length, manual: manual.length, unavail: unavail.length };
 }
 
 $("s-collect")?.addEventListener("click", async ()=>{

@@ -242,6 +242,9 @@ const PLACE_FIELDS = [
   'reviewCount', 'reviewTotal', 'fsasReviewCount',
   'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount',
   'photoTotal', 'imageTotal', 'totalImageCount',
+  // ↓ 사장님 플레이스 실측에서 확인된 실제 이름들
+  'totalImages', 'imageReviewCount', 'cafeBlogReviewsTotal',
+  'visitorReviewsScore', 'avgRating', 'ratingReviewsTotal', 'authorCount',
 ];
 
 /* 필요한 값이 한 페이지에 다 있지 않다. 리뷰 수는 리뷰 탭에만 있는 경우가 많다.
@@ -260,7 +263,8 @@ const PLACE_STRATEGIES = [
 ];
 
 /* 이게 다 모이면 더 요청하지 않는다 (불필요한 왕복을 줄이려는 것) */
-const KEY_FIELDS = ['description', 'imageCount', 'visitorReviewCount', 'blogCafeReviewCount', 'bookmarkCount'];
+const KEY_FIELDS = ['description', 'imageCount', 'visitorReviewCount',
+                    'blogCafeReviewCount', 'visitorReviewsScore'];
 
 /* 개수 항목은 남의 것이 섞이면 곧바로 거짓 판정이 된다.
    실제로 리뷰 탭을 읽었더니 방문자 리뷰 4,667개라는 값이 잡혔는데 이 가게 것이 아니었다.
@@ -273,17 +277,43 @@ const COUNT_FIELDS = [
   'imageCount', 'photoCount', 'photoTotal', 'imageTotal', 'totalImageCount',
   'menus', 'menuImages', 'prices', 'conveniences', 'facilities', 'amenities', 'options',
   'newsCount', 'feedCount', 'announcementCount', 'visitorReviewScore',
+  // 실측에서 확인된 이름들도 같은 보호를 받아야 한다
+  'visitorReviewsScore', 'avgRating', 'rating', 'ratingReviewsTotal',
+  'totalImages', 'imageReviewCount', 'cafeBlogReviewsTotal', 'authorCount',
 ];
 
 /* 이름 목록으로 찾는 방식은 네이버가 이름을 바꾸면 그대로 놓친다.
    실제로 블로그 리뷰·저장수·소식이 전부 "가져오지 못했습니다"로 남았다.
    그래서 이름을 모를 때는 뜻으로 찾는다 — 무엇에 관한 키인지 + 개수인지. */
-const COUNT_PATTERNS = {
-  visitorReviewCount:  [/visitor|review/i,                        /count|total|num|cnt/i],
-  blogCafeReviewCount: [/blog|cafe|ugc/i,                         /count|total|num|cnt/i],
-  bookmarkCount:       [/bookmark|favorite|keep|save|wish|scrap/i, /count|total|num|cnt/i],
-  newsCount:           [/news|feed|announce|notice|event|post/i,  /count|total|num|cnt/i],
-  imageCount:          [/image|photo|picture/i,                   /count|total|num|cnt/i],
+/* 개념 단위로 묶는다. alts 중 하나라도 이미 잡혔으면 패턴 추측은 하지 않는다.
+   실측에서 imageReviewCount(리뷰에 달린 사진 3,775장)를 방문자 리뷰로 집는 사고가 났다.
+   "review 가 들어가고 count 로 끝난다"만으로는 부족하고, 아닌 것도 걸러야 한다. */
+const CONCEPTS = {
+  visitorReviewCount: {
+    alts: ['visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal', 'visitorReviewsCount',
+           'totalReviewCount', 'reviewCount', 'reviewTotal', 'fsasReviewCount'],
+    what: /visitor/i, count: /count|total|num|cnt/i,
+    not: /media|image|photo|text|score|rating|author|user|single|max/i,
+  },
+  blogCafeReviewCount: {
+    alts: ['blogCafeReviewCount', 'cafeBlogReviewsTotal', 'blogCafeReviewTotal',
+           'blogReviewCount', 'cafeReviewCount', 'ugcReviewCount'],
+    what: /blog|cafe|ugc/i, count: /count|total|num|cnt/i, not: /score|rating|media/i,
+  },
+  imageCount: {
+    alts: ['imageCount', 'totalImages', 'photoTotal', 'imageTotal', 'totalImageCount', 'photoCount'],
+    what: /image|photo|picture/i, count: /count|total|num|cnt/i,
+    not: /review|media|width|height|size/i,
+  },
+  newsCount: {
+    alts: ['newsCount', 'feedCount', 'announcementCount'],
+    what: /news|feed|announce|notice|event|post/i, count: /count|total|num|cnt/i,
+    not: /id$|score/i,
+  },
+  visitorReviewsScore: {
+    alts: ['visitorReviewsScore', 'visitorReviewScore', 'avgRating', 'rating'],
+    what: /rating|score/i, count: /rating|score|avg/i, not: /count|total|num/i,
+  },
 };
 
 /* 좌표나 아이디 같은 것 말고, 세는 값으로 보이는 숫자만 모은다 */
@@ -297,13 +327,14 @@ function collectNumbers(node, out = {}, depth = 0) {
   return out;
 }
 
-function scanNumeric(node, reWhat, reCount, depth = 0) {
+function scanNumeric(node, c, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 6) return null;
   for (const [k, v] of Object.entries(node)) {
-    if (typeof v === 'number' && isFinite(v) && v >= 0 && reWhat.test(k) && reCount.test(k))
+    if (typeof v === 'number' && isFinite(v) && v >= 0
+        && c.what.test(k) && c.count.test(k) && !(c.not && c.not.test(k)))
       return { key: k, value: v };
     if (v && typeof v === 'object') {
-      const hit = scanNumeric(v, reWhat, reCount, depth + 1);
+      const hit = scanNumeric(v, c, depth + 1);
       if (hit) return hit;
     }
   }
@@ -524,27 +555,34 @@ function judgeItems(data, present, userType, extra = {}) {
   const put = (id, ok, evidence) => { J[id] = { ok, evidence }; };
   // 근거 없음 → 직접 확인으로 남긴다
   const unknown = (id, why) => { J[id] = { ok: null, evidence: why }; };
+  // 사람이 봐야 아는 것과, 네이버가 아예 공개하지 않는 것은 다르다.
+  // 후자를 '직접 확인'에 섞어두면 영영 끝나지 않는 숙제처럼 보인다.
+  const na = (id, why) => { J[id] = { ok: null, evidence: why, na: true }; };
 
   // ── 수치가 그대로 있는 항목 ──────────────────────────────
-  const photo = n('imageCount', 'photoCount', 'photoTotal', 'imageTotal', 'totalImageCount');
+  /* 실측에서 imageCount 는 1, totalImages 는 14, 사진 탭 목록은 19장이었다.
+     1 은 대표사진 같은 다른 것을 센 값으로 보여 가장 큰 값을 쓰고, 후보를 전부 보여준다. */
+  const photoKeys = CONCEPTS.imageCount.alts;
+  const photoCands = photoKeys.filter(k => isFinite(Number(data[k]))).map(k => `${k} ${data[k]}`);
+  const photo = photoKeys.map(k => Number(data[k])).filter(v => isFinite(v)).sort((a, b) => b - a)[0] ?? null;
   photo == null ? unknown('p2', '사진 수를 가져오지 못했습니다')
                 : put('p2', photo >= 30,
-                    `사진 ${photo}장 (네이버 ${usedKey} 값${extra.photoListN ? `, 사진 탭 목록에는 ${extra.photoListN}장` : ''})`
-                    + src());
+                    `사진 ${photo}장 — 네이버가 준 값: ${photoCands.join(', ')}`
+                    + (extra.photoListN ? `, 사진 탭 목록 ${extra.photoListN}장` : ''));
 
-  const rev = n('visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal',
-                'visitorReviewsCount', 'totalReviewCount', 'fsasReviewCount', 'reviewCount', 'reviewTotal');
+  const rev = n(...CONCEPTS.visitorReviewCount.alts);
   rev == null ? unknown('p6', '리뷰 수를 가져오지 못했습니다')
               : put('p6', rev >= 50, `방문자 리뷰 ${rev.toLocaleString('ko-KR')}개${src()}`);
 
-  const blog = n('blogCafeReviewCount', 'blogCafeReviewTotal', 'blogReviewCount',
-                 'cafeReviewCount', 'ugcReviewCount');
+  const blog = n(...CONCEPTS.blogCafeReviewCount.alts);
   blog == null ? unknown('p7', '블로그 리뷰 수를 가져오지 못했습니다')
                : put('p7', blog >= 10, `블로그 리뷰 ${blog}개${src()}`);
 
-  const save = n('bookmarkCount', 'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount');
-  save == null ? unknown('p10', '저장 수를 가져오지 못했습니다')
-               : put('p10', save >= 100, `저장 ${save.toLocaleString('ko-KR')}회${src()}`);
+  /* 저장수는 네이버가 더 이상 공개하지 않는다 (실측 36개 숫자에 없었다).
+     확인할 수 없는 항목을 남겨두는 대신, 공개되는 평점으로 자리를 바꿨다. */
+  const score = n(...CONCEPTS.visitorReviewsScore.alts);
+  score == null ? unknown('p10', '평점을 가져오지 못했습니다')
+                : put('p10', score >= 4.5, `평점 ${score}점${src()}`);
 
   // ── 있으면 충족인 항목 ──────────────────────────────────
   put('p11', has('bookingUrl', 'talktalkUrl'),
@@ -614,8 +652,8 @@ function judgeItems(data, present, userType, extra = {}) {
   }
 
   // ── 소식 ────────────────────────────────────────────────
-  const news = n('newsCount', 'feedCount', 'announcementCount', 'newsList', 'feedList');
-  news == null ? unknown('p5', '소식 게시 여부를 확인하지 못했습니다')
+  const news = n(...CONCEPTS.newsCount.alts, 'newsList', 'feedList');
+  news == null ? na('p5', '네이버가 소식 개수를 공개하지 않습니다 — 스마트플레이스에서 직접 보셔야 합니다')
                : put('p5', news > 0, `소식 ${news}건${src()}`);
 
   /* ── 리뷰 목록을 직접 세서 판정 ─────────────────────────
@@ -636,7 +674,7 @@ function judgeItems(data, present, userType, extra = {}) {
   if (ps && ps.n >= 3) {
     put('p4', ps.daysSince <= 183, `마지막 사진 ${ps.daysSince}일 전 (최근 ${ps.n}장 기준)`);
   } else {
-    unknown('p4', '사진 업로드 시점이 응답에 없습니다');
+    na('p4', '네이버가 사진 업로드 날짜를 공개하지 않습니다');
   }
 
   // ── 사람 눈이 있어야만 아는 것 ──────────────────────────
@@ -694,10 +732,10 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
         for (const node of scoped) collectNumbers(node, numbers);
 
         /* 이름으로 못 찾은 개수는 뜻으로 찾아본다. 가게 노드 안에서만 본다. */
-        for (const [target, [reWhat, reCount]] of Object.entries(COUNT_PATTERNS)) {
-          if (!isEmptyVal(data[target])) continue;
+        for (const [target, c] of Object.entries(CONCEPTS)) {
+          if (c.alts.some(a => !isEmptyVal(data[a]))) continue;   // 정확한 이름으로 이미 잡혔다
           for (const node of scoped) {
-            const hit = scanNumeric(node, reWhat, reCount);
+            const hit = scanNumeric(node, c);
             if (hit) { data[target] = hit.value; foundBy[target] = hit.key; break; }
           }
         }
@@ -717,7 +755,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
       // 필요한 값이 다 모였으면 남은 주소는 두드리지 않는다.
       // 다만 깊게 볼 때는 리뷰·사진 탭을 한 번은 들러야 답글·갱신 판정이 산다.
       const seen = re => sources.some(x => re.test(x.url));
-      const enough = KEY_FIELDS.every(f => data[f] !== undefined)
+      const enough = KEY_FIELDS.every(f => (CONCEPTS[f]?.alts || [f]).some(a => !isEmptyVal(data[a])))
         && (!deep || (seen(/review/) && seen(/photo/) && seen(/news|feed/)));
       if (enough) break;
     } catch (e) {
@@ -736,7 +774,9 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
     source: sources[0].url,
     sources,                       // 어느 주소가 무엇을 보탰는지
     fields: found, data, attempts,
-    missing: KEY_FIELDS.filter(f => data[f] === undefined),
+    // 개념 단위로 본다. visitorReviewsTotal 이 있으면 visitorReviewCount 가 없어도 있는 것이다.
+    missing: KEY_FIELDS.filter(f =>
+      (CONCEPTS[f]?.alts || [f]).every(a => isEmptyVal(data[a]))),
     numbers,
     foundBy,
     judge: judgeItems(data, present, userType, {
