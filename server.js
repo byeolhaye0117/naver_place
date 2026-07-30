@@ -32,6 +32,7 @@ const DATA_DIR = path.join(ROOT, 'data');
 const HISTORY  = path.join(DATA_DIR, 'rank-history.json');
 const KEYFILE  = path.join(DATA_DIR, 'access-key.txt');
 const STATE    = path.join(DATA_DIR, 'state.json');   // 기기 사이 공유 저장
+const SAVES    = path.join(DATA_DIR, 'saves.json');   // 저장 내역
 
 /* ============================================================================
  * 접근 키
@@ -1284,6 +1285,15 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
+function readSaves() {
+  try { const v = JSON.parse(fs.readFileSync(SAVES, 'utf8')); return Array.isArray(v) ? v : []; }
+  catch { return []; }
+}
+function writeSaves(list) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(SAVES, JSON.stringify(list));
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let d = '';
@@ -1366,6 +1376,43 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'DELETE') {
         try { fs.unlinkSync(STATE); } catch {}
+        return sendJson(res, 200, { ok: true });
+      }
+    }
+
+    /* ---- 저장 내역 ----
+       지금 상태 하나만 이어 쓰는 것과, 시점을 남겨 두고 되돌아가는 것은 다른 일이다.
+       소개글을 고치기 전 상태, 사진을 올리기 전 상태를 남겨 두면 무엇이 달라졌는지 본다. */
+    if (u.pathname === '/api/saves') {
+      const list = readSaves();
+      if (req.method === 'GET') {
+        const id = q.get('id');
+        if (id) {
+          const hit = list.find(x => x.id === id);
+          return hit ? sendJson(res, 200, { ok: true, save: hit })
+                     : sendJson(res, 404, { ok: false, error: '없는 기록입니다' });
+        }
+        // 목록에는 본문을 빼고 보낸다 — 개수가 쌓여도 가볍게
+        return sendJson(res, 200, { ok: true,
+          saves: list.map(({ snap, ...meta }) => meta).reverse() });
+      }
+      if (req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        if (!body || !body.snap) return sendJson(res, 400, { ok: false, error: '내용이 없습니다' });
+        const entry = {
+          id: 's' + Date.now().toString(36),
+          name: String(body.name || '').slice(0, 60) || '이름 없음',
+          at: body.at || new Date().toISOString(),
+          score: Number.isFinite(Number(body.score)) ? Number(body.score) : null,
+          keyword: String(body.keyword || '').slice(0, 60),
+          snap: body.snap,
+        };
+        writeSaves([...list, entry].slice(-50));
+        return sendJson(res, 200, { ok: true, id: entry.id });
+      }
+      if (req.method === 'DELETE') {
+        const id = q.get('id');
+        writeSaves(list.filter(x => x.id !== id));
         return sendJson(res, 200, { ok: true });
       }
     }

@@ -242,6 +242,21 @@ label.f > span i{font-style:normal;color:var(--accent)}
   padding:3px 10px;border-radius:999px;margin-left:auto}
 .srv-res{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:15px;background:var(--surface-2)}
 .srv-res h5{font-size:13.5px;font-weight:800;margin:0 0 10px}
+/* 저장 내역 */
+.saves{margin-top:14px;border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--surface-2)}
+.saves-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.saves-top b{font-size:13.5px}
+.saves-list{margin-top:11px;display:grid;gap:8px}
+.save-row{display:flex;gap:10px;align-items:center;padding:10px 12px;background:var(--surface);
+  border:1px solid var(--line);border-radius:10px;min-width:0}
+.save-row .sv{flex:1;min-width:0}
+.save-row .nm{font-size:13.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.save-row .mt{font-size:12px;color:var(--muted);margin-top:2px}
+.save-row .sc{flex:none;font-size:12px;font-weight:800;color:var(--accent);
+  background:var(--acc-bg);border:1px solid var(--acc-line);border-radius:6px;padding:2px 7px}
+.save-row .btn{flex:none}
+.saves-empty{font-size:12.5px;color:var(--muted);padding:4px 2px}
+
 /* 긴 주소(예약 링크·인스타)가 안 접혀 문서가 화면보다 넓어지면
    페이지 전체가 옆으로 밀린다. 값 칸은 줄어들 수 있어야 하고, 글자는 꺾여야 한다.
    1fr 은 최소폭이 내용 크기라서 안 줄어든다 — minmax(0,1fr) 이어야 줄어든다. */
@@ -588,6 +603,14 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <h2>📱💻 다른 기기로 이어서 하기 <span id="save-state" class="save-state">저장됨</span></h2>
     <p class="desc" id="xfer-desc">입력한 내용은 이 기기에 자동으로 저장됩니다. 다른 기기에서 이어 하시려면 코드를 옮기세요.</p>
 
+    <div class="saves">
+      <div class="saves-top">
+        <b>💾 저장 내역</b>
+        <button class="btn sm" type="button" id="btn-save-now">지금 상태 저장</button>
+      </div>
+      <div id="saves-list" class="saves-list"></div>
+    </div>
+
     <div id="xfer-box" style="margin-top:16px">
       <textarea id="xfer-code" class="xfer-code" rows="3" spellcheck="false"
         placeholder="① 보낼 때 — 아래 '코드 만들기'를 누르면 여기에 코드가 생깁니다&#10;② 받을 때 — 받은 코드를 여기에 붙여넣고 '코드 불러오기'를 누르세요"></textarea>
@@ -722,6 +745,10 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 /* ============================================================
    CONFIG
    ============================================================ */
+/* 서버 연결 여부는 저장·불러오기에서도 쓰이므로 맨 앞에서 선언한다.
+   뒤에서 선언하면 그 전에 실행되는 코드가 접근할 수 없다. */
+let SERVER = null;   // 연결되면 서버 정보 객체
+
 const CONFIG = {
   aiModel: "claude-opus-5"
 };
@@ -1785,6 +1812,114 @@ async function syncState(){
   }
 }
 
+/* ============================================================
+   저장 내역
+
+   지금 상태를 이어 쓰는 것과, 시점을 남겨 두는 것은 다른 일이다.
+   소개글을 고치기 전·사진을 올리기 전 상태를 남겨 두면 무엇이 달라졌는지 비교된다.
+   서버가 있으면 서버에 (어느 기기에서든 보이게), 없으면 이 기기에 쌓는다.
+   ============================================================ */
+const SAVES_KEY = "gym-place-check/saves";
+const localSaves = {
+  list(){ try{ return JSON.parse(localStorage.getItem(SAVES_KEY)) || []; }catch{ return []; } },
+  write(a){ try{ localStorage.setItem(SAVES_KEY, JSON.stringify(a.slice(-50))); }catch{} },
+};
+
+async function listSaves(){
+  if(SERVER){
+    try{
+      const r = await (await fetch(apiUrl("/api/saves"))).json();
+      if(r.ok) return r.saves;
+    }catch{ /* 끊기면 이 기기 것이라도 보여준다 */ }
+  }
+  return localSaves.list().map(({snap, ...m})=>m).reverse();
+}
+
+async function addSave(){
+  const o = getInfo();
+  const scoreTxt = $("r-score")?.textContent || "";
+  const entry = {
+    name: o.name || "이름 없음",
+    at: new Date().toISOString(),
+    score: /^\d+$/.test(scoreTxt.trim()) ? Number(scoreTxt.trim()) : null,
+    keyword: o.keywords[0] || "",
+    snap: snapshot(),
+  };
+  if(SERVER){
+    try{
+      const r = await (await fetch(apiUrl("/api/saves"), {
+        method:"POST", headers:{ "content-type":"application/json" },
+        body: JSON.stringify(entry) })).json();
+      if(r.ok){ await renderSaves(); showToast(); return; }
+    }catch{ /* 아래 로컬 저장으로 */ }
+  }
+  const a = localSaves.list();
+  a.push({ ...entry, id: "L" + Date.now().toString(36) });
+  localSaves.write(a);
+  await renderSaves(); showToast();
+}
+
+async function loadSave(id){
+  let snap = null;
+  if(SERVER && !id.startsWith("L")){
+    try{
+      const r = await (await fetch(apiUrl("/api/saves?id="+encodeURIComponent(id)))).json();
+      if(r.ok) snap = r.save.snap;
+    }catch{}
+  }
+  if(!snap) snap = (localSaves.list().find(x=>x.id===id)||{}).snap;
+  if(!snap){ alert("그 기록을 찾지 못했습니다."); return; }
+  restore(snap);
+  renderWorklog();
+  save();                       // 불러온 것이 지금 상태가 된다 (다른 기기에도 반영)
+  showToast();
+  $("sec1")?.scrollIntoView({ behavior:"smooth", block:"start" });
+}
+
+async function delSave(id){
+  if(!confirm("이 기록을 지웁니다. 계속할까요?")) return;
+  if(SERVER && !id.startsWith("L")){
+    try{ await fetch(apiUrl("/api/saves?id="+encodeURIComponent(id)), { method:"DELETE" }); }catch{}
+  }
+  localSaves.write(localSaves.list().filter(x=>x.id!==id));
+  await renderSaves();
+}
+
+const whenText = iso => {
+  const d = new Date(iso);
+  if(isNaN(d)) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString("ko-KR", { hour:"numeric", minute:"2-digit" });
+  return sameDay ? `오늘 ${time}`
+    : `${d.getMonth()+1}월 ${d.getDate()}일 ${time}`;
+};
+
+async function renderSaves(){
+  const box = $("saves-list"); if(!box) return;
+  const list = await listSaves();
+  if(!list.length){
+    box.innerHTML = `<div class="saves-empty">저장한 기록이 없습니다.
+      소개글이나 사진을 고치기 <b>전에</b> 한 번 저장해 두면 나중에 비교됩니다.</div>`;
+    return;
+  }
+  box.innerHTML = list.map(s=>`<div class="save-row">
+    <div class="sv">
+      <div class="nm">${s.name || "이름 없음"}</div>
+      <div class="mt">${whenText(s.at)}${s.keyword ? ` · ${s.keyword}` : ""}</div>
+    </div>
+    ${s.score != null ? `<span class="sc">${s.score}점</span>` : ""}
+    <button class="btn sm ghost" type="button" data-load="${s.id}">불러오기</button>
+    <button class="btn sm ghost" type="button" data-del="${s.id}">삭제</button>
+  </div>`).join("");
+}
+
+$("btn-save-now")?.addEventListener("click", addSave);
+document.addEventListener("click", e=>{
+  const l = e.target.closest("[data-load]"); if(l) return loadSave(l.dataset.load);
+  const d = e.target.closest("[data-del]");  if(d) return delSave(d.dataset.del);
+});
+
 function showSync(msg){
   const el = $("save-state"); if(!el) return;
   el.textContent = msg; el.style.opacity = 1;
@@ -1807,6 +1942,7 @@ document.addEventListener("change", e=>{ if(e.target.closest("main")) save(); })
     catch{ /* 손상된 코드는 무시하고 로컬 저장본으로 */ }
   }
   try{ restore(JSON.parse(localStorage.getItem(STORE_KEY))); }catch{}
+  renderSaves();
 })();
 
 $("btn-export").addEventListener("click", ()=>{
@@ -1841,7 +1977,6 @@ $("btn-clear").addEventListener("click", async ()=>{
    로컬 서버 연동 — 자동 수집 · 순위 추적
    서버가 없으면 조용히 수동 모드로 남는다.
    ============================================================ */
-let SERVER = null;   // 연결되면 서버 정보 객체
 const KEY_STORE = "gym-place-check/key";
 
 /* 휴대폰은 PC가 알려준 주소(#k=...)로 처음 한 번 들어온다.
@@ -1892,6 +2027,7 @@ function apiUrl(pathAndQuery){
        서버가 켜져 있으면 할 일이 아니라 선택지로만 남겨 둔다. */
     foldSection("paste", "서버가 켜져 있어 필요 없습니다 (폰 단독으로 쓸 때만)");
     syncState();   // 다른 기기에서 저장한 내용 맞추기
+    renderSaves();
     const xd = $("xfer-desc");
     if(xd) xd.innerHTML = `<b>서버에 저장되므로 어느 기기에서 열어도 그대로 보입니다.</b>
       폰에서 체크하고 PC에서 열면 그대로 있습니다. 아래 코드는 서버를 못 쓸 때를 위한 예비 수단입니다.
