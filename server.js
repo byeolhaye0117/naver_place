@@ -1381,8 +1381,12 @@ const server = http.createServer(async (req, res) => {
 
     if (u.pathname === '/api/health') {
       const ip = lanIp();
+      /* 화면이 어느 판인지 알 수 있어야 한다. "안 바뀌었다"가 배포가 안 된 것인지
+         캐시인지 진짜 버그인지, 이 값 하나로 갈린다. */
+      let built = '';
+      try { built = fs.statSync(path.join(ROOT, 'index.html')).mtime.toISOString().slice(0, 16).replace('T', ' '); } catch {}
       return sendJson(res, 200, {
-        ok: true, version: 2,
+        ok: true, version: 2, built,
         ai: Boolean(process.env.ANTHROPIC_API_KEY),
         lanUrl: ip ? `http://${ip}:${PORT}/#k=${KEY}` : null,
       });
@@ -1496,7 +1500,12 @@ const server = http.createServer(async (req, res) => {
     if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end('forbidden'); }
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end('not found'); }
 
-    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
+    /* 캐시를 두면 새로 배포해도 옛 화면이 계속 보인다.
+       파일이 작아 매번 받아도 부담이 없으므로 아예 저장하지 않게 한다. */
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+      'cache-control': 'no-store, must-revalidate',
+    });
     fs.createReadStream(file).pipe(res);
 
   } catch (e) {
