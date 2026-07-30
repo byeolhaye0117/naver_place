@@ -9,12 +9,13 @@
 <style>
 /* ── 색 토큰 ────────────────────────────────────────────────
    컴포넌트는 항상 토큰만 참조한다. 테마는 토큰 값만 바꾼다.
-   히어로는 어느 테마에서도 어두운 면으로 유지하므로 내부 색은 고정. */
+   바탕을 거의 무채색으로 두고, 색은 상태(좋다·부족하다·경고)에만 쓴다.
+   숫자를 읽는 화면이라 색이 많으면 어디를 봐야 할지 흐려진다. */
 :root{
-  --navy:#0f1b2d; --navy-2:#1b2a41;
-  --ink:#16202e; --muted:#5f6b7a; --line:#e3e8ef;
-  --bg:#f6f8fb; --card:#fff;
-  --surface:#fff; --surface-2:#fbfcfe; --surface-3:#f9fafc; --track:#eef1f6;
+  --navy:#1b1f26; --navy-2:#2a3038;
+  --ink:#191c22; --muted:#7b838e; --line:#eceef2;
+  --bg:#f6f7f9; --card:#fff;
+  --surface:#fff; --surface-2:#f8f9fb; --surface-3:#f5f6f9; --track:#eef0f4;
   --accent:#ff5a2b; --accent-soft:#fff1ec;
   --acc-bg:#fff8f5; --acc-line:#ffd6c8; --acc-fg:#c2410c;
   --ok-bg:#eefaf2;  --ok-line:#bfe6cf;  --ok-fg:#0b7a3d;
@@ -31,7 +32,8 @@
   --grade-c-bg:#fff6e5; --grade-c-fg:#a06b00;
   --grade-d-bg:#fff1ec; --grade-d-fg:#c2410c;
   --grade-e-bg:#fff5f5; --grade-e-fg:#b91c1c;
-  --radius:14px; --shadow:0 1px 2px rgba(16,32,54,.06),0 8px 24px rgba(16,32,54,.06);
+  --radius:16px; --shadow:0 1px 2px rgba(18,24,33,.04);
+  --side-w:252px;
 }
 
 /* 다크 — 밝은 값을 뒤집지 않고, 어두운 바탕에서 대비가 살도록 따로 잡았다.
@@ -39,10 +41,10 @@
    서로 구분돼야 해서 채도를 낮추는 대신 명도를 올렸다. */
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --navy:#0a1119; --navy-2:#141d2b;
-    --ink:#e5ecf5; --muted:#94a3b8; --line:#27323f;
-    --bg:#0c121a; --card:#141c27;
-    --surface:#141c27; --surface-2:#101822; --surface-3:#121a24; --track:#212b38;
+    --navy:#2f3742; --navy-2:#3b444f;
+    --ink:#e8ebef; --muted:#8d959f; --line:#242931;
+    --bg:#0e1116; --card:#161a20;
+    --surface:#161a20; --surface-2:#1b2027; --surface-3:#1e232b; --track:#262c34;
     --accent:#ff6b3d; --accent-soft:#2a1610;
     --acc-bg:#26150e; --acc-line:#573020; --acc-fg:#ff9d75;
     --ok-bg:#0f2318;  --ok-line:#1e4a34;  --ok-fg:#5fd996;
@@ -62,10 +64,10 @@
 }
 /* 뷰어 토글이 OS 설정을 이긴다 (양방향) */
 :root[data-theme="dark"]{
-  --navy:#0a1119; --navy-2:#141d2b;
-  --ink:#e5ecf5; --muted:#94a3b8; --line:#27323f;
-  --bg:#0c121a; --card:#141c27;
-  --surface:#141c27; --surface-2:#101822; --surface-3:#121a24; --track:#212b38;
+  --navy:#2f3742; --navy-2:#3b444f;
+  --ink:#e8ebef; --muted:#8d959f; --line:#242931;
+  --bg:#0e1116; --card:#161a20;
+  --surface:#161a20; --surface-2:#1b2027; --surface-3:#1e232b; --track:#262c34;
   --accent:#ff6b3d; --accent-soft:#2a1610;
   --acc-bg:#26150e; --acc-line:#573020; --acc-fg:#ff9d75;
   --ok-bg:#0f2318;  --ok-line:#1e4a34;  --ok-fg:#5fd996;
@@ -95,46 +97,116 @@ h1,h2,h3,h4{line-height:1.32;margin:0;letter-spacing:-.02em}
 p{margin:0}
 button{font:inherit;cursor:pointer}
 input,select,textarea{font:inherit;color:inherit}
-.wrap{max-width:800px;margin:0 auto;padding:0 18px}
+.wrap{min-width:0}
 
-/* 히어로 */
-.hero{background:linear-gradient(160deg,var(--navy) 0%,var(--navy-2) 100%);color:#fff;padding:52px 0 60px;position:relative;overflow:hidden}
-.hero::after{content:"";position:absolute;right:-90px;top:-70px;width:300px;height:300px;border-radius:50%;background:rgba(255,90,43,.15)}
-.hero .wrap{position:relative;z-index:1}
-.eyebrow{display:inline-block;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);
-  padding:5px 12px;border-radius:999px;font-size:13px;font-weight:600;margin-bottom:16px}
-.hero h1{font-size:clamp(25px,5.2vw,38px);font-weight:800}
-.hero h1 em{font-style:normal;color:#ffb199}
-.hero p.sub{margin-top:13px;color:#c3ccda;font-size:clamp(14.5px,2.5vw,16.5px)}
-.pillars{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:22px}
-.pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:11px 12px}
-.pill b{display:block;font-size:14px;font-weight:700}
-.pill small{font-size:11.5px;color:#a9b5c6;line-height:1.5;display:block;margin-top:3px}
+/* ── 껍데기 — 왼쪽 메뉴 + 상단 검색줄 + 본문 ────────────────────
+   진단 도구는 매일 같은 자리를 눌러 쓰는 화면이다. 소개 문구를 지우고
+   메뉴를 왼쪽에 고정해 두면, 들어오자마자 숫자부터 보인다. */
+.app{display:grid;grid-template-columns:var(--side-w) minmax(0,1fr);min-height:100dvh}
 
-/* 메뉴 — 진단 / 채우기. 쓰는 시점이 다르므로 한 번에 하나만 보여준다. */
-.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px;
-  position:sticky;top:0;z-index:40;padding:10px 0;
-  background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(10px)}
-.tab{position:relative;appearance:none;cursor:pointer;text-align:left;
-  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 14px;
-  color:var(--muted);font:inherit;transition:.15s}
-.tab b{display:block;font-size:15.5px;font-weight:800;color:var(--ink)}
-.tab small{display:block;font-size:11.5px;margin-top:2px;line-height:1.4}
-.tab:hover{border-color:color-mix(in srgb,var(--navy) 30%,var(--line))}
-.tab.on{background:var(--navy);border-color:var(--navy);color:#c3ccda;
-  box-shadow:0 6px 18px color-mix(in srgb,var(--navy) 22%,transparent)}
-.tab.on b{color:#fff}
-.tab-dot{display:none;position:absolute;top:8px;right:9px;width:8px;height:8px;border-radius:50%;
-  background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
-.tab-dot.on{display:block}
+.side{position:sticky;top:0;height:100dvh;overflow-y:auto;z-index:60;
+  background:var(--card);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:16px 13px}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 6px 6px}
+.brand i{width:32px;height:32px;border-radius:9px;background:var(--navy);color:#fff;flex:none;
+  display:grid;place-items:center;font-size:16px;font-style:normal}
+.brand b{font-size:15.5px;font-weight:800;letter-spacing:-.02em;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-x{display:none;margin-left:auto;background:none;border:0;color:var(--muted);font-size:17px;padding:2px 6px}
+.nav-lab{display:block;font-size:10.5px;font-weight:800;letter-spacing:.09em;color:var(--muted);
+  padding:16px 8px 6px}
+.nav-i{position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;
+  border-radius:10px;border:1px solid transparent;background:none;color:var(--muted);
+  font-size:14px;font-weight:600;text-align:left;transition:.13s}
+.nav-i i{font-style:normal;font-size:14.5px;flex:none;width:18px;text-align:center}
+.nav-i span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-i:hover{background:var(--surface-2);color:var(--ink)}
+.nav-i.on{background:var(--surface-2);border-color:var(--line);color:var(--ink);font-weight:700;
+  box-shadow:0 1px 2px rgba(18,24,33,.05)}
+.nav-sub{display:grid;margin:3px 0 3px 22px;padding-left:11px;border-left:1px solid var(--line)}
+.nav-s{background:none;border:0;text-align:left;padding:6px 9px;border-radius:8px;
+  font-size:12.5px;font-weight:600;color:var(--muted);transition:.13s}
+.nav-s:hover{color:var(--ink);background:var(--surface-2)}
+.nav-i .tab-dot,.seg .tab-dot{display:none;width:7px;height:7px;border-radius:50%;flex:none;
+  background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.nav-i .tab-dot{margin-left:auto}
+.nav-i .tab-dot.on,.seg .tab-dot.on{display:block}
+.side-foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+.me{display:flex;align-items:center;gap:10px;padding:8px 6px;min-width:0}
+.me i{width:34px;height:34px;border-radius:10px;flex:none;font-style:normal;font-weight:800;font-size:14px;
+  background:var(--surface-2);border:1px solid var(--line);color:var(--ink);display:grid;place-items:center}
+.me div{min-width:0}
+.me b{display:block;font-size:12.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.me span{display:block;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.main{min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:35;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:11px 22px;border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px)}
+.hamb{display:none;background:var(--card);border:1px solid var(--line);border-radius:9px;
+  width:34px;height:34px;place-items:center;font-size:15px;color:var(--ink);flex:none;padding:0}
+.crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);flex:none;min-width:0}
+.seg{display:none;gap:3px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px;flex:none}
+.seg button{position:relative;border:0;background:none;border-radius:8px;padding:6px 12px;
+  font-size:12.5px;font-weight:700;color:var(--muted)}
+.seg button.on{background:var(--surface-2);color:var(--ink);box-shadow:0 1px 2px rgba(18,24,33,.07)}
+.seg .tab-dot{position:absolute;top:4px;right:4px;margin:0}
+#mtab-tools{padding-right:17px}
+.crumb b{color:var(--ink);font-weight:700}
+.crumb .sl{opacity:.45}
+.search{margin-left:auto;display:flex;align-items:center;gap:7px;flex:1 1 260px;max-width:520px;min-width:0;
+  background:var(--card);border:1px solid var(--line);border-radius:11px;padding:5px 6px 5px 12px;
+  transition:border-color .15s,box-shadow .15s}
+.search:focus-within{border-color:var(--navy);box-shadow:0 0 0 3px color-mix(in srgb,var(--navy) 9%,transparent)}
+.search i{font-style:normal;font-size:13px;color:var(--muted);flex:none}
+.search input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:13.5px;padding:5px 0}
+.search .btn{flex:none;width:auto;padding:7px 13px;font-size:13px;border-radius:8px;font-weight:700}
+.content{padding:20px 22px 60px;max-width:1280px;width:100%;min-width:0}
+
+/* 인사줄 — 이름과 "지금 어디에 서 있나" 한 줄 */
+.hello{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.hello h1{font-size:clamp(20px,3.4vw,26px);font-weight:800}
+.hello p{margin-top:5px;font-size:13.5px;color:var(--muted)}
+.hello .hb{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+
+/* 시작 안내 — 아직 진단 전일 때 숫자 자리에 놓는다 */
+.blank{background:var(--card);border:1px dashed var(--line);border-radius:var(--radius);
+  padding:26px 22px;text-align:center}
+.blank b{display:block;font-size:16px;font-weight:800}
+.blank p{margin-top:7px;font-size:13.5px;color:var(--muted);line-height:1.7}
+.blank .btn{width:auto;margin-top:14px;padding:11px 20px}
+
+/* 결과를 두 단으로 — 왼쪽은 숫자·분석, 오른쪽은 할 일 */
+.res-grid{display:grid;gap:16px;align-items:start}
+.res-grid > .col{min-width:0;display:grid;gap:16px;align-content:start}
+.res-grid > .col > .card{margin-top:0}
+@media (min-width:1180px){
+  .res-grid{grid-template-columns:minmax(0,1.45fr) minmax(0,1fr)}
+}
+
 .gonext,.need-diag{text-align:center}
 .gonext b,.need-diag b{display:block;font-size:16.5px;font-weight:800}
 .gonext p,.need-diag p{margin:7px 0 14px;color:var(--muted);font-size:13.5px;line-height:1.65}
 .gonext .btn,.need-diag .btn{width:auto;padding:12px 22px}
-@media (max-width:400px){
-  .tab{padding:10px 11px}
-  .tab b{font-size:14px}
-  .tab small{font-size:10.5px}
+
+.scrim{position:fixed;inset:0;background:rgba(12,16,22,.45);z-index:55;display:none}
+.scrim.on{display:block}
+@media (max-width:1000px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .side{position:fixed;left:0;top:0;width:272px;transform:translateX(-101%);visibility:hidden;
+    transition:transform .22s cubic-bezier(.2,.8,.2,1),visibility .22s;
+    box-shadow:0 0 40px rgba(12,16,22,.18)}
+  .side.open{transform:none;visibility:visible}
+  .side-x{display:block}
+  .hamb{display:grid}
+  .topbar{padding:10px 14px}
+  .seg{display:flex}
+  .crumb{display:none}
+  .content{padding:16px 14px 60px}
+}
+@media (max-width:560px){
+  .crumb{font-size:12px}
+  .search{flex-basis:100%;margin-left:0;order:3;max-width:none}
 }
 
 /* 카드 */
@@ -155,7 +227,7 @@ input,select,textarea{font:inherit;color:inherit}
 .step-no{background:var(--navy);color:#fff;width:26px;height:26px;border-radius:8px;
   display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex:none}
 .card > p.desc{color:var(--muted);font-size:14px;margin-top:8px}
-main{padding-bottom:60px;margin-top:-30px;position:relative;z-index:2}
+.card > h2 + p.desc{margin-top:6px}
 
 /* 폼 */
 .grid{display:grid;gap:14px;margin-top:18px}
@@ -197,13 +269,17 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .item .w{font-size:13px;color:var(--muted);margin-top:4px}
 
 /* 버튼 */
+/* 주 버튼은 무채색 검정. 주황은 "부족한 곳" 표시에만 남겨 둔다 —
+   버튼까지 주황이면 정작 봐야 할 경고가 묻힌다. */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;
-  padding:15px 20px;border:0;border-radius:12px;background:var(--accent);color:#fff;
-  font-size:16px;font-weight:700;transition:filter .15s,transform .05s}
-.btn:hover{filter:brightness(1.06)}
+  padding:14px 20px;border:0;border-radius:11px;background:var(--navy);color:#fff;
+  font-size:15.5px;font-weight:700;transition:filter .15s,transform .05s}
+.btn.acc{background:var(--accent)}
+.btn:hover{filter:brightness(1.14)}
 .btn:active{transform:translateY(1px)}
 .btn:disabled{opacity:.55;cursor:default}
-.btn.ghost{background:var(--surface);color:var(--navy);border:1px solid var(--line);font-weight:600}
+.btn.ghost{background:var(--surface);color:var(--ink);border:1px solid var(--line);font-weight:600}
+.btn.ghost:hover{filter:none;background:var(--surface-2);border-color:color-mix(in srgb,var(--muted) 40%,var(--line))}
 .btn.dark{background:var(--navy)}
 .btn.sm{width:auto;padding:9px 15px;font-size:14px;border-radius:9px}
 .btn-row{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
@@ -214,27 +290,36 @@ label.f > span i{font-style:normal;color:var(--accent)}
 /* 대시보드 — 점수는 왼쪽에 작게, 판정과 숫자는 옆에.
    게이지가 화면 하나를 다 먹으면 정작 중요한 숫자를 보려고 스크롤해야 한다. */
 .score-box{display:flex;gap:16px;align-items:center;padding:14px 0 4px}
-.gauge{width:132px;height:132px;flex:none;position:relative}
+.gauge{width:118px;height:118px;flex:none;position:relative}
 .gauge svg{transform:rotate(-90deg)}
 .gauge .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.gauge .num strong{font-size:38px;font-weight:800;letter-spacing:-.04em;line-height:1}
+.gauge .num strong{font-size:34px;font-weight:800;letter-spacing:-.045em;line-height:1}
 .gauge .num small{font-size:12px;color:var(--muted);margin-top:3px}
 .score-side{min-width:0;flex:1}
 .grade{display:inline-block;padding:6px 15px;border-radius:999px;font-weight:800;font-size:14.5px}
 .verdict{margin-top:9px;font-size:14px;color:var(--muted);line-height:1.6}
 
-/* 한눈에 보는 숫자 — 사장님이 실제로 궁금해하는 네 개 */
-.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:16px}
-@media (min-width:600px){ .stats{grid-template-columns:repeat(4,minmax(0,1fr))} }
-.stat{background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:11px 12px;min-width:0}
-.stat .k{font-size:11.5px;font-weight:700;color:var(--muted);white-space:nowrap}
-.stat .v{font-size:21px;font-weight:800;letter-spacing:-.03em;margin-top:3px;line-height:1.1}
-.stat .v small{font-size:12px;font-weight:700;color:var(--muted);margin-left:1px}
-.stat .g{font-size:11.5px;font-weight:800;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stat .b{font-size:10.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stat .g.short{color:var(--bad-fg)}
-.stat .g.okd{color:var(--ok-fg)}
-.stat .g.non{color:var(--muted);font-weight:500}
+/* 한눈에 보는 숫자 — 사장님이 실제로 궁금해하는 네 개.
+   본문 맨 위에 큰 숫자로 세운다. 들어오자마자 이것만 봐도 되게. */
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (min-width:760px){ .stats{grid-template-columns:repeat(4,minmax(0,1fr))} }
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:15px 16px;min-width:0}
+.stat .k{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .k::before{content:"";width:6px;height:6px;border-radius:2px;background:var(--track);flex:none}
+.stat:nth-child(1) .k::before{background:var(--p1)}
+.stat:nth-child(2) .k::before{background:var(--p2)}
+.stat:nth-child(3) .k::before{background:var(--p3)}
+.stat:nth-child(4) .k::before{background:var(--accent)}
+.stat .v{font-size:clamp(24px,4.4vw,31px);font-weight:800;letter-spacing:-.045em;margin-top:11px;line-height:1}
+.stat .v small{font-size:13px;font-weight:700;color:var(--muted);margin-left:2px;letter-spacing:0}
+.stat .g{display:inline-block;font-size:11.5px;font-weight:800;margin-top:9px;padding:2px 7px;
+  border-radius:6px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.stat .b{font-size:11px;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .g.short{color:var(--bad-fg);background:var(--bad-bg)}
+.stat .g.okd{color:var(--ok-fg);background:var(--ok-bg)}
+.stat .g.non{color:var(--muted);background:var(--track);font-weight:700}
 
 .bars{margin-top:20px;display:grid;gap:13px}
 .bar-row .lab{display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;margin-bottom:5px;gap:10px}
@@ -295,6 +380,9 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .srv-badge{font-size:11.5px;font-weight:700;background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-line);
   padding:3px 10px;border-radius:999px;margin-left:auto}
 .srv-res{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:15px;background:var(--surface-2)}
+#s-out > .srv-res,#s-out > .srv-err{background:var(--card);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:20px 22px}
+#wl-count:empty{display:none}
 .srv-res h5{font-size:13.5px;font-weight:800;margin:0 0 10px}
 /* 저장 내역 */
 /* 먼저 할 3개 */
@@ -521,281 +609,333 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 </head>
 <body>
 
-<header class="hero">
-  <div class="wrap">
-    <span class="eyebrow">네이버 플레이스 알고리즘 기반 · 헬스장 전용</span>
-    <h1>내 플레이스는<br><em>어느 축</em>에서 막혀 있나</h1>
-    <p class="sub">네이버가 순위를 매기는 3개 축으로 진단합니다.<br>목표 키워드를 넣으면 적합도는 체크가 아니라 <b>실제 매칭 분석</b>으로 계산합니다.</p>
-    <div class="pillars">
-      <div class="pill"><b>적합도</b><small>검색어와 내 정보가 맞는가</small></div>
-      <div class="pill"><b>인기도</b><small>이용자 행동이 쌓이는가</small></div>
-      <div class="pill"><b>거리·신뢰</b><small>위치가 정확한가</small></div>
+<div class="app">
+
+  <!-- 왼쪽 고정 메뉴 -->
+  <aside class="side" id="side">
+    <div class="brand"><i>💪</i><b>플레이스 진단</b>
+      <button class="side-x" id="side-x" type="button" aria-label="메뉴 닫기">✕</button></div>
+
+    <span class="nav-lab">MAIN MENU</span>
+    <button type="button" class="nav-i on" id="tab-diag" role="tab" aria-selected="true" aria-controls="view-diag">
+      <i>▤</i><span>대시보드</span></button>
+    <div class="nav-sub">
+      <button type="button" class="nav-s" data-go="topline">한눈에 보기</button>
+      <button type="button" class="nav-s" data-go="card-score">점수 · 3축</button>
+      <button type="button" class="nav-s" data-go="card-todo">할 일</button>
+      <button type="button" class="nav-s" data-go="card-log">개선 기록</button>
+      <button type="button" class="nav-s" data-go="sec3">채점 기준 22개</button>
     </div>
-  </div>
-</header>
+    <button type="button" class="nav-i" id="tab-tools" role="tab" aria-selected="false" aria-controls="view-tools">
+      <i>✎</i><span>채우기 도구</span><i class="tab-dot" id="tab-dot"></i></button>
 
-<main class="wrap">
+    <span class="nav-lab">SETTING</span>
+    <button type="button" class="nav-i" data-go="manual-wrap"><i>✐</i><span>입력값 고치기</span></button>
+    <button type="button" class="nav-i" data-go="saves-card"><i>🖫</i><span>저장 내역</span></button>
+    <button type="button" class="nav-i" data-go="xfer"><i>⇄</i><span>다른 기기로 이어쓰기</span></button>
 
-  <!-- 두 페이지 — 진단은 "지금 뭐가 비었나", 도구는 "그 빈칸을 뭘로 채우나" -->
-  <nav class="tabs" id="tabs" role="tablist">
-    <button type="button" class="tab on" id="tab-diag" role="tab" aria-selected="true" aria-controls="view-diag">
-      <b>🔍 진단</b><small>뭐가 비었나 찾기</small></button>
-    <button type="button" class="tab" id="tab-tools" role="tab" aria-selected="false" aria-controls="view-tools">
-      <b>✍️ 채우기</b><small>빈칸 채울 문장 만들기</small><i class="tab-dot" id="tab-dot"></i></button>
-  </nav>
+    <div class="side-foot">
+      <div class="me"><i id="me-ini">?</i>
+        <div><b id="me-name">가게 미등록</b><span id="me-sub">위 칸에 플레이스 주소</span></div></div>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main">
+
+    <!-- 상단 — 어디에 있는지 + 플레이스 주소 넣는 칸 -->
+    <header class="topbar">
+      <button class="hamb" id="hamb" type="button" aria-label="메뉴 열기">☰</button>
+      <div class="crumb"><span>메인</span><span class="sl">/</span><b id="crumb">대시보드</b></div>
+      <div class="seg" id="seg" role="tablist" aria-label="화면 전환">
+        <button type="button" id="mtab-diag" class="on" role="tab" aria-selected="true">진단</button>
+        <button type="button" id="mtab-tools" role="tab" aria-selected="false">채우기<i class="tab-dot" id="mtab-dot"></i></button>
+      </div>
+      <div class="search">
+        <i>🔍</i>
+        <input id="s-url" type="text" placeholder="플레이스 주소 또는 ID 붙여넣기">
+        <button class="btn dark" id="s-collect" type="button">수집</button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <div class="hello">
+        <div>
+          <h1 id="hi-title">안녕하세요 👋</h1>
+          <p id="hi-sub">위 칸에 플레이스 주소를 넣고 <b>수집</b>을 누르면 여기에 숫자가 채워집니다.</p>
+        </div>
+        <div class="hb">
+          <button class="btn ghost sm" id="s-rank" type="button">순위 조회</button>
+          <button class="btn ghost sm" id="s-comp" type="button">상위 3곳 분석</button>
+        </div>
+      </div>
 
   <div class="view" id="view-diag" role="tabpanel" aria-labelledby="tab-diag">
 
-  <!-- 서버 연동 (로컬 서버 실행 중일 때만 표시) -->
-  <section class="card" id="srv" style="display:none">
-    <h2>🔗 자동 수집 · 순위 추적 <span id="srv-badge" class="srv-badge">서버 연결됨</span></h2>
-    <p class="desc">내 플레이스 주소를 넣으면 네이버에서 정보를 직접 가져오고, 목표 키워드의 현재 순위를 조회합니다.</p>
-
-    <div id="lan-row" style="display:none;margin-top:16px" class="lan">
-      <b>📱 휴대폰에서도 이 기능을 쓰려면</b>
-      <p>같은 와이파이에 연결한 뒤, 휴대폰 브라우저에 아래 주소를 입력하고 <b>북마크</b>해 두세요.
-        한 번만 하면 그다음부터는 북마크만 누르면 됩니다.</p>
-      <code id="lan-url"></code>
-    </div>
-
-    <label class="f" style="margin-top:16px"><span>내 플레이스 주소 또는 ID</span>
-      <input id="s-url" type="text" placeholder="https://map.naver.com/p/entry/place/1234567890  또는  naver.me 단축링크">
-      <div class="hint">네이버 지도에서 내 가게 → 공유 → 링크 복사</div></label>
-
-    <div class="btn-row">
-      <button class="btn dark" id="s-collect" type="button">정보 자동 수집</button>
-      <button class="btn ghost" id="s-rank" type="button">순위 조회</button>
-      <button class="btn" id="s-comp" type="button">🔍 상위 3곳 분석</button>
-    </div>
-
-    <div id="s-out"></div>
-  </section>
-
-  <!-- 서버 미실행 안내 -->
-  <section class="card" id="srv-off">
-    <h2>💡 지금은 수동 입력 모드</h2>
-    <p class="desc"><b>이대로도 진단·키워드 분석·문장 생성은 전부 됩니다.</b> 아래 3가지만 PC의 도우미 프로그램이 필요합니다 —
-      네이버에 직접 요청을 보내야 해서 브라우저 혼자서는 막혀 있습니다.</p>
-    <ul style="font-size:14px;color:var(--muted);margin:12px 0 0;padding-left:20px;line-height:1.9">
-      <li>플레이스 정보 자동 수집 (리뷰수·사진수·저장수)</li>
-      <li>목표 키워드 순위 조회 및 추적</li>
-      <li>상위 3곳 경쟁 분석</li>
-    </ul>
-
-    <div class="lan" style="margin-top:16px;border-color:var(--ok-line);background:var(--ok-bg)">
-      <b>📋 휴대폰에서 지금 바로 — 위 "네이버 화면 붙여넣기"를 쓰세요</b>
-      <p>네이버 지도에서 내 가게 페이지 텍스트를 복사해 붙여넣으면
-        리뷰수·사진수·저장수·시설·가격·소개글을 찾아내 자동으로 채웁니다. 서버가 필요 없습니다.</p>
-    </div>
-
-    <div class="lan" style="margin-top:12px">
-      <b>💻 PC에서 — 한 번만 설정하면 그다음은 자동입니다</b>
-      <p>내려받은 폴더에서 <b>시작하기</b> 파일을 더블클릭하세요. 명령어를 칠 필요 없습니다.<br>
-        · 윈도우 → <code>start.bat</code>　· 맥 → <code>start.command</code><br>
-        브라우저가 알아서 열리고, 위 3가지 버튼이 나타납니다.
-        PC를 켤 때마다 자동 실행되게 하는 방법은 README에 있습니다.</p>
-    </div>
-
-    <div class="lan" style="margin-top:12px">
-      <b>📱 휴대폰에서 — PC가 켜져 있으면 폰에서도 됩니다</b>
-      <p>PC에서 도우미를 켜면 화면에 <b>휴대폰용 주소</b>가 나옵니다.
-        같은 와이파이에서 그 주소로 한 번 들어가 북마크해 두면, 이후로는 폰에서도 자동 수집·순위·경쟁 분석이 전부 됩니다.</p>
-    </div>
-  </section>
-
-  <!-- 저장 내역 — 결과를 보러 오는 곳이라 위에 둔다 -->
-  <section class="card" id="saves-card">
-    <h2>💾 저장 내역 <em class="ttl-note">기기 상관없이 보임</em></h2>
-    <p class="desc">진단한 시점을 남겨 둡니다. 같은 가게는 <b>가장 최근 것 하나만</b> 남습니다.
-      소개글이나 사진을 고치기 <b>전에</b> 한 번 저장해 두면 나중에 점수가 얼마나 움직였는지 보입니다.</p>
-    <div class="saves-top" style="margin-top:12px">
-      <b>기록</b>
-      <button class="btn sm" type="button" id="btn-save-now">지금 상태 저장</button>
-    </div>
-    <div id="saves-list" class="saves-list"></div>
-  </section>
-
-  <!-- 붙여넣기로 채우기 (서버 없이 휴대폰에서도 동작) -->
-  <section class="card" id="paste">
-    <h2>📋 네이버 화면 붙여넣기 <span class="srv-badge" style="background:var(--acc-bg);color:var(--acc-fg);border-color:var(--acc-line)">서버 불필요</span></h2>
-    <p class="desc">
-      네이버 지도에서 <b>내 가게 페이지를 열고 → 화면 텍스트를 전체 선택해 복사 → 여기 붙여넣기</b>.
-      리뷰수·사진수·저장수·시설·가격·소개글을 찾아내 자동으로 채웁니다.
-      소개글만 복사해 넣어도 됩니다.
-    </p>
-    <textarea id="p-raw" class="xfer-code" rows="5" spellcheck="false"
-      style="font-family:inherit;font-size:14px;margin-top:14px"
-      placeholder="여기에 붙여넣으세요.&#10;&#10;· 화면 텍스트 → 리뷰수·시설·가격·소개글을 찾아 채웁니다&#10;· 플레이스 링크 → 복사하러 갈 페이지를 열어 드립니다"></textarea>
-    <div class="btn-row">
-      <button class="btn dark" id="p-run" type="button">붙여넣은 내용으로 채우기</button>
-    </div>
-    <div id="p-out"></div>
-  </section>
-
-  <!-- 자동 수집이 되면 1·2·3 은 손댈 일이 없다. 한 줄로 접어 두고 필요할 때만 편다. -->
-  <div id="manual-bar" class="card" style="display:none">
-    <div class="mb-row">
-      <div class="mb-txt"><b>입력은 다 끝났습니다</b><span id="mb-sum"></span></div>
-      <button class="btn ghost sm" type="button" id="btn-manual-open">값 보기·고치기</button>
-    </div>
-    <button class="btn" type="button" id="btn-bar-run">진단 실행 →</button>
-  </div>
-
-  <div id="manual-wrap">
-  <!-- STEP 1 -->
-  <section class="card" id="sec1">
-    <h2><span class="step-no">1</span> 플레이스 정보 <em class="ttl-note">전부 자동</em></h2>
-    <p class="desc">업체명·지역·업종·가격은 <b>네이버에서 그대로 가져옵니다.</b> 손댈 필요 없습니다.
-      값이 틀렸을 때만 고치세요. (자동 수집이 안 되는 휴대폰 단독 사용 시에는 여기가 유일한 입력 경로입니다.)
-      <br>보유 시설도 네이버 편의시설에서 자동으로 켭니다. 네이버에 안 적힌 시설만 직접 켜 주세요.</p>
-
-    <div class="grid two">
-      <label class="f"><span>업체명 <i>*</i></span>
-        <input id="i-name" type="text" placeholder="예) 스트롱짐 피트니스"></label>
-      <label class="f"><span>지역 (동·역 단위) <i>*</i></span>
-        <input id="i-area" type="text" placeholder="예) 강남역 / 서면 / 동탄"></label>
-    </div>
-
-    <div class="grid two" style="margin-top:14px">
-      <label class="f"><span>주력 업종</span>
-        <select id="i-type">
-          <option value="헬스장">헬스장 (자유 이용 중심)</option>
-          <option value="PT 전문">PT 전문 스튜디오</option>
-          <option value="헬스+PT">헬스 + PT 병행</option>
-          <option value="필라테스">필라테스 · 소도구</option>
-          <option value="크로스핏">크로스핏 · 그룹 운동</option>
-        </select></label>
-      <label class="f"><span>1개월 이용권 가격 (선택)</span>
-        <input id="i-price" type="text" placeholder="예) 89,000원"></label>
-    </div>
-
-    <div style="margin-top:16px">
-      <span style="display:block;font-size:13px;font-weight:700">보유 시설 · 서비스</span>
-      <div class="hint" style="margin:2px 0 4px">체크한 항목이 소개글·대표키워드 생성에 쓰입니다.</div>
-      <div class="chips" id="i-fac"></div>
-    </div>
-  </section>
-
-  <!-- STEP 2 -->
-  <section class="card" id="sec2">
-    <h2><span class="step-no">2</span> 목표 키워드 <em class="ttl-note">사장님만 정할 수 있음</em></h2>
-    <p class="desc">
-      <b>이 칸이 왜 있나요?</b> 소개글은 자동으로 가져옵니다. 하지만 <b>목표 키워드는 가져올 수 없습니다</b> —
-      "어떤 말로 검색됐을 때 1등이 되고 싶은지"는 플레이스에 적혀 있지 않고 사장님 머릿속에만 있기 때문입니다.
-      그래서 일단 등록된 대표키워드로 채워 두었고, 다른 키워드를 노리신다면 여기서 바꾸시면 됩니다.
-    </p>
-
-    <div style="margin-top:18px">
-      <span style="display:block;font-size:13px;font-weight:700">목표 키워드 (최대 3개) <i style="font-style:normal;color:var(--accent)">*</i></span>
-      <div class="hint" style="margin:2px 0 0">1순위 키워드부터 넣으세요. 띄어쓰기는 있어도 없어도 됩니다.</div>
-      <div class="kw-rows">
-        <input id="i-kw1" class="f" type="text" placeholder="1순위 — 예) 강남역 헬스장" style="padding:11px 13px;border:1px solid var(--line);border-radius:10px">
-        <input id="i-kw2" class="f" type="text" placeholder="2순위 — 예) 강남역 PT (선택)" style="padding:11px 13px;border:1px solid var(--line);border-radius:10px">
-        <input id="i-kw3" class="f" type="text" placeholder="3순위 — 예) 강남 24시간 헬스장 (선택)" style="padding:11px 13px;border:1px solid var(--line);border-radius:10px">
+      <!-- 한눈에 보기 — 들어오면 제일 먼저 이 숫자 -->
+      <div id="topline" class="stats-wrap" style="display:none">
+        <div class="stats" id="r-stats"></div>
       </div>
-    </div>
 
-    <label class="f" style="margin-top:18px"><span>현재 플레이스 상세 소개글</span>
-      <textarea id="i-intro" placeholder="스마트플레이스 → 업체정보 → 상세설명 내용을 그대로 붙여넣으세요.&#10;아직 없다면 비워두셔도 됩니다. (0자로 채점됩니다)"></textarea>
-      <div class="hint" id="intro-count">0자 · 500자 이상 권장</div>
-    </label>
-
-    <label class="f" style="margin-top:14px"><span>현재 등록한 대표키워드</span>
-      <input id="i-repkw" type="text" placeholder="예) 강남역헬스장, 강남역PT, 강남헬스 (쉼표로 구분)">
-      <div class="hint">스마트플레이스 → 업체정보 → 대표키워드에 지금 들어가 있는 값</div>
-    </label>
-  </section>
-
-  <!-- STEP 3 -->
-  <section class="card" id="sec3">
-    <h2><span class="step-no">3</span> 진단 실행 <em class="ttl-note">버튼만 누르면 됨</em></h2>
-    <p class="desc">
-      <b>여기서 하실 일은 버튼 하나입니다.</b> 아래 22개 목록은 채점 기준 전체를 그대로 펼쳐 둔 것이고,
-      대부분 자동으로 채워집니다. 손으로 체크할 항목은 <b>진단 결과 안에서 바로</b> 체크하실 수 있으니
-      여기까지 내려오실 필요 없습니다. 기준을 확인하고 싶을 때만 펼쳐 보세요.
-    </p>
-    <div id="checklist"></div>
-    <div class="btn-row keep">
-      <button class="btn" id="btn-run">진단 실행 →</button>
-      <button class="btn ghost" id="btn-reset" type="button">체크 해제</button>
-    </div>
-  </section>
-  </div><!-- /manual-wrap -->
-
-  <!-- 기기 간 이어쓰기 -->
-  <section class="card" id="xfer">
-    <h2>📱💻 다른 기기로 이어서 하기 <span id="save-state" class="save-state">저장됨</span></h2>
-    <p class="desc" id="xfer-desc">입력한 내용은 이 기기에 자동으로 저장됩니다. 다른 기기에서 이어 하시려면 코드를 옮기세요.</p>
-
-    <div id="xfer-box" style="margin-top:16px">
-      <textarea id="xfer-code" class="xfer-code" rows="3" spellcheck="false"
-        placeholder="① 보낼 때 — 아래 '코드 만들기'를 누르면 여기에 코드가 생깁니다&#10;② 받을 때 — 받은 코드를 여기에 붙여넣고 '코드 불러오기'를 누르세요"></textarea>
-    </div>
-    <div class="btn-row">
-      <button class="btn dark" id="btn-export" type="button">코드 만들어 복사</button>
-      <button class="btn ghost" id="btn-import" type="button">코드 불러오기</button>
-    </div>
-    <p class="hint">보낼 때는 <b>코드 만들어 복사</b> → 카카오톡 '나에게 보내기'에 붙여넣기.<br>
-      받을 때는 그 코드를 위 칸에 붙여넣고 <b>코드 불러오기</b>.</p>
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
-      <button class="btn ghost" id="btn-clear" type="button" style="width:auto;padding:9px 15px;font-size:13.5px">전체 지우기</button>
-    </div>
-  </section>
-
-  <!-- 결과 -->
-  <section id="result">
-    <div class="card">
-      <h2><span class="ic">📊</span> 진단 결과</h2>
-      <div class="score-box">
-        <div class="gauge">
-          <svg width="132" height="132" viewBox="0 0 180 180" aria-hidden="true">
-            <circle cx="90" cy="90" r="78" fill="none" stroke="var(--track)" stroke-width="15"></circle>
-            <circle id="ring" cx="90" cy="90" r="78" fill="none" stroke="var(--accent)" stroke-width="15"
-                    stroke-linecap="round" stroke-dasharray="490" stroke-dashoffset="490"
-                    style="transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1)"></circle>
-          </svg>
-          <div class="num"><strong id="r-score">0</strong><small>/ 100</small></div>
-        </div>
-        <div class="score-side">
-          <span class="grade" id="r-grade">—</span>
-          <p class="verdict" id="r-verdict"></p>
-        </div>
+      <!-- 아직 진단 전 -->
+      <div class="blank" id="blank-start">
+        <b>아직 볼 숫자가 없습니다</b>
+        <p>네이버 지도에서 내 가게 → 공유 → 링크 복사.<br>
+          그 주소를 맨 위 칸에 넣고 <b>수집</b>을 누르세요.<br>
+          업체명·소개글·리뷰·사진을 가져와 22개 항목을 자동으로 채점합니다.</p>
+        <button class="btn ghost" type="button" id="btn-focus-url">주소 넣는 칸으로 →</button>
       </div>
-      <div class="stats" id="r-stats"></div>
-      <div class="bars" id="r-bars"></div>
-      <div class="bottleneck" id="r-bottleneck"></div>
-    </div>
 
-    <div class="card">
-      <h2><span class="ic">🎯</span> 키워드 적합도 분석</h2>
-      <p class="desc">목표 키워드가 내 소개글·업체명·대표키워드에 실제로 들어가 있는지 계산한 결과입니다.</p>
-      <div id="r-kw"></div>
-    </div>
+      <!-- 수집·순위·경쟁 분석 결과가 나오는 자리 -->
+      <div id="s-out"></div>
 
-    <div class="card">
-      <h2><span class="ic">✅</span> 할 일 <span id="r-todo-count" style="font-size:14px;color:var(--muted);font-weight:600"></span></h2>
-      <p class="desc">순위 영향이 큰 순서입니다. 위에서부터 처리하세요.</p>
-      <div id="r-calib"></div>
-      <div id="r-todo"></div>
-    </div>
+      <!-- 결과 -->
+      <section id="result">
+       <div class="res-grid">
+        <div class="col">
 
-    <div class="card">
-      <h2>📒 개선 기록 <span id="wl-count" class="srv-badge" style="background:var(--info-bg);color:var(--info-fg);border-color:transparent"></span></h2>
-      <p class="desc">
-        할 일을 처리하셨으면 <b>완료</b>를 눌러 기록하세요.
-        순위 조회 기록과 겹쳐 보면 <b>어떤 작업 뒤에 순위가 움직였는지</b> 남습니다.
-        남의 사례보다 내 가게 데이터가 정확합니다.
-      </p>
-      <div id="wl-body"></div>
-    </div>
-  </section>
+          <div class="card" id="card-score">
+            <h2><span class="ic">📊</span> 진단 점수</h2>
+            <div class="score-box">
+              <div class="gauge">
+                <svg width="118" height="118" viewBox="0 0 180 180" aria-hidden="true">
+                  <circle cx="90" cy="90" r="78" fill="none" stroke="var(--track)" stroke-width="15"></circle>
+                  <circle id="ring" cx="90" cy="90" r="78" fill="none" stroke="var(--accent)" stroke-width="15"
+                          stroke-linecap="round" stroke-dasharray="490" stroke-dashoffset="490"
+                          style="transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1)"></circle>
+                </svg>
+                <div class="num"><strong id="r-score">0</strong><small>/ 100</small></div>
+              </div>
+              <div class="score-side">
+                <span class="grade" id="r-grade">—</span>
+                <p class="verdict" id="r-verdict"></p>
+              </div>
+            </div>
+            <div class="bars" id="r-bars"></div>
+            <div class="bottleneck" id="r-bottleneck"></div>
+          </div>
 
-  <!-- 진단이 끝나면 채우기로 넘어가는 문 -->
-  <div class="card gonext" id="gonext" style="display:none">
-    <b>진단 끝났습니다. 이제 채울 차례입니다.</b>
-    <p>부족하다고 나온 항목에 맞춰 소개글·키워드·답글·소식 글감을 바로 만들어 드립니다.</p>
-    <button class="btn" type="button" id="btn-gotools">✍️ 채우기 도구로 →</button>
-  </div>
+          <div class="card" id="card-kw">
+            <h2><span class="ic">🎯</span> 키워드 적합도 분석</h2>
+            <p class="desc">목표 키워드가 내 소개글·업체명·대표키워드에 실제로 들어가 있는지 계산한 결과입니다.</p>
+            <div id="r-kw"></div>
+          </div>
+
+        </div>
+        <div class="col">
+
+          <div class="card" id="card-todo">
+            <h2><span class="ic">✅</span> 할 일 <span id="r-todo-count" style="font-size:14px;color:var(--muted);font-weight:600"></span></h2>
+            <p class="desc">순위 영향이 큰 순서입니다. 위에서부터 처리하세요.</p>
+            <div id="r-calib"></div>
+            <div id="r-todo"></div>
+          </div>
+
+          <div class="card" id="card-log">
+            <h2>📒 개선 기록 <span id="wl-count" class="srv-badge" style="background:var(--info-bg);color:var(--info-fg);border-color:transparent"></span></h2>
+            <p class="desc">
+              할 일을 처리하셨으면 <b>완료</b>를 눌러 기록하세요.
+              순위 조회 기록과 겹쳐 보면 <b>어떤 작업 뒤에 순위가 움직였는지</b> 남습니다.
+              남의 사례보다 내 가게 데이터가 정확합니다.
+            </p>
+            <div id="wl-body"></div>
+          </div>
+
+        </div>
+       </div>
+      </section>
+
+      <!-- 진단이 끝나면 채우기로 넘어가는 문 -->
+      <div class="card gonext" id="gonext" style="display:none">
+        <b>진단 끝났습니다. 이제 채울 차례입니다.</b>
+        <p>부족하다고 나온 항목에 맞춰 소개글·키워드·답글·소식 글감을 바로 만들어 드립니다.</p>
+        <button class="btn" type="button" id="btn-gotools">✍️ 채우기 도구로 →</button>
+      </div>
+
+      <!-- 자동 수집이 되면 1·2·3 은 손댈 일이 없다. 한 줄로 접어 두고 필요할 때만 편다. -->
+      <div id="manual-bar" class="card" style="display:none">
+        <div class="mb-row">
+          <div class="mb-txt"><b>입력은 다 끝났습니다</b><span id="mb-sum"></span></div>
+          <button class="btn ghost sm" type="button" id="btn-manual-open">값 보기·고치기</button>
+        </div>
+        <button class="btn" type="button" id="btn-bar-run">진단 실행 →</button>
+      </div>
+
+      <div id="manual-wrap">
+      <!-- STEP 1 -->
+      <section class="card" id="sec1">
+        <h2><span class="step-no">1</span> 플레이스 정보 <em class="ttl-note">전부 자동</em></h2>
+        <p class="desc">업체명·지역·업종·가격은 <b>네이버에서 그대로 가져옵니다.</b> 손댈 필요 없습니다.
+          값이 틀렸을 때만 고치세요. (자동 수집이 안 되는 휴대폰 단독 사용 시에는 여기가 유일한 입력 경로입니다.)
+          <br>보유 시설도 네이버 편의시설에서 자동으로 켭니다. 네이버에 안 적힌 시설만 직접 켜 주세요.</p>
+
+        <div class="grid two">
+          <label class="f"><span>업체명 <i>*</i></span>
+            <input id="i-name" type="text" placeholder="예) 스트롱짐 피트니스"></label>
+          <label class="f"><span>지역 (동·역 단위) <i>*</i></span>
+            <input id="i-area" type="text" placeholder="예) 강남역 / 서면 / 동탄"></label>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <label class="f"><span>주력 업종</span>
+            <select id="i-type">
+              <option value="헬스장">헬스장 (자유 이용 중심)</option>
+              <option value="PT 전문">PT 전문 스튜디오</option>
+              <option value="헬스+PT">헬스 + PT 병행</option>
+              <option value="필라테스">필라테스 · 소도구</option>
+              <option value="크로스핏">크로스핏 · 그룹 운동</option>
+            </select></label>
+          <label class="f"><span>1개월 이용권 가격 (선택)</span>
+            <input id="i-price" type="text" placeholder="예) 89,000원"></label>
+        </div>
+
+        <div style="margin-top:16px">
+          <span style="display:block;font-size:13px;font-weight:700">보유 시설 · 서비스</span>
+          <div class="hint" style="margin:2px 0 4px">체크한 항목이 소개글·대표키워드 생성에 쓰입니다.</div>
+          <div class="chips" id="i-fac"></div>
+        </div>
+      </section>
+
+      <!-- STEP 2 -->
+      <section class="card" id="sec2">
+        <h2><span class="step-no">2</span> 목표 키워드 <em class="ttl-note">사장님만 정할 수 있음</em></h2>
+        <p class="desc">
+          <b>이 칸이 왜 있나요?</b> 소개글은 자동으로 가져옵니다. 하지만 <b>목표 키워드는 가져올 수 없습니다</b> —
+          "어떤 말로 검색됐을 때 1등이 되고 싶은지"는 플레이스에 적혀 있지 않고 사장님 머릿속에만 있기 때문입니다.
+          그래서 일단 등록된 대표키워드로 채워 두었고, 다른 키워드를 노리신다면 여기서 바꾸시면 됩니다.
+        </p>
+
+        <div style="margin-top:18px">
+          <span style="display:block;font-size:13px;font-weight:700">목표 키워드 (최대 3개) <i style="font-style:normal;color:var(--accent)">*</i></span>
+          <div class="hint" style="margin:2px 0 0">1순위 키워드부터 넣으세요. 띄어쓰기는 있어도 없어도 됩니다.</div>
+          <div class="kw-rows">
+            <input id="i-kw1" class="f" type="text" placeholder="1순위 — 예) 강남역 헬스장" style="padding:11px 13px;border:1px solid var(--line);border-radius:10px">
+            <input id="i-kw2" class="f" type="text" placeholder="2순위 — 예) 강남역 PT (선택)" style="padding:11px 13px;border:1px solid var(--line);border-radius:10px">
+            <input id="i-kw3" class="f" type="text" placeholder="3순위 — 예) 강남 24시간 헬스장 (선택)" style="padding:11px 13px;border:1px solid var(--line);border-radius:10px">
+          </div>
+        </div>
+
+        <label class="f" style="margin-top:18px"><span>현재 플레이스 상세 소개글</span>
+          <textarea id="i-intro" placeholder="스마트플레이스 → 업체정보 → 상세설명 내용을 그대로 붙여넣으세요.&#10;아직 없다면 비워두셔도 됩니다. (0자로 채점됩니다)"></textarea>
+          <div class="hint" id="intro-count">0자 · 500자 이상 권장</div>
+        </label>
+
+        <label class="f" style="margin-top:14px"><span>현재 등록한 대표키워드</span>
+          <input id="i-repkw" type="text" placeholder="예) 강남역헬스장, 강남역PT, 강남헬스 (쉼표로 구분)">
+          <div class="hint">스마트플레이스 → 업체정보 → 대표키워드에 지금 들어가 있는 값</div>
+        </label>
+      </section>
+
+      <!-- STEP 3 -->
+      <section class="card" id="sec3">
+        <h2><span class="step-no">3</span> 진단 실행 <em class="ttl-note">버튼만 누르면 됨</em></h2>
+        <p class="desc">
+          <b>여기서 하실 일은 버튼 하나입니다.</b> 아래 22개 목록은 채점 기준 전체를 그대로 펼쳐 둔 것이고,
+          대부분 자동으로 채워집니다. 손으로 체크할 항목은 <b>진단 결과 안에서 바로</b> 체크하실 수 있으니
+          여기까지 내려오실 필요 없습니다. 기준을 확인하고 싶을 때만 펼쳐 보세요.
+        </p>
+        <div id="checklist"></div>
+        <div class="btn-row keep">
+          <button class="btn" id="btn-run">진단 실행 →</button>
+          <button class="btn ghost" id="btn-reset" type="button">체크 해제</button>
+        </div>
+      </section>
+      </div><!-- /manual-wrap -->
+
+      <!-- 도우미 서버 연결 상태 (연결됐을 때만 보인다) -->
+      <section class="card" id="srv" style="display:none">
+        <h2>🔗 도우미 서버 <span id="srv-badge" class="srv-badge">서버 연결됨</span></h2>
+        <p class="desc">위 검색줄의 <b>수집</b>, 그리고 <b>순위 조회 · 상위 3곳 분석</b>이 이 서버를 씁니다.</p>
+        <div id="lan-row" style="display:none;margin-top:16px" class="lan">
+          <b>📱 휴대폰에서도 이 기능을 쓰려면</b>
+          <p>같은 와이파이에 연결한 뒤, 휴대폰 브라우저에 아래 주소를 입력하고 <b>북마크</b>해 두세요.
+            한 번만 하면 그다음부터는 북마크만 누르면 됩니다.</p>
+          <code id="lan-url"></code>
+        </div>
+      </section>
+
+      <!-- 서버 미실행 안내 -->
+      <section class="card" id="srv-off">
+        <h2>💡 지금은 수동 입력 모드</h2>
+        <p class="desc"><b>이대로도 진단·키워드 분석·문장 생성은 전부 됩니다.</b> 아래 3가지만 PC의 도우미 프로그램이 필요합니다 —
+          네이버에 직접 요청을 보내야 해서 브라우저 혼자서는 막혀 있습니다.</p>
+        <ul style="font-size:14px;color:var(--muted);margin:12px 0 0;padding-left:20px;line-height:1.9">
+          <li>플레이스 정보 자동 수집 (리뷰수·사진수·저장수)</li>
+          <li>목표 키워드 순위 조회 및 추적</li>
+          <li>상위 3곳 경쟁 분석</li>
+        </ul>
+
+        <div class="lan" style="margin-top:16px;border-color:var(--ok-line);background:var(--ok-bg)">
+          <b>📋 휴대폰에서 지금 바로 — 위 "네이버 화면 붙여넣기"를 쓰세요</b>
+          <p>네이버 지도에서 내 가게 페이지 텍스트를 복사해 붙여넣으면
+            리뷰수·사진수·저장수·시설·가격·소개글을 찾아내 자동으로 채웁니다. 서버가 필요 없습니다.</p>
+        </div>
+
+        <div class="lan" style="margin-top:12px">
+          <b>💻 PC에서 — 한 번만 설정하면 그다음은 자동입니다</b>
+          <p>내려받은 폴더에서 <b>시작하기</b> 파일을 더블클릭하세요. 명령어를 칠 필요 없습니다.<br>
+            · 윈도우 → <code>start.bat</code>　· 맥 → <code>start.command</code><br>
+            브라우저가 알아서 열리고, 위 3가지 버튼이 나타납니다.
+            PC를 켤 때마다 자동 실행되게 하는 방법은 README에 있습니다.</p>
+        </div>
+
+        <div class="lan" style="margin-top:12px">
+          <b>📱 휴대폰에서 — PC가 켜져 있으면 폰에서도 됩니다</b>
+          <p>PC에서 도우미를 켜면 화면에 <b>휴대폰용 주소</b>가 나옵니다.
+            같은 와이파이에서 그 주소로 한 번 들어가 북마크해 두면, 이후로는 폰에서도 자동 수집·순위·경쟁 분석이 전부 됩니다.</p>
+        </div>
+      </section>
+
+      <!-- 붙여넣기로 채우기 (서버 없이 휴대폰에서도 동작) -->
+      <section class="card" id="paste">
+        <h2>📋 네이버 화면 붙여넣기 <span class="srv-badge" style="background:var(--acc-bg);color:var(--acc-fg);border-color:var(--acc-line)">서버 불필요</span></h2>
+        <p class="desc">
+          네이버 지도에서 <b>내 가게 페이지를 열고 → 화면 텍스트를 전체 선택해 복사 → 여기 붙여넣기</b>.
+          리뷰수·사진수·저장수·시설·가격·소개글을 찾아내 자동으로 채웁니다.
+          소개글만 복사해 넣어도 됩니다.
+        </p>
+        <textarea id="p-raw" class="xfer-code" rows="5" spellcheck="false"
+          style="font-family:inherit;font-size:14px;margin-top:14px"
+          placeholder="여기에 붙여넣으세요.&#10;&#10;· 화면 텍스트 → 리뷰수·시설·가격·소개글을 찾아 채웁니다&#10;· 플레이스 링크 → 복사하러 갈 페이지를 열어 드립니다"></textarea>
+        <div class="btn-row">
+          <button class="btn dark" id="p-run" type="button">붙여넣은 내용으로 채우기</button>
+        </div>
+        <div id="p-out"></div>
+      </section>
+
+      <!-- 저장 내역 — 결과를 보러 오는 곳이라 위에 둔다 -->
+      <section class="card" id="saves-card">
+        <h2>💾 저장 내역 <em class="ttl-note">기기 상관없이 보임</em></h2>
+        <p class="desc">진단한 시점을 남겨 둡니다. 같은 가게는 <b>가장 최근 것 하나만</b> 남습니다.
+          소개글이나 사진을 고치기 <b>전에</b> 한 번 저장해 두면 나중에 점수가 얼마나 움직였는지 보입니다.</p>
+        <div class="saves-top" style="margin-top:12px">
+          <b>기록</b>
+          <button class="btn sm" type="button" id="btn-save-now">지금 상태 저장</button>
+        </div>
+        <div id="saves-list" class="saves-list"></div>
+      </section>
+
+      <!-- 기기 간 이어쓰기 -->
+      <section class="card" id="xfer">
+        <h2>📱💻 다른 기기로 이어서 하기 <span id="save-state" class="save-state">저장됨</span></h2>
+        <p class="desc" id="xfer-desc">입력한 내용은 이 기기에 자동으로 저장됩니다. 다른 기기에서 이어 하시려면 코드를 옮기세요.</p>
+
+        <div id="xfer-box" style="margin-top:16px">
+          <textarea id="xfer-code" class="xfer-code" rows="3" spellcheck="false"
+            placeholder="① 보낼 때 — 아래 '코드 만들기'를 누르면 여기에 코드가 생깁니다&#10;② 받을 때 — 받은 코드를 여기에 붙여넣고 '코드 불러오기'를 누르세요"></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn dark" id="btn-export" type="button">코드 만들어 복사</button>
+          <button class="btn ghost" id="btn-import" type="button">코드 불러오기</button>
+        </div>
+        <p class="hint">보낼 때는 <b>코드 만들어 복사</b> → 카카오톡 '나에게 보내기'에 붙여넣기.<br>
+          받을 때는 그 코드를 위 칸에 붙여넣고 <b>코드 불러오기</b>.</p>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+          <button class="btn ghost" id="btn-clear" type="button" style="width:auto;padding:9px 15px;font-size:13.5px">전체 지우기</button>
+        </div>
+      </section>
+
 
   </div><!-- /view-diag -->
 
@@ -870,14 +1010,16 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
   </div><!-- /view-tools -->
 
-</main>
-
-<footer class="wrap">
+      <footer class="wrap">
   네이버는 순위 알고리즘을 공개하지 않습니다. 이 점수는 네이버 점수가 아니라 <b>공개된 노출 원리를 바탕으로 만든 체크리스트의 점수</b>입니다.<br>
   적합도는 입력값으로 실제 계산하지만, 인기도·거리는 자가 체크 기반입니다.<br>
   입력값은 서버로 전송되지 않고 브라우저 안에서만 처리됩니다.
-  <div id="build" class="build"></div>
-</footer>
+        <div id="build" class="build"></div>
+      </footer>
+
+    </div><!-- /content -->
+  </main>
+</div><!-- /app -->
 
 <div class="dock" id="dock"><button class="btn" id="dock-run" type="button">진단 실행 →</button></div>
 <div class="toast" id="toast">복사했습니다</div>
@@ -1017,11 +1159,12 @@ const $ = id => document.getElementById(id);
 const norm = s => (s||"").replace(/\s+/g,"").toLowerCase();
 
 /* ============================================================
-   메뉴 — 진단 / 채우기
+   메뉴 — 대시보드 / 채우기 도구
    진단은 "뭐가 비었나", 채우기는 "그 빈칸에 넣을 문장". 쓰는 시점이 다르니
    한 번에 하나만 보여주고, 마지막에 본 쪽을 기억한다.
    ============================================================ */
 const VIEW_KEY = "np_view_v1";
+const VIEW_NAME = { diag:"대시보드", tools:"채우기 도구" };
 let VIEW = "diag";
 function showView(name, opts){
   VIEW = (name === "tools") ? "tools" : "diag";
@@ -1032,17 +1175,79 @@ function showView(name, opts){
   $("tab-tools").classList.toggle("on", !diag);
   $("tab-diag").setAttribute("aria-selected", String(diag));
   $("tab-tools").setAttribute("aria-selected", String(!diag));
+  $("mtab-diag").classList.toggle("on", diag);
+  $("mtab-tools").classList.toggle("on", !diag);
+  $("mtab-diag").setAttribute("aria-selected", String(diag));
+  $("mtab-tools").setAttribute("aria-selected", String(!diag));
+  $("crumb").textContent = VIEW_NAME[VIEW];
+  document.querySelectorAll(".nav-sub").forEach(e=>e.style.display = diag ? "" : "none");
   try{ localStorage.setItem(VIEW_KEY, VIEW); }catch{}
   /* 도구 쪽은 진단값을 먹고 산다. 아직 진단을 안 돌렸으면 문장 대신 안내를 보여준다. */
   const ran = $("writer") && $("writer").style.display === "block";
   if($("need-diag")) $("need-diag").style.display = (!diag && !ran) ? "" : "none";
-  if(!diag) $("tab-dot").classList.remove("on");
+  if(!diag) document.querySelectorAll(".tab-dot").forEach(e=>e.classList.remove("on"));
+  closeSide();
   if(!opts || !opts.keepScroll) window.scrollTo({top:0, behavior:"smooth"});
 }
 $("tab-diag").addEventListener("click", ()=>showView("diag"));
 $("tab-tools").addEventListener("click", ()=>showView("tools"));
+$("mtab-diag").addEventListener("click", ()=>showView("diag"));
+$("mtab-tools").addEventListener("click", ()=>showView("tools"));
 $("btn-gotools")?.addEventListener("click", ()=>showView("tools"));
 $("btn-godiag")?.addEventListener("click", ()=>showView("diag"));
+
+/* ============================================================
+   왼쪽 메뉴 — 좁은 화면에서는 서랍으로 열고 닫는다
+   ============================================================ */
+function openSide(){ $("side").classList.add("open"); $("scrim").classList.add("on"); }
+function closeSide(){ $("side").classList.remove("open"); $("scrim").classList.remove("on"); }
+$("hamb").addEventListener("click", openSide);
+$("side-x").addEventListener("click", closeSide);
+$("scrim").addEventListener("click", closeSide);
+document.addEventListener("keydown", e=>{ if(e.key === "Escape") closeSide(); });
+
+/* 메뉴의 하위 항목 — 해당 칸으로 데려다준다. 감춰져 있으면 먼저 펴 준다. */
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-go]"); if(!b) return;
+  const id = b.dataset.go;
+  if(VIEW !== "diag") showView("diag", {keepScroll:true});
+  if(id === "manual-wrap"){ try{ openManual(); }catch{} }
+  closeSide();
+  const el = $(id);
+  if(!el) return;
+  requestAnimationFrame(()=> el.scrollIntoView({ behavior:"smooth", block:"start" }));
+});
+
+$("btn-focus-url")?.addEventListener("click", ()=>{
+  window.scrollTo({top:0, behavior:"smooth"});
+  $("s-url").focus();
+});
+
+/* ============================================================
+   인사줄 · 메뉴 밑 이름표 — 지금 어느 가게를 보고 있나
+   ============================================================ */
+function paintWho(){
+  const name = ($("i-name")?.value || "").trim();
+  const area = ($("i-area")?.value || "").trim();
+  const r = window.__lastRank;
+  $("me-ini").textContent = name ? name.slice(0,1) : "?";
+  $("me-name").textContent = name || "가게 미등록";
+  $("me-sub").textContent = r && r.rank != null ? `${r.keyword} ${r.rank}위`
+                          : area ? area : "위 칸에 플레이스 주소";
+  if(name){
+    $("hi-title").textContent = `${name}`;
+    $("hi-sub").innerHTML = r && r.rank != null
+      ? `<b>${r.keyword}</b> 검색 결과 <b>${r.rank}위</b> — 아래 할 일부터 처리하면 올라갑니다.`
+      : `순위를 보시려면 목표 키워드를 넣고 <b>순위 조회</b>를 누르세요.`;
+  }
+}
+
+/* 숫자가 채워지면 "볼 게 없습니다" 안내는 치운다 */
+function showTopline(on){
+  $("topline").style.display = on ? "" : "none";
+  $("blank-start").style.display = on ? "none" : "";
+}
+
 try{ showView(localStorage.getItem(VIEW_KEY) || "diag", {keepScroll:true}); }
 catch{ showView("diag", {keepScroll:true}); }
 
@@ -1383,9 +1588,11 @@ $("btn-run").addEventListener("click", ()=>{
   renderPrompt();
   renderWorklog();
   ["result","writer"].forEach(id=>$(id).style.display="block");
+  showTopline(true);
+  paintWho();
   /* 진단이 끝나면 채우기 쪽에 할 일이 생겼다는 표시를 남긴다 */
   $("gonext").style.display = "";
-  if(VIEW === "diag") $("tab-dot").classList.add("on");
+  if(VIEW === "diag") document.querySelectorAll(".tab-dot").forEach(e=>e.classList.add("on"));
   if($("need-diag")) $("need-diag").style.display = "none";
   $("result").scrollIntoView({behavior:"smooth", block:"start"});
 });
@@ -1393,8 +1600,9 @@ $("btn-run").addEventListener("click", ()=>{
 $("btn-reset").addEventListener("click", ()=>{
   document.querySelectorAll("[data-item]:checked").forEach(e=>e.checked=false);
   ["result","writer"].forEach(id=>$(id).style.display="none");
+  showTopline(false);
   $("gonext").style.display = "none";
-  $("tab-dot").classList.remove("on");
+  document.querySelectorAll(".tab-dot").forEach(e=>e.classList.remove("on"));
   save();
   window.scrollTo({top:0, behavior:"smooth"});
 });
@@ -2011,6 +2219,20 @@ function pushState(snap){
   }).catch(()=>{ /* 잠깐 끊겨도 로컬에는 남아 있다 */ });
 }
 
+/* 이미 수집·입력이 끝난 가게라면 들어오는 즉시 결과를 그린다.
+   버튼을 한 번 더 누르게 하면 "들어오면 바로 숫자"가 되지 않는다. */
+let autoRan = false;
+function autoRunIfReady(){
+  if(autoRan) return;
+  const has = id => ($(id)?.value || "").trim();
+  if(!has("i-name") || !has("i-area")) return;
+  if(!has("i-intro") && !has("i-kw1")) return;
+  autoRan = true;
+  /* 이 함수는 스크립트를 다 읽기 전에 불릴 수 있다. 아래쪽 const 들이
+     아직 초기화되지 않은 시점에 진단을 돌리면 터진다 — 한 틱 미룬다. */
+  setTimeout(()=>{ $("btn-run").click(); window.scrollTo({ top:0 }); }, 0);
+}
+
 async function syncState(){
   if(!SERVER) return;
   let local = null;
@@ -2027,6 +2249,7 @@ async function syncState(){
     restore(remote);                       // 다른 기기에서 더 최근에 만진 것
     try{ localStorage.setItem(STORE_KEY, JSON.stringify(remote)); }catch{}
     renderWorklog();
+    autoRunIfReady();
     showSync(`다른 기기에서 저장한 내용을 불러왔습니다 (${new Date(remote.at).toLocaleString("ko-KR")})`);
   }else if(local && at(local) > at(remote)){
     pushState(local);                      // 서버가 비었거나 오래됐다 — 우리 것이 원본
@@ -2161,7 +2384,11 @@ const enc = o => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.strin
 const dec = s => JSON.parse(new TextDecoder().decode(
   Uint8Array.from(atob(s.trim().replace(/^GYM1:/,"")), c=>c.charCodeAt(0))));
 
-document.addEventListener("input", e=>{ if(e.target.closest("main")) save(); });
+document.addEventListener("input", e=>{
+  if(!e.target.closest("main")) return;
+  save();
+  if(e.target.id === "i-name" || e.target.id === "i-area") paintWho();
+});
 document.addEventListener("change", e=>{ if(e.target.closest("main")) save(); });
 
 (function bootRestore(){
@@ -2173,12 +2400,14 @@ document.addEventListener("change", e=>{ if(e.target.closest("main")) save(); })
   }
   try{ restore(JSON.parse(localStorage.getItem(STORE_KEY))); }catch{}
   renderSaves();
+  paintWho();
   /* 이미 채워진 상태로 다시 들어온 것이라면 입력 칸을 처음부터 감춘다.
      수집 직후에만 감추면, 새로고침할 때마다 1·2·3 이 되살아난다. */
   if($("i-name").value.trim() && $("i-area").value.trim()
      && (($("i-intro").value||"").trim() || $("i-kw1").value.trim())){
     foldFilledInputs();
     collapseManual();
+    autoRunIfReady();
   }
 })();
 
@@ -2571,9 +2800,20 @@ function applyJudgement(judge){
   return { html, auto: done.length + todo.length, manual: manual.length, unavail: unavail.length };
 }
 
+/* 자동 수집·순위·경쟁 분석은 도우미 서버를 거친다. 없으면 왜 안 되는지 그 자리에 적는다. */
+function needServer(){
+  if(SERVER) return false;
+  $("s-out").innerHTML = `<div class="srv-err"><b>이 기능은 도우미 서버가 켜져 있어야 합니다</b><br>
+    브라우저 혼자서는 네이버에 직접 요청을 보낼 수 없습니다(네이버가 막습니다).
+    아래 <b>수동 입력 모드</b> 안내를 보세요 — 진단·키워드 분석·문장 생성은 서버 없이도 전부 됩니다.</div>`;
+  $("s-out").scrollIntoView({ behavior:"smooth", block:"start" });
+  return true;
+}
+
 $("s-collect")?.addEventListener("click", async ()=>{
   const url = $("s-url").value.trim();
-  if(!url){ alert("플레이스 주소를 입력해 주세요."); return; }
+  if(!url){ alert("위 검색줄에 플레이스 주소를 넣어 주세요."); $("s-url").focus(); return; }
+  if(needServer()) return;
   const btn = $("s-collect");
   btn.disabled = true; btn.textContent = "수집 중…";
 
@@ -2749,13 +2989,14 @@ $("s-collect")?.addEventListener("click", async ()=>{
     showToast(`입력 ${filled.length}곳 · 판정 ${judged.auto}개 자동 완료`);
   }catch(e){
     $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
-  }finally{ clearInterval(stepTimer); btn.disabled=false; btn.textContent="정보 자동 수집"; }
+  }finally{ clearInterval(stepTimer); btn.disabled=false; btn.textContent="수집"; paintWho(); }
 });
 
 $("s-rank")?.addEventListener("click", async ()=>{
   const url = $("s-url").value.trim();
   const kws = ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value.trim()).filter(Boolean);
-  if(!url){ alert("플레이스 주소를 입력해 주세요."); return; }
+  if(!url){ alert("위 검색줄에 플레이스 주소를 넣어 주세요."); $("s-url").focus(); return; }
+  if(needServer()) return;
   if(!kws.length){ alert("2단계에서 목표 키워드를 먼저 입력해 주세요."); $("i-kw1").focus(); return; }
 
   const btn = $("s-rank");
@@ -2793,7 +3034,7 @@ $("s-rank")?.addEventListener("click", async ()=>{
     $("s-out").innerHTML = `<div class="srv-res"><h5>키워드 순위</h5>${out.join("")}</div>`;
   }catch(e){
     $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
-  }finally{ btn.disabled=false; btn.textContent="목표 키워드 순위 조회"; }
+  }finally{ btn.disabled=false; btn.textContent="순위 조회"; paintWho(); }
 });
 
 /* ============================================================
@@ -2804,11 +3045,12 @@ const fmt = (v,u="") => (v===null||v===undefined||v==="") ? "—" : `${v}${u}`;
 $("s-comp")?.addEventListener("click", async ()=>{
   const url = $("s-url").value.trim();
   const kw  = $("i-kw1").value.trim();
-  if(!url){ alert("플레이스 주소를 입력해 주세요."); return; }
+  if(!url){ alert("위 검색줄에 플레이스 주소를 넣어 주세요."); $("s-url").focus(); return; }
+  if(needServer()) return;
   if(!kw){ alert("2단계에서 1순위 목표 키워드를 먼저 입력해 주세요."); $("i-kw1").focus(); return; }
 
   const btn = $("s-comp");
-  btn.disabled = true; btn.textContent = "분석 중… (30초 정도)";
+  btn.disabled = true; btn.textContent = "분석 중…";
   try{
     const r = await (await fetch(apiUrl(`/api/competitors?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`))).json();
     if(!r.ok){ $("s-out").innerHTML = srvError(`"${kw}" 상위권 분석 실패 (${r.stage} 단계)`, r); return; }
@@ -2869,7 +3111,7 @@ $("s-comp")?.addEventListener("click", async ()=>{
     </div>`;
   }catch(e){
     $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
-  }finally{ btn.disabled=false; btn.textContent="🔍 상위 3곳 분석"; }
+  }finally{ btn.disabled=false; btn.textContent="상위 3곳 분석"; }
 });
 
 /* ============================================================
