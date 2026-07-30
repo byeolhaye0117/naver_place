@@ -253,6 +253,29 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .srv-res{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:15px;background:var(--surface-2)}
 .srv-res h5{font-size:13.5px;font-weight:800;margin:0 0 10px}
 /* 저장 내역 */
+/* 먼저 할 3개 */
+.first3{border:1px solid var(--acc-line);background:var(--acc-bg);border-radius:12px;padding:15px;margin-bottom:12px}
+.first3 h4{font-size:15px;font-weight:800;margin:0 0 10px}
+.first3 .terms{margin:0 0 10px;padding:10px 12px;background:var(--surface);border:1px solid var(--acc-line);
+  border-radius:9px;font-size:13px;font-weight:700;line-height:1.6}
+.first3 .terms span{display:block;font-size:11.5px;font-weight:500;color:var(--muted);margin-top:3px}
+.first3 ol{margin:0;padding-left:0;list-style:none;counter-reset:s}
+.first3 li{counter-increment:s;position:relative;padding:12px 0 12px 34px;border-top:1px solid var(--acc-line)}
+.first3 li:first-child{border-top:0;padding-top:2px}
+.first3 li::before{content:counter(s);position:absolute;left:0;top:12px;width:23px;height:23px;
+  border-radius:7px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:800;
+  display:flex;align-items:center;justify-content:center}
+.first3 li:first-child::before{top:2px}
+.first3 li > b{font-size:14.5px;font-weight:800}
+.first3 .when{display:inline-block;font-size:11px;font-weight:800;color:var(--accent);
+  background:var(--surface);border:1px solid var(--acc-line);border-radius:5px;padding:1px 6px;margin-right:6px}
+.first3 li > u{text-decoration:none;font-size:11.5px;font-weight:800;color:var(--accent);margin-left:5px;white-space:nowrap}
+.first3 .now{margin:6px 0 0;font-size:13px;font-weight:700;color:var(--ink)}
+.first3 .a{margin:4px 0 8px;font-size:13px;color:var(--muted);line-height:1.65}
+.first3 .btn{padding:6px 11px;font-size:12px}
+.first3 li.done{opacity:.5}
+.first3 li.done > b{text-decoration:line-through}
+.todo-item .now{margin:6px 0 0;font-size:12.5px;font-weight:700;color:var(--ink)}
 .calib-on{border:1px solid var(--ok-line);background:var(--ok-bg);color:var(--ok-fg);
   border-radius:10px;padding:11px 13px;font-size:13px;margin-bottom:12px}
 .calib-on span{display:block;margin-top:4px;font-weight:700;color:var(--ink)}
@@ -1215,16 +1238,37 @@ $("btn-run").addEventListener("click", ()=>{
 
   $("r-todo-count").textContent = todo.length ? `· ${todo.length}건` : "";
   $("r-calib").innerHTML = calibNote();   // 어떤 기준으로 재는지 먼저 밝힌다
+  /* 열 몇 개를 한 번에 들이밀면 아무것도 안 하게 된다.
+     오늘 손댈 수 있는 것부터 3개만 앞에 세우고 나머지는 접는다. */
+  const first3 = pickFirst3(todo);
+  const rest = todo.filter(e => !first3.includes(e));
+
+  const itemCard = ({x,lost}) => {
+    const c = CTRL[x.c], P = PILLARS[x.p];
+    const how = stepHow(x, auto);
+    return `<div class="todo-item" style="border-left-color:${P.color}">
+      <div class="h"><em style="background:${P.color}">+${lost}점</em><span>${x.t}</span>
+        <u style="background:${c.c}">${P.name} · ${c.t}</u></div>
+      ${how ? `<p class="now">지금 — ${how}</p>` : ""}
+      <p class="a">${x.act}</p>
+      <button class="btn sm ghost done-btn" type="button" data-done="${x.id}">✓ 완료</button></div>`;
+  };
+
   $("r-todo").innerHTML = todo.length
-    ? todo.map(({x,lost})=>{
-        const c = CTRL[x.c], P = PILLARS[x.p];
-        const note = auto[x.id+"_note"] ? `<br><span style="color:${P.color};font-weight:600">현재 상태 — ${auto[x.id+"_note"]}</span>` : "";
-        return `<div class="todo-item" style="border-left-color:${P.color}">
-          <div class="h"><em style="background:${P.color}">+${lost}점</em><span>${x.t}</span>
-            <u style="background:${c.c}">${P.name} · ${c.t}</u></div>
-          <p class="a">${x.act}${note}</p>
-          <button class="btn sm ghost done-btn" type="button" data-done="${x.id}">✓ 완료</button></div>`;
-      }).join("")
+    ? `<div class="first3"><h4>먼저 이 3개만 하세요</h4>
+         ${missingTermList().length ? `<p class="terms"><b>소개글에 넣을 말</b> —
+           ${missingTermList().join(", ")}
+           <span>"${window.__lastComp?.keyword || ""}" 상위권 2곳 이상이 쓰는데 우리 글에는 없습니다</span></p>` : ""}
+         <ol>${first3.map(({x,lost})=>{
+           const how = stepHow(x, auto);
+           return `<li><span class="when">${WHEN[x.c]}</span>
+             <b>${x.t}</b> <u>+${lost}점</u>
+             ${how ? `<p class="now">${how}</p>` : ""}
+             <p class="a">${x.act}</p>
+             <button class="btn sm ghost done-btn" type="button" data-done="${x.id}">✓ 완료</button></li>`;
+         }).join("")}</ol></div>
+       ${rest.length ? `<details class="man-more"><summary>나머지 ${rest.length}건 보기</summary>
+         ${rest.map(itemCard).join("")}</details>` : ""}`
     : `<div class="all-good">22개 항목 전부 통과했습니다. 이 상태를 유지하면서 리뷰와 소식만 꾸준히 관리하세요.</div>`;
 
   buildWriter(o);
@@ -1636,7 +1680,8 @@ document.addEventListener("click", e=>{
   const item = ITEMS.find(x=>x.id === b.dataset.done);
   if(!item) return;
   logWork(item);
-  b.closest(".todo-item")?.classList.add("done");
+  // 앞세운 3개는 li, 접힌 나머지는 .todo-item — 둘 다 흐려져야 한다
+  b.closest(".todo-item, .first3 li")?.classList.add("done");
   b.outerHTML = `<span class="done-mark">기록됨</span>`;
   showToast("개선 기록에 남겼습니다");
 });
@@ -2101,9 +2146,9 @@ function apiUrl(pathAndQuery){
     SERVER = await r.json();
     $("srv").style.display = "block";
     $("srv-off").style.display = "none";
-    /* 붙여넣기는 서버가 없을 때의 대체 수단이다.
-       서버가 켜져 있으면 할 일이 아니라 선택지로만 남겨 둔다. */
-    foldSection("paste", "서버가 켜져 있어 필요 없습니다 (폰 단독으로 쓸 때만)");
+    /* 붙여넣기는 서버가 없을 때의 대체 수단이다. 서버가 되면 쓸 일이 없으므로
+       접어 두는 대신 아예 감춘다 — 접어만 두면 "이건 왜 있나"가 계속 남는다. */
+    $("paste").style.display = "none";
     syncState();   // 다른 기기에서 저장한 내용 맞추기
     renderSaves();
     const xd = $("xfer-desc");
@@ -2209,6 +2254,53 @@ function foldFilledInputs(){
   foldSection("sec3", "체크는 선택 — 아래 버튼만 누르면 진단됩니다");
 }
 
+/* ============================================================
+   먼저 할 3개
+
+   점수 손실이 큰 순서로 늘어놓으면 "리뷰 149개 더"처럼 몇 달 걸리는 것이
+   맨 위에 온다. 그건 오늘 할 수 있는 일이 아니다.
+   오늘 손댈 수 있는 것(직접통제)을 앞세우고, 그 안에서 점수가 큰 것을 고른다.
+   ============================================================ */
+const WHEN = { direct: "오늘", induce: "이번 주", result: "몇 주~몇 달" };
+const ORDER = { direct: 0, induce: 1, result: 2 };
+
+function pickFirst3(todo){
+  return todo.slice()
+    .sort((a,b) => (ORDER[a.x.c] - ORDER[b.x.c]) || (b.lost - a.lost))
+    .slice(0, 3);
+}
+
+/* "지금 어떤 상태인가"를 숫자로 적는다. 목표만 있으면 얼마나 부족한지 모른다. */
+function stepHow(x, auto){
+  const ev = (window.__judge || {})[x.id]?.evidence;
+  const b = CALIB?.bars;
+  const gapText = (key, unit) => {
+    const v = b?.[key]; if(!v || v.mine == null) return null;
+    const short = Math.max(0, Math.round((v.bar - v.mine) * 10) / 10);
+    return `${v.mine}${unit} → ${v.bar}${unit}` + (short ? ` (${short}${unit} 더)` : " — 이미 넘었습니다");
+  };
+  switch(x.id){
+    case "p2":  return gapText("photo","장")  || ev;
+    case "p6":  return gapText("review","개") || ev;
+    case "p7":  return gapText("blog","개")   || ev;
+    case "p10": return gapText("score","점")  || ev;
+    case "r3":  return auto.r3_note + missingTerms();
+    case "r4":  return auto.r4_note + missingTerms();
+    case "r5":  return auto.r5_note;
+    case "r1":  return auto.r1_note;
+    default:    return ev || "";
+  }
+}
+
+/* 경쟁 분석을 돌렸다면, 소개글에 넣을 말을 그대로 알려준다 */
+function missingTermList(){
+  return (window.__lastComp?.gaps || []).filter(t=>!t.inMine).map(t=>t.term).slice(0,8);
+}
+function missingTerms(){
+  const g = missingTermList();
+  return g.length ? ` · 상위권이 쓰는데 우리 글에 없는 말: ${g.join(", ")}` : "";
+}
+
 /* 상위 3곳 실측으로 기준을 갈아치우고, 그 기준으로 다시 판정한다 */
 function applyCalibration(comp){
   if(!comp || !Array.isArray(comp.comparison)) return;
@@ -2255,6 +2347,7 @@ function calibNote(){
 }
 
 function applyJudgement(judge){
+  window.__judge = judge;   // 할 일에 "현재 상태"를 적을 때 근거로 쓴다
   const ITEM = Object.fromEntries(ITEMS.map(x=>[x.id,x]));
   const done = [], todo = [], manual = [], unavail = [];
 
