@@ -361,6 +361,21 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .all-good{background:var(--accent-soft);border:1px solid var(--acc-line);border-radius:10px;padding:18px;
   text-align:center;font-weight:600;margin-top:12px}
 
+/* 글자수 · 금지문자 점검 */
+.out h4 .cnt b{font-weight:800}
+.len-ok{color:var(--ok-fg)}
+.len-short,.len-long{color:var(--acc-fg)}
+.cw{margin-top:9px;border-radius:10px;padding:11px 13px;font-size:12.5px;line-height:1.7}
+.cw b{display:block;font-size:13px;font-weight:800;margin-bottom:3px}
+.cw p{margin:4px 0 0;color:var(--muted)}
+.cw.ok{border:1px solid var(--ok-line);background:var(--ok-bg)}
+.cw.ok b{color:var(--ok-fg)}
+.cw.note{border:1px solid var(--info-fg);background:var(--info-bg)}
+.cw.note b{color:var(--info-fg)}
+.cw .cw-list{color:var(--ink);font-weight:600;overflow-wrap:anywhere}
+.cw code{background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+
 /* 출력 박스 */
 .out{margin-top:16px}
 .out h4{font-size:14px;font-weight:800;margin:0 0 8px;display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -955,7 +970,10 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <p class="desc">목표 키워드가 자연스럽게 들어가도록 만들었습니다. 우리 센터 사정에 맞게 손보고 쓰세요.</p>
 
       <div class="out"><h4>플레이스 소개글 <span class="cnt" id="c-intro"></span></h4>
-        <div class="box" id="o-intro"><button class="btn sm ghost copy" data-t="o-intro">복사</button></div></div>
+        <p class="hint" style="margin:0 0 8px">5단계 공식 - 문제 공감 → 미루면 생기는 손해 → 해결책(망설임 5가지 지우기)
+          → 증명(리뷰 실측) → 방문 유도. 체크 안 한 시설은 아예 쓰지 않습니다.</p>
+        <div class="box" id="o-intro"><button class="btn sm ghost copy" data-t="o-intro">복사</button></div>
+        <div class="cw" id="char-warn" style="display:none"></div></div>
       <div class="out"><h4>대표키워드 5개</h4>
         <div class="box" id="o-kw"><button class="btn sm ghost copy" data-t="o-kw">복사</button></div></div>
       <div class="out"><h4>리뷰 답글 3종</h4>
@@ -1620,6 +1638,55 @@ $("dock-run").addEventListener("click", ()=> $("btn-run").click());
 })();
 
 /* ============================================================
+   네이버 상세설명 허용 문자
+
+   네이버는 상세설명 칸에 넣을 수 있는 문자를 제한한다. 다만 그 목록을
+   공식 문서로 내놓지 않아서, 업계에 도는 기준은 전부 추정이다.
+   그래서 두 겹으로 쓴다.
+
+   (1) 추정 허용 목록으로 후보를 잡고
+   (2) 지금 네이버에 실제로 등록돼 있는 소개글에 그 문자가 들어 있으면
+       "네이버가 통과시킨 문자"로 보고 경고에서 뺀다.
+
+   (2)가 핵심이다. 등록된 글은 네이버가 받아준 글이므로, 거기 있는 문자는
+   막히지 않는다는 실측 증거다. 추정으로 겁주는 대신 실측으로 지운다.
+   ============================================================ */
+const NAVER_ALLOWED = /[가-힣ㄱ-ㅎㅏ-ㅣa-zA-Z一-鿿ぁ-ゟ゠-ヿ0-9 \n\r\t\-_()&!\[\],.%+~@*^'/?²℃※<>:]/u;
+
+/* 우리가 만드는 글에서는 아예 안전한 글자로 바꿔서 내보낸다 */
+const SAFE_SWAP = [
+  [/[·・]/g, ", "], [/[–—]/g, "-"], [/…/g, "..."],
+  [/[""]/g, "'"], [/['']/g, "'"], [/[→←↑↓]/g, "-"],
+  [/[「」『』]/g, ""], [/["]/g, "'"],
+];
+function naverSafe(t){
+  let out = (t || "").normalize("NFC");
+  SAFE_SWAP.forEach(([re, to]) => { out = out.replace(re, to); });
+  return [...out].filter(ch => NAVER_ALLOWED.test(ch)).join("").replace(/ {2,}/g, " ");
+}
+
+/* 네이버가 이미 받아준 문자 — 지금 등록된 소개글에 들어 있는 것들 */
+function acceptedChars(){
+  const live = ($("i-intro")?.value || "").normalize("NFC");
+  return new Set([...live]);
+}
+
+/* 반환: { risky:[{ch,n}], proven:[{ch,n}] }
+   risky  = 추정 목록에도 없고 등록 글에도 없던 문자 (진짜 위험 후보)
+   proven = 추정 목록엔 없지만 네이버가 이미 통과시킨 문자 (겁줄 필요 없음) */
+function charCheck(text, live){
+  const ok = live ? acceptedChars() : new Set();
+  const risky = new Map(), proven = new Map();
+  for(const ch of (text || "").normalize("NFC")){
+    if(NAVER_ALLOWED.test(ch)) continue;
+    const bag = ok.has(ch) ? proven : risky;
+    bag.set(ch, (bag.get(ch) || 0) + 1);
+  }
+  const list = m => [...m.entries()].map(([ch,n]) => ({ ch, n }));
+  return { risky: list(risky), proven: list(proven) };
+}
+
+/* ============================================================
    문장 생성기
    ============================================================ */
 const SERVICE_WORD = {"헬스장":"헬스장","PT 전문":"PT","헬스+PT":"헬스장","필라테스":"필라테스","크로스핏":"크로스핏"};
@@ -1631,34 +1698,145 @@ const KEYWORD_BASE = {
   "크로스핏": a=>[`${a}크로스핏`,`${a}크로스핏추천`,`${a}운동`]
 };
 
+/* ── 소개글 5단계 공식 ──────────────────────────────────────
+   손님이 읽다가 그만두는 글은 "우리 센터는 좋습니다"로 시작한다.
+   읽히는 글은 손님 머릿속 상황에서 시작해서, 망설이는 이유를 하나씩
+   지우고, 확인 가능한 숫자로 증명한 뒤, 할 행동 하나를 남긴다.
+
+     1 문제 공감  지금 어떤 상황이신지
+     2 심각성     그대로 두면 뭐가 손해인지
+     3 해결책     우리가 어떻게 푸는가 + ★ 망설임 5가지 지우기
+     4 증명       리뷰 수, 평점 같은 확인 가능한 숫자만
+     5 방문 유도  다음에 할 행동 하나
+
+   ★ 헬스장에서 손님이 망설이는 5가지 —
+     비용 / 오가는 길 / 씻고 가기 / 처음이라는 부담 / 시간
+   체크된 시설이 없으면 그 대목은 통째로 뺀다. 없는 시설을 적으면
+   방문 첫날 들통나고, 그게 리뷰로 남는다.
+   ───────────────────────────────────────────────────────── */
+const OBJECTION = [
+  { key:"cost", head:"비용",
+    need:o => o.price || o.fac.includes("PT 상담 무료") || o.fac.includes("인바디 측정") },
+  { key:"way", head:"오시는 길",
+    need:o => true },
+  { key:"wash", head:"씻고 가기",
+    need:o => ["샤워실","락커","운동복 대여","사우나"].some(f=>o.fac.includes(f)) },
+  { key:"first", head:"처음이라 망설여지신다면",
+    need:o => true },
+  { key:"time", head:"운동 시간",
+    need:o => o.fac.includes("24시간 운영") || o.fac.includes("무인 출입") },
+];
+
+function objectionText(key, o){
+  const A = o.area, has = f => o.fac.includes(f);
+  if(key === "cost"){
+    const price = o.price
+      ? `1개월 이용권은 ${o.price}이고, 3개월과 6개월은 기간에 따라 조건이 달라집니다. 등록 전에 금액을 알고 오시는 편이 서로 편하다고 생각해 미리 적어 둡니다.`
+      : `이용권 금액은 등록 기간에 따라 달라집니다. 전화나 방문으로 물어보시면 조건 없이 바로 알려드립니다.`;
+    const extra = [
+      has("PT 상담 무료") ? "PT 상담은 등록과 상관없이 무료로 받으실 수 있습니다." : "",
+      has("인바디 측정") ? "인바디 측정도 같이 해 드리니 지금 몸 상태를 숫자로 보고 결정하셔도 됩니다." : "",
+    ].filter(Boolean).join(" ");
+    return price + (extra ? " " + extra : "");
+  }
+  if(key === "way"){
+    return `${A} 안에 있어 걸어서 오실 수 있는 거리입니다. `
+      + (has("주차 가능")
+        ? `차로 오시는 분을 위해 주차 공간을 두었습니다. 퇴근길에 들르셨다가 바로 나가시기 편합니다.`
+        : `대중교통으로 오시기 편한 위치이고, 건물 층수와 출입구는 지도에 표시해 두었습니다.`);
+  }
+  if(key === "wash"){
+    const list = ["샤워실","락커","운동복 대여","사우나"].filter(has);
+    return `${list.join(", ")}${josa(list[list.length-1] || "시설","을")} 갖추고 있습니다. `
+      + (has("샤워실")
+        ? `운동하고 바로 씻고 나가실 수 있어서, 출근 전이나 퇴근 후에 오시는 분들이 많습니다.`
+        : `짐을 들고 다니지 않으셔도 됩니다.`);
+  }
+  if(key === "first"){
+    const soft = [
+      has("PT 상담 무료") ? "첫 상담에서 몸 상태와 생활 패턴을 먼저 듣고 시작합니다." : "",
+      has("여성 전용존") ? "여성 전용존이 따로 있어 시선이 부담되는 분도 편하게 운동하실 수 있습니다." : "",
+      has("GX 프로그램") ? "혼자 하기 어려우시면 GX 프로그램에 같이 들어오셔도 됩니다." : "",
+    ].filter(Boolean).join(" ");
+    return `기구를 어떻게 쓰는지 몰라 눈치 보이는 것이 제일 큰 부담이라는 걸 압니다. `
+      + `처음 오시는 분께는 기구 사용법과 동선을 직접 알려드립니다. 물어보시는 걸 귀찮아하지 않습니다. `
+      + soft;
+  }
+  if(key === "time"){
+    return has("24시간 운영")
+      ? `24시간 운영합니다. ${has("무인 출입") ? "무인 출입이라 새벽이나 늦은 밤에도 눈치 보실 일이 없습니다. " : ""}`
+        + `근무 시간이 일정하지 않은 분들이 시간 때문에 포기하지 않으셔도 됩니다.`
+      : `무인 출입이라 영업시간 안에서는 오시고 싶을 때 오실 수 있습니다.`;
+  }
+  return "";
+}
+
+/* 4단계 증명 — 우리가 실제로 수집한 숫자만 쓴다. 없으면 이 단계를 건너뛴다. */
+function proofText(o){
+  const d = window.__place?.data || {};
+  const n = v => { const m = String(v ?? "").match(/[\d,]+(\.\d+)?/); return m ? m[0] : null; };
+  const rev = n(d.visitorReviewCount ?? d.visitorReviewsTotal);
+  const sc  = n(d.visitorReviewsScore ?? d.visitorReviewScore);
+  const blog = n(d.blogCafeReviewCount ?? d.cafeBlogReviewsTotal);
+  const bits = [];
+  if(rev)  bits.push(`방문자 리뷰 ${rev}개`);
+  if(sc)   bits.push(`평점 ${sc}점`);
+  if(blog) bits.push(`블로그 후기 ${blog}개`);
+  if(!bits.length) return "";
+  const tail = bits[bits.length - 1];
+  return `말로 하는 것보다 다녀가신 분들이 남긴 기록이 정확합니다. `
+    + `지금까지 ${bits.join(", ")}${josa(tail,"이")} 쌓였습니다. `
+    + `좋은 이야기만 있지는 않고, 지적해 주신 부분은 그때그때 고쳐 왔습니다. `
+    + `플레이스 리뷰 탭에서 직접 읽어보시고 판단하셔도 됩니다.`;
+}
+
 function buildIntro(o){
-  const A=o.area, N=o.name, S=SERVICE_WORD[o.type]||"헬스장";
+  const A = o.area, N = o.name, S = SERVICE_WORD[o.type] || "헬스장";
   const K1 = o.keywords[0] || `${A} ${S}`;
-  const K2 = o.keywords[1] || "";
-  const facText = o.fac.length ? o.fac.join(", ") : "운동에 필요한 기본 시설";
-  const priceLine = o.price
-    ? `이용권 가격은 1개월 ${o.price} 기준이며, 3개월·6개월 장기 등록 시 할인 조건을 따로 안내드립니다. 등록 전에 가격을 알고 오시는 편이 서로 편하다고 생각해 미리 공개합니다.`
-    : `이용권 가격은 등록 기간에 따라 다르게 책정되어 있으며, 방문 상담이나 전화 문의 시 조건 없이 바로 안내드립니다.`;
 
-  return `${K1}${josa(K1,"을")} 찾고 계신다면, ${A}에 위치한 ${N}입니다.
+  /* 1단계 — 손님 머릿속 상황에서 시작한다 */
+  const step1 = `${K1}${josa(K1,"을")} 알아보고 계신가요. `
+    + `등록은 해야겠는데 어디로 갈지 정하기가 쉽지 않습니다. `
+    + `집이나 회사에서 가까운지, 사람이 너무 많지는 않은지, `
+    + `혼자 들어갔다가 뻘쭘하지는 않을지. 하나씩 따지다 보면 결정이 자꾸 미뤄집니다.`;
 
-${N}${josa(N,"은")} ${A} 인근에서 ${o.type} 중심으로 운영하고 있습니다. 처음 운동을 시작하시는 분부터 오래 해오신 분까지, 각자 페이스대로 운동할 수 있는 환경을 만드는 데 신경 쓰고 있습니다.
+  /* 2단계 — 미루면 뭐가 손해인지 */
+  const step2 = `그렇게 한 달이 지나고 두 달이 지납니다. `
+    + `운동은 미룬 만큼 되돌리는 데 더 오래 걸립니다. `
+    + `체력이 떨어지는 속도보다 회복하는 속도가 느리기 때문입니다. `
+    + `그래서 완벽한 곳을 찾는 것보다, 오늘 갈 수 있는 곳을 정하는 편이 낫습니다.`;
 
-[시설 안내]
-저희 센터에는 ${facText} 등이 준비되어 있습니다. 웨이트존과 유산소존을 분리해 서로 방해받지 않도록 동선을 구성했고, 기구는 정기적으로 점검해 관리하고 있습니다. 처음 오시는 분께는 기구 사용법과 동선을 직접 안내해 드리니 부담 없이 오셔도 됩니다.
+  /* 3단계 — 해결책 + 망설임 지우기 */
+  const head = `${N}${josa(N,"은")} ${A}에서 ${o.type} 중심으로 운영합니다. `
+    + `망설이게 되는 것들을 먼저 적어 두겠습니다. 읽어보시고 판단해 주세요.`;
+  const blocks = OBJECTION.filter(x => x.need(o))
+    .map(x => `[${x.head}]\n${objectionText(x.key, o).replace(/\s+/g," ").trim()}`)
+    .join("\n\n");
 
-[운동 프로그램]
-${(o.type==="PT 전문"||o.type==="헬스+PT")
-  ? `${K2 || A+" PT"} 문의도 많이 주시는데, PT는 첫 상담에서 체형과 생활 패턴, 목표를 확인한 뒤 프로그램을 잡습니다. 무조건 힘든 운동을 시키는 방식이 아니라, 지금 몸 상태에서 꾸준히 할 수 있는 강도부터 시작합니다.`
-  : `혼자 운동하시는 분도 방향을 잡을 수 있도록 기본 프로그램 안내를 제공합니다. 필요하시면 개인 지도도 별도로 받아보실 수 있습니다.`}
+  /* 3단계 뒤 — 등록하면 실제로 어떻게 되는지. 손님이 제일 궁금해하는 대목이고,
+     여기가 있어야 글이 안내문이 아니라 설명이 된다. */
+  const flow = `[처음 오시면 이렇게 진행됩니다]\n`
+    + (o.fac.includes("인바디 측정")
+        ? `첫날에는 인바디로 지금 몸 상태를 재고, 그 숫자를 기준으로 목표를 잡습니다. `
+        : `첫날에는 지금 몸 상태와 생활 패턴을 먼저 듣습니다. `)
+    + `${(o.type === "PT 전문" || o.type === "헬스+PT")
+        ? "PT는 무조건 힘든 운동을 시키는 방식이 아니라, 지금 상태에서 꾸준히 할 수 있는 강도부터 시작합니다. 자세가 잡히기 전에는 무게를 올리지 않습니다. "
+        : "혼자 운동하시는 분도 방향을 잡으실 수 있게 기본 루틴을 안내해 드립니다. "}`
+    + `첫 2주는 몸을 만드는 기간이 아니라 오는 습관을 만드는 기간입니다. `
+    + `일주일에 두세 번이라도 빠지지 않고 오시는 것이 한 번에 두 시간 하는 것보다 낫습니다. `
+    + `${o.fac.includes("GX 프로그램") ? "혼자 오기 심심하시면 GX 프로그램에 들어오셔도 됩니다. " : ""}`
+    + `중간에 막히시면 언제든 물어보세요.`;
 
-[이용 안내]
-${priceLine}
+  /* 4단계 — 증명 (수집된 숫자가 있을 때만) */
+  const proof = proofText(o);
 
-[찾아오시는 길]
-${A}에서 도보로 이동 가능한 거리에 있습니다. ${o.fac.includes("주차 가능")?"주차 공간이 준비되어 있어 차량으로 오셔도 됩니다.":"대중교통 이용이 편리한 위치입니다."} 건물 층수와 출입구 위치는 지도를 참고해 주세요.
+  /* 5단계 — 다음 행동 하나 */
+  const step5 = `${K1} 등록을 고민 중이시라면, 결정하기 전에 한 번 보러 오시는 걸 권합니다. `
+    + `예약 없이 오셔도 되고, 시설만 둘러보고 가셔도 괜찮습니다. `
+    + `직접 보시고 아니다 싶으면 안 하셔도 됩니다. ${N}에서 기다리겠습니다.`;
 
-${K1} 등록을 고민 중이시라면, 먼저 시설을 직접 보고 결정하시는 걸 권해드립니다. 방문 상담은 예약 없이도 가능하며, 시설 구경만 하고 가셔도 괜찮습니다. ${N}에서 기다리겠습니다.`;
+  const text = [step1, step2, head, blocks, flow, proof, step5].filter(Boolean).join("\n\n");
+  return naverSafe(text);
 }
 
 function buildKeywords(o){
@@ -1717,10 +1895,45 @@ function buildNews(o){
 function buildWriter(o){
   const intro = buildIntro(o);
   setBox("o-intro", intro);
-  $("c-intro").textContent = `${intro.length}자`;
+  /* 글자수와 금지문자를 같이 보여준다. 복붙 직전에 알아야 할 두 가지다.
+     1,200~1,800자는 상세설명 칸에서 읽히면서 키워드도 들어갈 만한 길이다. */
+  const len = intro.length;
+  const fit = len >= 1200 && len <= 1800 ? "ok" : (len < 1200 ? "short" : "long");
+  const bad = charCheck(intro, false).risky;
+  $("c-intro").innerHTML =
+    `${len.toLocaleString("ko-KR")}자 <b class="len-${fit}">${
+      fit === "ok" ? "권장 범위" : fit === "short" ? "1,200자 미만" : "1,800자 초과"}</b>`
+    + ` · 금지 추정 문자 ${bad.length ? `<b class="len-long">${bad.length}종</b>` : "없음"}`;
+  renderCharWarn();
   setBox("o-kw", buildKeywords(o));
   setBox("o-reply", buildReplies(o));
   setBox("o-news", buildNews(o));
+}
+
+/* 지금 네이버에 등록돼 있는 소개글을 같은 잣대로 검사한다.
+   여기서 걸린 문자는 "네이버가 이미 받아준 문자"라는 실측 증거다.
+   추정 목록이 틀렸다는 뜻이므로, 겁주는 대신 그렇게 적는다. */
+function renderCharWarn(){
+  const box = $("char-warn"); if(!box) return;
+  const live = ($("i-intro")?.value || "").trim();
+  if(!live){ box.style.display = "none"; return; }
+  const { risky, proven } = charCheck(live, false);
+  const all = [...risky, ...proven];
+  if(!all.length){
+    box.className = "cw ok"; box.style.display = "";
+    box.innerHTML = `<b>지금 등록된 소개글 - 금지 추정 문자 없음</b>
+      <p>${live.length.toLocaleString("ko-KR")}자. 이대로 두셔도 됩니다.</p>`;
+    return;
+  }
+  const show = all.sort((a,b)=>b.n-a.n).slice(0,8)
+    .map(x=>`<code>${x.ch === " " ? "(공백)" : x.ch}</code> ${x.n}회`).join(" · ");
+  box.className = "cw note"; box.style.display = "";
+  box.innerHTML = `<b>참고 - 추정 기준이 여기서 틀립니다</b>
+    <p>지금 네이버에 등록된 소개글에 아래 문자가 들어 있습니다. <b>네이버가 이미 받아준 글</b>이므로
+      이 문자들은 실제로는 막히지 않습니다.</p>
+    <p class="cw-list">${show}</p>
+    <p>업계에 도는 "네이버 금지문자" 목록은 공식 문서가 아니라 추정입니다.
+      저희는 만들어 드리는 글에서만 안전한 글자를 쓰고, 사장님 글을 고치라고 하지는 않겠습니다.</p>`;
 }
 
 function setBox(id,text){
@@ -2842,6 +3055,7 @@ $("s-collect")?.addEventListener("click", async ()=>{
 
     // 입력란을 최대한 채운다. 이미 손으로 넣은 값은 덮어쓰지 않는다.
     const d = res.data, dv = res.derived || {};
+    window.__place = { data: d, derived: dv };   // 소개글 "증명" 단계에 쓸 실측 숫자
     const filled = [];
     const put = (id, val, label) => {
       const el = $(id);
