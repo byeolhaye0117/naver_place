@@ -1401,13 +1401,18 @@ const server = http.createServer(async (req, res) => {
         if (!body || !body.snap) return sendJson(res, 400, { ok: false, error: '내용이 없습니다' });
         const entry = {
           id: 's' + Date.now().toString(36),
+          place: String(body.place || '').slice(0, 40),   // 같은 가게를 알아보는 열쇠
           name: String(body.name || '').slice(0, 60) || '이름 없음',
           at: body.at || new Date().toISOString(),
           score: Number.isFinite(Number(body.score)) ? Number(body.score) : null,
           keyword: String(body.keyword || '').slice(0, 60),
           snap: body.snap,
         };
-        writeSaves([...list, entry].slice(-50));
+        /* 같은 가게는 가장 최근 것 하나만 남긴다. 시점별 비교는 순위 기록과
+           개선 기록이 따로 담당하므로, 여기에 같은 가게가 쌓이면 찾기만 어려워진다. */
+        const key = entry.place || entry.name;
+        const kept = list.filter(x => (x.place || x.name) !== key);
+        writeSaves([...kept, entry].slice(-50));
         return sendJson(res, 200, { ok: true, id: entry.id });
       }
       if (req.method === 'DELETE') {
