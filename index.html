@@ -301,7 +301,7 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .man-more summary:hover{color:var(--ink)}
 
 /* 자동으로 채워진 입력 칸은 접어 둔다 — 볼 일이 없는데 펼쳐져 있으면 할 일처럼 보인다 */
-.card.folded > *:not(h2){display:none}
+.card.folded > *:not(h2):not(.keep){display:none}
 .fold-btn{float:right;font-size:12px;font-weight:700;color:var(--muted);background:var(--surface-2);
   border:1px solid var(--line);border-radius:8px;padding:4px 10px;cursor:pointer}
 .fold-btn:hover{color:var(--ink);border-color:var(--muted)}
@@ -460,7 +460,9 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   <!-- STEP 1 -->
   <section class="card" id="sec1">
     <h2><span class="step-no">1</span> 내 플레이스 정보</h2>
-    <p class="desc">네이버 스마트플레이스에 <b>지금 등록되어 있는 그대로</b> 넣으세요. 이 값으로 적합도를 직접 계산합니다.</p>
+    <p class="desc"><b>이 칸이 왜 있나요?</b> 맨 위에서 자동 수집을 하면 여기는 저절로 채워집니다.
+      자동 수집이 안 되는 상황(휴대폰만 쓸 때, 서버를 안 켰을 때)에 손으로 넣는 곳입니다.
+      이미 채워져 있다면 <b>손댈 필요 없습니다</b> — 값이 틀렸을 때만 고치세요.</p>
 
     <div class="grid two">
       <label class="f"><span>업체명 <i>*</i></span>
@@ -493,8 +495,9 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   <section class="card" id="sec2">
     <h2><span class="step-no">2</span> 목표 키워드 · 현재 소개글</h2>
     <p class="desc">
-      <b>적합도 자동 분석에 쓰이는 핵심 입력입니다.</b>
-      손님이 실제로 검색할 법한 말을 넣으세요. 소개글은 지금 플레이스에 들어가 있는 내용을 그대로 붙여넣으시면 됩니다.
+      <b>이 칸이 왜 있나요?</b> 소개글은 자동으로 가져옵니다. 하지만 <b>목표 키워드는 가져올 수 없습니다</b> —
+      "어떤 말로 검색됐을 때 1등이 되고 싶은지"는 플레이스에 적혀 있지 않고 사장님 머릿속에만 있기 때문입니다.
+      그래서 일단 등록된 대표키워드로 채워 두었고, 다른 키워드를 노리신다면 여기서 바꾸시면 됩니다.
     </p>
 
     <div style="margin-top:18px">
@@ -519,14 +522,16 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   </section>
 
   <!-- STEP 3 -->
-  <section class="card">
+  <section class="card" id="sec3">
     <h2><span class="step-no">3</span> 나머지 항목 체크</h2>
     <p class="desc">
-      2단계에서 <b>자동 판정되는 4개 항목은 여기서 빠져 있습니다.</b>
-      될 것 같은 것 말고 <b>이미 되어 있는 것</b>만 체크하세요.
+      <b>이 칸이 왜 있나요?</b> 사진을 눈으로 보거나 지도를 직접 봐야 아는 항목들입니다.
+      네이버가 숫자로 알려주지 않아서 자동으로 판정할 수 없습니다.
+      <b>체크하지 않아도 진단 실행 버튼은 그대로 동작합니다.</b> 체크는 점수를 더 정확하게 만들고 싶을 때만 하세요.
+      될 것 같은 것 말고 <b>이미 되어 있는 것</b>만 체크하시면 됩니다.
     </p>
     <div id="checklist"></div>
-    <div class="btn-row">
+    <div class="btn-row keep">
       <button class="btn" id="btn-run">진단 실행 →</button>
       <button class="btn ghost" id="btn-reset" type="button">체크 해제</button>
     </div>
@@ -1639,16 +1644,19 @@ function foldSection(id, summary){
   h2.querySelector(".fold-btn").textContent = "펼치기";
 }
 
-/* 채워진 칸만 접는다. 비어 있는 칸을 접으면 사장님이 넣을 곳을 못 찾는다. */
+/* 채워진 칸만 접는다. 비어 있는 칸을 접으면 사장님이 넣을 곳을 못 찾는다.
+   요약은 값이 아니라 "왜 이 칸이 있는지"를 먼저 말한다. 값만 보여주면
+   자동으로 채워진 것인지, 내가 채워야 하는 것인지 구분이 안 된다. */
 function foldFilledInputs(){
   const name = $("i-name").value.trim(), area = $("i-area").value.trim();
   const intro = ($("i-intro").value || "").trim();
   const kw = ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value.trim()).filter(Boolean);
 
-  if(name && area) foldSection("sec1", `${name} · ${area}`);
-  if(kw.length)    foldSection("sec2", intro
+  if(name && area) foldSection("sec1", `자동으로 채워짐 — ${name} · ${area}`);
+  if(kw.length)    foldSection("sec2", `자동으로 채워짐 — ` + (intro
     ? `소개글 ${intro.length}자 · 키워드 ${kw.length}개`
-    : `소개글 없음 (0자) · 키워드 ${kw.length}개`);
+    : `소개글 없음(0자) · 키워드 ${kw.length}개`));
+  foldSection("sec3", "체크는 선택 — 아래 버튼만 누르면 진단됩니다");
 }
 
 function applyJudgement(judge){

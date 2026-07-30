@@ -259,6 +259,34 @@ const PLACE_STRATEGIES = [
 /* 이게 다 모이면 더 요청하지 않는다 (불필요한 왕복을 줄이려는 것) */
 const KEY_FIELDS = ['description', 'imageCount', 'visitorReviewCount', 'blogCafeReviewCount', 'bookmarkCount'];
 
+/* 개수 항목은 남의 것이 섞이면 곧바로 거짓 판정이 된다.
+   실제로 리뷰 탭을 읽었더니 방문자 리뷰 4,667개라는 값이 잡혔는데 이 가게 것이 아니었다.
+   그래서 개수만큼은 "이 플레이스에 속한 노드"에서 나온 것만 인정한다. */
+const COUNT_FIELDS = [
+  'visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal', 'visitorReviewsCount',
+  'totalReviewCount', 'reviewCount', 'reviewTotal', 'fsasReviewCount',
+  'blogCafeReviewCount', 'blogCafeReviewTotal', 'blogReviewCount', 'cafeReviewCount', 'ugcReviewCount',
+  'bookmarkCount', 'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount',
+  'imageCount', 'photoCount', 'photoTotal', 'imageTotal', 'totalImageCount',
+  'menus', 'menuImages', 'prices', 'conveniences', 'facilities', 'amenities', 'options',
+  'newsCount', 'feedCount', 'announcementCount', 'visitorReviewScore',
+];
+
+/* 이 플레이스를 가리키는 노드를 찾는다.
+   아폴로 캐시는 "PlaceDetailBase:11716617" 처럼 키에 번호가 박히고,
+   그렇지 않은 경우에도 노드 안에 id 가 들어 있다. */
+function scopedNodes(node, placeId, out = [], depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return out;
+  for (const [k, v] of Object.entries(node)) {
+    if (!v || typeof v !== 'object') continue;
+    const byKey  = k.includes(placeId);
+    const bySelf = !Array.isArray(v) && String(v.id ?? v.placeId ?? '') === placeId;
+    if (byKey || bySelf) out.push(v);
+    scopedNodes(v, placeId, out, depth + 1);
+  }
+  return out;
+}
+
 /* harvest 는 스칼라와 배열만 담는다.
    businessHours 처럼 객체로 오는 필드는 "값이 있느냐"만 따로 확인한다. */
 function harvestPresence(node, fields, found = new Set(), depth = 0) {
@@ -471,8 +499,26 @@ async function collectPlace(idOrUrl, userType) {
         continue;
       }
       const before = Object.keys(data).length;
-      harvest(json, PLACE_FIELDS, data);          // 빈 값은 채워진 값으로 덮인다
-      harvestPresence(json, PLACE_FIELDS, present);
+
+      /* 이 가게 노드에서 먼저 줍는다. 개수 항목은 여기서 나온 것만 인정한다.
+         가게 노드를 못 찾았을 때만 트리 전체를 훑는다 (없는 것보단 낫다). */
+      const scoped = scopedNodes(json, id);
+      if (scoped.length) {
+        for (const s of scoped) {
+          harvest(s, PLACE_FIELDS, data);
+          harvestPresence(s, PLACE_FIELDS, present);
+        }
+        // 개수가 아닌 항목(주소·전화·링크 등)은 바깥에서 보충해도 위험하지 않다
+        const loose = harvest(json, PLACE_FIELDS, {});
+        for (const [k, v] of Object.entries(loose)) {
+          if (COUNT_FIELDS.includes(k)) continue;
+          if (isEmptyVal(data[k]) && !isEmptyVal(v)) data[k] = v;
+        }
+      } else {
+        harvest(json, PLACE_FIELDS, data);
+        harvestPresence(json, PLACE_FIELDS, present);
+      }
+
       const gained = Object.keys(data).length - before;
       if (gained <= 0 && before === 0) {
         attempts.push({ url, status: r.status, result: '필드를 찾지 못함', bytes: r.text.length });
