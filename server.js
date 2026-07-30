@@ -512,6 +512,32 @@ function guessPrice(menus) {
   return pick ? pick.toLocaleString('ko-KR') + '원' : '';
 }
 
+/* 대표키워드는 관리자 화면에만 있는 값이라 응답에 안 나온다.
+   그런데 사장님들이 소개글 끝에 키워드 줄을 그대로 붙여 두는 경우가 많다.
+   "쌍용동헬스장, 쌍용동pt, 쌍용동24시헬스장, 천안쌍용동헬스장, 봉명동 헬스장"
+   문장이 아니라 나열이고, 지역·업종 말이 반복되는 줄을 찾는다.
+   그런 줄이 없으면 아무것도 만들지 않는다 — 시설 나열을 키워드로 오해하면 안 된다. */
+function keywordsFromIntro(text, hints) {
+  const t = String(text || '');
+  if (!t) return [];
+  const lines = t.split(/\r?\n|·|\||\/{2,}/).map(x => x.trim()).filter(Boolean);
+  let best = null, bestScore = 0;
+
+  for (const ln of lines) {
+    if (ln.length > 200) continue;
+    if (/[.!?]\s*$|습니다|해요|입니다|하세요|드립니다|있어요|주세요/.test(ln)) continue;  // 문장은 제외
+    const parts = ln.replace(/^#/, '').split(/[,#]/).map(x => x.trim()).filter(Boolean);
+    if (parts.length < 3) continue;
+    if (parts.some(p => p.length < 2 || p.length > 22)) continue;
+
+    // 지역·업종 말이 얼마나 겹치는지로 "키워드 줄"인지 가른다
+    const hit = parts.filter(p => hints.some(h => h && p.includes(h))).length;
+    if (hit < Math.ceil(parts.length / 2)) continue;
+    if (hit >= bestScore) { bestScore = hit; best = parts; }   // 같으면 뒤쪽 줄을 택한다
+  }
+  return best || [];
+}
+
 function deriveInputs(data, jsons) {
   const all = Array.isArray(jsons) ? jsons : [jsons];
   const pick = (...names) => {
@@ -531,15 +557,21 @@ function deriveInputs(data, jsons) {
   const station = kwList.map(k => (k.match(/^(.{2,8}?역)/) || [])[1]).find(Boolean);
   const areas = [...new Set([station, ...fromAddr].filter(Boolean))];
 
+  /* 등록 대표키워드를 못 받았으면 소개글 끝의 키워드 줄에서 찾아본다 */
+  const fromIntro = kwList.length ? []
+    : keywordsFromIntro(data.description, [...areas, '헬스', 'PT', 'pt', '피트니스', '짐']);
+  const repList = kwList.length ? kwList : fromIntro;
+
   return {
     areas,
     area:  areas[0] || '',
+    repkwFrom: kwList.length ? '등록값' : (fromIntro.length ? '소개글' : ''),
     areaFrom: station ? '대표키워드' : (fromAddr.length ? '주소' : ''),
     type:  guessType(data.category),
     price: guessPrice(menus),
-    repkw: kwList.join(', '),
+    repkw: repList.join(', '),
     // 목표 키워드 제안: 등록한 대표키워드가 있으면 그것을 그대로 쓴다
-    kwSuggest: kwList.slice(0, 3),
+    kwSuggest: repList.slice(0, 3),
   };
 }
 
@@ -903,6 +935,9 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
     numbers,
     links,
     foundBy,
+    // 사진 수는 이름마다 값이 달라서 어느 것이 '관리자 화면 사진 수'인지 확실하지 않다.
+    // 판단 재료를 그대로 넘긴다.
+    photoListN: biggestListLen(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
     // 어떤 후보들이 있었는지 보여준다. 고른 것이 틀렸으면 사장님이 바꿀 수 있어야 한다.
     introCandidates: intros.slice(0, 4).map(c => ({ key: c.key, score: Math.round(c.score * 10) / 10,
                                                     len: c.text.length, text: c.text })),

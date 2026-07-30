@@ -2294,9 +2294,15 @@ $("s-collect")?.addEventListener("click", async ()=>{
           c.text.trim()===introTxt?" checked":""}>
           <span>${c.text.slice(0,70)}… <em style="font-style:normal;color:var(--muted)">(${c.len}자·${c.key})</em></span>
         </label>`).join("")}</div>` : ""}
-      ${cf("사진 수", [d.totalImages, d.imageCount, d.photoTotal].filter(v=>v!=null).join(" / ")
-            + (d.totalImages != null || d.imageCount != null ? "장" : ""), null,
-           "사진 수를 못 가져왔습니다")}
+      ${cf("사진 수", (()=>{
+            const cands = [["totalImages", d.totalImages], ["imageCount", d.imageCount],
+                           ["photoTotal", d.photoTotal], ["사진 탭 목록", res.photoListN]]
+              .filter(([,v]) => v != null && v !== 0);
+            if(!cands.length) return "";
+            const use = Math.max(...cands.map(([,v])=>Number(v)||0));
+            return `${use}장 <span class="hint" style="font-weight:500">
+              (${cands.map(([k,v])=>`${k} ${v}`).join(" · ")}) — 관리자 화면 사진 수와 다르면 알려주세요</span>`;
+          })(), null, "사진 수를 못 가져왔습니다")}
       ${cf("리뷰", [
             pickNum(d,"visitorReviewCount","visitorReviewsTotal","visitorReviewTotal","totalReviewCount") != null
               ? `방문자 ${pickNum(d,"visitorReviewCount","visitorReviewsTotal","visitorReviewTotal","totalReviewCount").toLocaleString()}` : "",
@@ -2306,7 +2312,9 @@ $("s-collect")?.addEventListener("click", async ()=>{
               ? `평점 ${pickNum(d,"visitorReviewsScore","visitorReviewScore","avgRating")}` : "",
           ].filter(Boolean).join(" · "))}
       ${cf("메뉴·가격", d.menus != null ? `${d.menus}개` : "")}
-      ${cf("대표키워드", $("i-repkw").value, "i-repkw", "관리자 화면에서 한 번만 넣어주세요")}
+      ${cf("대표키워드", $("i-repkw").value
+            + (dv.repkwFrom === "소개글" ? ` <span class="hint" style="font-weight:500">(소개글 끝의 키워드 줄에서 가져옴)</span>` : ""),
+           "i-repkw", "관리자 화면에서 한 번만 넣어주세요")}
       ${cf("목표 키워드", ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value).filter(Boolean).join(", "), "i-kw1")}
       <button class="btn" type="button" id="btn-confirm-run">맞아요, 진단 시작 →</button>
     </div>`;
