@@ -550,6 +550,9 @@ function judgeItems(data, present, userType, extra = {}) {
   };
   const src = () => note(usedKey);
   const has = (...k) => k.some(x => present.has(x) || !isEmptyVal(data[x]));
+  /* 무엇을 보고 충족이라 했는지 이름을 돌려준다.
+     '연결됨'만 적어 두면 사장님이 맞는지 틀린지 확인할 방법이 없다. */
+  const which = (...k) => k.filter(x => present.has(x) || !isEmptyVal(data[x]));
 
   const J = {};
   const put = (id, ok, evidence) => { J[id] = { ok, evidence }; };
@@ -585,14 +588,22 @@ function judgeItems(data, present, userType, extra = {}) {
                 : put('p10', score >= 4.5, `평점 ${score}점${src()}`);
 
   // ── 있으면 충족인 항목 ──────────────────────────────────
-  put('p11', has('bookingUrl', 'talktalkUrl'),
-      has('bookingUrl', 'talktalkUrl') ? '예약 또는 톡톡 연결됨' : '예약·톡톡 연결 없음');
+  {
+    const w = which('bookingUrl', 'talktalkUrl');
+    put('p11', w.length > 0, w.length ? `예약·톡톡 연결됨 (${w.join(', ')})` : '예약·톡톡 연결 없음');
+  }
 
-  put('d3', has('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials'),
-      has('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials') ? '외부 채널 연결됨' : '홈페이지·SNS 연결 없음');
+  {
+    const w = which('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials');
+    const url = [data.homepage, data.snsUrl, data.instagramUrl].find(v => !isEmptyVal(v));
+    put('d3', w.length > 0, w.length
+      ? `외부 채널 연결됨 (${w.join(', ')}${url ? ` — ${String(url).slice(0, 60)}` : ''})`
+      : '홈페이지·SNS 연결 없음');
+  }
 
   has('businessHours', 'newBusinessHours', 'businessHoursInfo', 'operationTime')
-    ? put('r8', true, '영업시간 등록됨 (공휴일 반영 여부는 직접 확인)')
+    ? put('r8', true, `영업시간 등록됨 (${which('businessHours', 'newBusinessHours', 'businessHoursInfo', 'operationTime').join(', ')})`
+                    + ' — 공휴일 반영 여부는 직접 확인')
     : unknown('r8', '영업시간 정보를 가져오지 못했습니다');
 
   /* 개수를 읽었다면 개수를 믿는다. 0개인데 "등록됨"으로 찍으면 점수가 거짓이 된다. */
@@ -663,8 +674,11 @@ function judgeItems(data, present, userType, extra = {}) {
   if (rs && rs.n >= 3) {
     put('p9', rs.daysSince <= 30,
         `마지막 리뷰 ${rs.daysSince}일 전 (최근 ${rs.n}개 기준)`);
+    /* 0% 는 "답글을 안 단다"일 수도 있고 "응답에 답글 정보가 없다"일 수도 있다.
+       둘을 구분할 방법이 없으므로 단정하지 않고 그 사실을 적는다. */
     put('p8', rs.replyRate >= 0.9,
-        `최근 리뷰 ${rs.n}개 중 ${rs.replied}개에 답글 (${Math.round(rs.replyRate * 100)}%)`);
+        `최근 리뷰 ${rs.n}개 중 ${rs.replied}개에 답글 (${Math.round(rs.replyRate * 100)}%)`
+        + (rs.replied === 0 ? ' — 실제로는 답글을 다시는데 0%로 나온다면 알려주세요 (수집 실패일 수 있습니다)' : ''));
   } else {
     unknown('p9', '리뷰 목록을 가져오지 못했습니다');
     unknown('p8', '리뷰 목록을 가져오지 못해 답글 비율을 세지 못했습니다');
