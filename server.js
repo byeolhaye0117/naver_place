@@ -324,6 +324,40 @@ const LINK_FIELDS = ['homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials
 /* 업체 기본 정보 노드에서만 가져와야 하는 글. 다른 노드에도 같은 이름이 있다. */
 const TEXT_FROM_BASE = ['description', 'microReviews'];
 
+/* 소개글은 이름이 하나가 아니다. 그리고 리뷰 본문·예약 안내문처럼
+   "긴 한국어 문장"이 여럿 섞여 있어서 먼저 만난 것을 쓰면 엉뚱한 게 들어온다.
+   후보를 다 모은 뒤 사장님이 쓴 글로 보이는 쪽을 고른다. */
+const INTRO_KEYS = [
+  'description', 'introduction', 'intro', 'detailDescription', 'placeDescription',
+  'businessDescription', 'bizDescription', 'longDescription', 'shortDescription',
+  'profile', 'detail', 'content', 'body', 'text',
+];
+
+/* 사장님이 쓴 소개글인가, 손님이 쓴 리뷰인가 */
+function introScore(t) {
+  const s = String(t || '');
+  if (s.length < 15) return -99;
+  let v = Math.min(s.length, 1500) / 500;                       // 길수록 소개글일 확률이 높다
+  if (/안녕하세요|저희|입니다|운영합니다|드립니다|하고 있습니다|오시면/.test(s)) v += 3;
+  if (/방문했어요|다녀왔|받았어요|같아요|추천해요|좋았어요|친절하[셨시]/.test(s)) v -= 5;  // 리뷰 말투
+  if (/^실시간 예약|예약관리를 온라인/.test(s)) v -= 4;          // 네이버 예약 기본 문구
+  return v;
+}
+
+function collectIntros(nodes, out = [], depth = 0) {
+  for (const nd of nodes) walkIntros(nd, out);
+  return out;
+}
+function walkIntros(node, out, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 8 || out.length > 40) return;
+  if (isReviewNode(node)) return;                                // 리뷰 노드는 통째로 건너뛴다
+  for (const [k, v] of Object.entries(node)) {
+    if (typeof v === 'string' && INTRO_KEYS.includes(k) && v.trim().length >= 15)
+      out.push({ key: k, text: v.trim(), score: introScore(v) });
+    else if (v && typeof v === 'object') walkIntros(v, out, depth + 1);
+  }
+}
+
 function findUrls(node, out = [], depth = 0) {
   if (!node || typeof node !== 'object' || depth > 6 || out.length > 5) return out;
   for (const v of Object.values(node)) {
@@ -761,7 +795,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
   const foundBy = {};             // 이름이 아니라 뜻으로 찾은 항목 (target → 실제 키 이름)
   const numbers = {};             // 가게 노드 안의 숫자 전부 — 못 찾은 값을 추적할 단서
   const links = {};               // 링크 필드 아래에 실제로 있는 주소
-  let baseHasIntro = false;       // 업체 기본 정보 노드에서 소개글 자리를 확인했는가
+  const introCands = [];          // 소개글 후보 (리뷰·예약 안내문과 섞여 온다)
   const jsons = [];
   const sources = [];
 
@@ -784,14 +818,12 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
            리뷰 노드에도 description 이라는 이름의 본문이 들어 있어서, 그냥 훑으면
            손님 리뷰가 소개글 자리에 들어온다. 실제로 그런 일이 있었다.
            기본 정보 노드를 찾았다면 소개글은 거기서만 가져온다. */
-        const baseNodes = scoped.filter(nd => !Array.isArray(nd) && nd.name
-                                              && (nd.category || nd.roadAddress || nd.address));
-        for (const b of baseNodes) harvest(b, TEXT_FROM_BASE, data);
+        /* 소개글 후보를 모아 두고, 어느 것을 쓸지는 전부 모은 뒤에 정한다 */
+        collectIntros(scoped, introCands);
 
         const noIntro = PLACE_FIELDS.filter(f => !TEXT_FROM_BASE.includes(f));
         for (const s of scoped) {
-          // 리뷰 노드에서는 글을 가져오지 않는다. 숫자는 그대로 쓴다.
-          harvest(s, isReviewNode(s) ? noIntro : PLACE_FIELDS, data);
+          harvest(s, noIntro, data);
           harvestPresence(s, noIntro, present);
         }
         const fields = noIntro;
@@ -841,6 +873,13 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
     }
   }
 
+  /* 후보 중 사장님이 쓴 글로 보이는 것을 고른다. 같은 글이 여러 번 나오므로 중복은 뺀다. */
+  const seenIntro = new Set();
+  const intros = introCands
+    .filter(c => !seenIntro.has(c.text) && seenIntro.add(c.text))
+    .sort((a, b) => b.score - a.score);
+  if (intros.length && intros[0].score > 0) data.description = intros[0].text;
+
   const found = Object.keys(data).length;
   if (found < 2) {
     return { ok: false, placeId: id, attempts,
@@ -858,6 +897,9 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
     numbers,
     links,
     foundBy,
+    // 어떤 후보들이 있었는지 보여준다. 고른 것이 틀렸으면 사장님이 바꿀 수 있어야 한다.
+    introCandidates: intros.slice(0, 4).map(c => ({ key: c.key, score: Math.round(c.score * 10) / 10,
+                                                    len: c.text.length, text: c.text })),
     judge: judgeItems(data, present, userType, {
       loose: looseCount, foundBy, links,
       reviews: listStats(jsons.filter((_, i) => /review/.test(sources[i]?.url || ''))) || listStats(jsons),

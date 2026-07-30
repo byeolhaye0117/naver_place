@@ -295,6 +295,35 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .jb.na{border-color:var(--line);background:var(--surface-3);color:var(--muted)}
 .jb.na b{color:var(--ink)}
 .jb.fill{border-color:var(--acc-line);background:var(--acc-bg);margin-top:14px}
+/* 수집한 값을 사장님이 눈으로 확인하고 넘어가는 단계.
+   틀린 값으로 채점하면 점수 전체가 거짓이 되므로, 진단 전에 한 번 본다. */
+.confirm{border:1px solid var(--acc-line);background:var(--acc-bg);border-radius:12px;padding:15px;margin-bottom:14px}
+.confirm h5{font-size:14px;font-weight:800;margin:0 0 3px}
+.confirm .cf-sub{font-size:12.5px;color:var(--muted);margin:0 0 11px}
+.cf-row{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--acc-line)}
+.cf-row:first-of-type{border-top:0}
+.cf-k{flex:none;width:82px;font-size:12.5px;font-weight:700;color:var(--muted);padding-top:1px}
+.cf-v{flex:1;font-size:13.5px;font-weight:600;word-break:break-all;line-height:1.55}
+.cf-v .cf-empty{color:var(--bad-fg);font-weight:800}
+.cf-edit{flex:none;font-size:11.5px;font-weight:700;color:var(--muted);background:var(--surface);
+  border:1px solid var(--line);border-radius:7px;padding:3px 9px;cursor:pointer}
+.cf-edit:hover{color:var(--ink);border-color:var(--muted)}
+.cf-pick{margin-top:7px;font-size:12.5px}
+.cf-pick label{display:flex;gap:7px;align-items:flex-start;padding:5px 0;cursor:pointer;font-weight:500}
+.cf-pick input{margin-top:3px;flex:none;accent-color:var(--accent)}
+.confirm .btn{width:100%;margin-top:12px}
+
+/* 수집 진행 표시 */
+.steps{list-style:none;margin:12px 0 0;padding:0}
+.steps li{display:flex;gap:9px;align-items:center;padding:6px 0;font-size:13px;color:var(--muted)}
+.steps li .dot{flex:none;width:17px;height:17px;border-radius:50%;border:2px solid var(--line)}
+.steps li.on{color:var(--ink);font-weight:700}
+.steps li.on .dot{border-color:var(--accent);border-top-color:transparent;animation:spin .7s linear infinite}
+.steps li.done{color:var(--ok-fg);font-weight:600}
+.steps li.done .dot{border-color:var(--ok-fg);background:var(--ok-fg);
+  box-shadow:inset 0 0 0 2px var(--surface),inset 0 0 0 3px var(--ok-fg)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
 .jb .man-note{margin:6px 0 8px;font-weight:600}
 .ttl-note{font-style:normal;font-size:11.5px;font-weight:700;color:var(--muted);
   background:var(--surface-3);border:1px solid var(--line);border-radius:6px;padding:2px 7px;margin-left:6px;vertical-align:middle}
@@ -1228,6 +1257,36 @@ document.addEventListener("change", e=>{
   if(real){ real.checked = box.checked; save(); }
 });
 
+/* 확인 화면에서 "수정" → 해당 칸을 펼치고 커서를 올려 준다 */
+document.addEventListener("click", e=>{
+  const b = e.target.closest(".cf-edit"); if(!b) return;
+  const el = $(b.dataset.edit); if(!el) return;
+  const sec = el.closest(".card");
+  if(sec?.classList.contains("folded")){
+    sec.classList.remove("folded");
+    const fb = sec.querySelector(".fold-btn"); if(fb) fb.textContent = "접기";
+  }
+  el.scrollIntoView({ behavior:"smooth", block:"center" });
+  setTimeout(()=>{ el.focus(); }, 350);
+});
+
+/* 소개글 후보 고르기 */
+document.addEventListener("change", e=>{
+  const r = e.target.closest("[data-intro]"); if(!r) return;
+  const c = (window.__introCands || [])[Number(r.dataset.intro)];
+  if(!c) return;
+  const el = $("i-intro");
+  el.value = c.text; el.dispatchEvent(new Event("input"));
+  save(); showToast();
+});
+
+/* 확인 화면의 진단 시작 */
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#btn-confirm-run")) return;
+  $("btn-run").click();
+  $("result")?.scrollIntoView({ behavior:"smooth", block:"start" });
+});
+
 /* 결과 화면에서 바로 진단 실행 */
 document.addEventListener("click", e=>{
   if(!e.target.closest("#btn-run-man") && !e.target.closest("#btn-run-na")) return;
@@ -1769,9 +1828,28 @@ $("s-collect")?.addEventListener("click", async ()=>{
   if(!url){ alert("플레이스 주소를 입력해 주세요."); return; }
   const btn = $("s-collect");
   btn.disabled = true; btn.textContent = "수집 중…";
+
+  /* 무엇을 하는 중인지 보여준다. 다만 끝나지 않은 단계를 끝난 것처럼 칠하지는 않는다 —
+     실제로 끝났는지는 응답이 와야 알 수 있으므로, 현재 단계만 돌아간다. */
+  const STEPS = [
+    ["플레이스 접속", "주소에서 가게 번호를 찾는 중"],
+    ["기본 정보 수집", "업체명·주소·소개글·시설"],
+    ["리뷰·사진 스캔", "리뷰 수·답글·최근 날짜"],
+    ["22개 항목 판정", "근거가 있는 것만 자동으로"],
+  ];
+  let stepAt = 0;
+  const drawSteps = () => { $("s-out").innerHTML = `<div class="srv-res"><h5>수집 중…</h5>
+    <ul class="steps">${STEPS.map(([t,d],i)=>
+      `<li class="${i<stepAt?"done":i===stepAt?"on":""}"><span class="dot"></span>
+         <span>${t}${i===stepAt?` <em style="font-style:normal;font-weight:500;color:var(--muted)">— ${d}</em>`:""}</span></li>`
+    ).join("")}</ul></div>`; };
+  drawSteps();
+  const stepTimer = setInterval(()=>{ if(stepAt < STEPS.length-1){ stepAt++; drawSteps(); } }, 1200);
+
   try{
     const res = await (await fetch(apiUrl(
       `/api/place?url=${encodeURIComponent(url)}&type=${encodeURIComponent($("i-type").value)}`))).json();
+    clearInterval(stepTimer);
     if(!res.ok){ $("s-out").innerHTML = srvError("플레이스 정보를 가져오지 못했습니다", res); return; }
 
     // 입력란을 최대한 채운다. 이미 손으로 넣은 값은 덮어쓰지 않는다.
@@ -1835,7 +1913,48 @@ $("s-collect")?.addEventListener("click", async ()=>{
     const judged = applyJudgement(res.judge || {});
     foldFilledInputs();   // 채워진 1·2단계는 접는다
 
-    $("s-out").innerHTML = `<div class="srv-res">
+    /* 이 정보 맞나요? — 채점에 쓰이는 값만 추려 눈으로 확인하고 넘어간다.
+       사진 14/19, 메뉴 19처럼 우리가 확신할 수 없던 값들이 바로 여기 걸린다. */
+    const cands = res.introCandidates || [];
+    /* 네이버가 같은 값을 여러 이름으로 준다. 확인 화면에서도 이름 하나만 보면 안 된다. */
+    const pickNum = (o, ...names) => { for(const n of names){ const v=Number(o[n]); if(isFinite(v)) return v; } return null; };
+    const cf = (k, v, target, warn) => `<div class="cf-row">
+      <span class="cf-k">${k}</span>
+      <span class="cf-v">${v || `<span class="cf-empty">${warn || "없음"}</span>`}</span>
+      ${target ? `<button type="button" class="cf-edit" data-edit="${target}">수정</button>` : ""}</div>`;
+
+    const introTxt = ($("i-intro").value || "").trim();
+    const confirmHtml = `<div class="confirm">
+      <h5>이 정보 맞나요?</h5>
+      <p class="cf-sub">네이버에서 가져온 값입니다. 틀린 값으로 채점하면 점수 전체가 틀어지니 한 번만 봐 주세요.</p>
+      ${cf("업체명", d.name, "i-name")}
+      ${cf("지역", $("i-area").value, "i-area")}
+      ${cf("소개글", introTxt ? `${introTxt.length}자 — ${introTxt.slice(0,60)}…` : "", "i-intro",
+           "소개글을 못 가져왔습니다")}
+      ${cands.length > 1 ? `<div class="cf-pick"><b style="font-size:12px">후보가 ${cands.length}개입니다 — 맞는 것을 고르세요</b>
+        ${cands.map((c,i)=>`<label><input type="radio" name="intropick" data-intro="${i}"${
+          c.text.trim()===introTxt?" checked":""}>
+          <span>${c.text.slice(0,70)}… <em style="font-style:normal;color:var(--muted)">(${c.len}자·${c.key})</em></span>
+        </label>`).join("")}</div>` : ""}
+      ${cf("사진 수", [d.totalImages, d.imageCount, d.photoTotal].filter(v=>v!=null).join(" / ")
+            + (d.totalImages != null || d.imageCount != null ? "장" : ""), null,
+           "사진 수를 못 가져왔습니다")}
+      ${cf("리뷰", [
+            pickNum(d,"visitorReviewCount","visitorReviewsTotal","visitorReviewTotal","totalReviewCount") != null
+              ? `방문자 ${pickNum(d,"visitorReviewCount","visitorReviewsTotal","visitorReviewTotal","totalReviewCount").toLocaleString()}` : "",
+            pickNum(d,"blogCafeReviewCount","cafeBlogReviewsTotal","blogCafeReviewTotal") != null
+              ? `블로그 ${pickNum(d,"blogCafeReviewCount","cafeBlogReviewsTotal","blogCafeReviewTotal")}` : "",
+            pickNum(d,"visitorReviewsScore","visitorReviewScore","avgRating") != null
+              ? `평점 ${pickNum(d,"visitorReviewsScore","visitorReviewScore","avgRating")}` : "",
+          ].filter(Boolean).join(" · "))}
+      ${cf("메뉴·가격", d.menus != null ? `${d.menus}개` : "")}
+      ${cf("대표키워드", $("i-repkw").value, "i-repkw", "관리자 화면에서 한 번만 넣어주세요")}
+      ${cf("목표 키워드", ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value).filter(Boolean).join(", "), "i-kw1")}
+      <button class="btn" type="button" id="btn-confirm-run">맞아요, 진단 시작 →</button>
+    </div>`;
+    window.__introCands = cands;
+
+    $("s-out").innerHTML = confirmHtml + `<div class="srv-res">
       <h5>수집 완료 — ${res.fields}개 항목 (플레이스 ID ${res.placeId})</h5>
       <dl class="kv-grid">${rows}</dl>
       ${filled.length ? `<div class="jb fill"><b>입력란 ${filled.length}곳 자동 입력</b>
@@ -1863,7 +1982,7 @@ $("s-collect")?.addEventListener("click", async ()=>{
     showToast(`입력 ${filled.length}곳 · 판정 ${judged.auto}개 자동 완료`);
   }catch(e){
     $("s-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
-  }finally{ btn.disabled=false; btn.textContent="정보 자동 수집"; }
+  }finally{ clearInterval(stepTimer); btn.disabled=false; btn.textContent="정보 자동 수집"; }
 });
 
 $("s-rank")?.addEventListener("click", async ()=>{
