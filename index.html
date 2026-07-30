@@ -1848,7 +1848,15 @@ $("s-collect")?.addEventListener("click", async ()=>{
                ${(dv.areas||[]).length>1 ? `지역 후보는 <b>${dv.areas.join(", ")}</b>입니다 —
                  손님이 실제로 검색하는 쪽(대개 가까운 역 이름)으로 바꾸면 더 정확합니다.` : ""}</p>`
             : ""}
-        ${dv.areaFrom ? `<p style="margin-top:6px">지역은 ${dv.areaFrom}에서 뽑았습니다.</p>` : ""}</div>` : ""}
+        ${dv.areaFrom ? `<p style="margin-top:6px">지역은 ${dv.areaFrom}에서 뽑았습니다.</p>` : ""}
+        ${!dv.repkw ? `<p style="margin-top:6px"><b>대표키워드는 가져오지 못했습니다.</b>
+          네이버가 공개하지 않는 관리자 전용 값이라 자동 수집이 불가능합니다.
+          비워 두면 <b>적합도에서 5점을 그냥 잃습니다.</b>
+          스마트플레이스 → 업체정보 → 대표키워드를 한 번만 복사해 2단계에 넣어 두시면
+          그다음부터는 저장돼 있습니다.</p>` : ""}
+        ${!d.description ? `<p style="margin-top:6px"><b>소개글이 비어 있습니다.</b>
+          네이버 업체정보에 상세설명이 등록되어 있지 않다는 뜻입니다.
+          적합도에서 가장 큰 항목이라 여기가 비면 순위를 밀어 올릴 수단이 없습니다.</p>` : ""}</div>` : ""}
       ${judged.html}
       ${missBlock}
     </div>`;

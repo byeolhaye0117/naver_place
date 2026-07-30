@@ -321,6 +321,9 @@ const CONCEPTS = {
    껍데기만 보고 "연결됨"이라 하면 사장님이 확인할 방법이 없다. */
 const LINK_FIELDS = ['homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials'];
 
+/* 업체 기본 정보 노드에서만 가져와야 하는 글. 다른 노드에도 같은 이름이 있다. */
+const TEXT_FROM_BASE = ['description', 'microReviews'];
+
 function findUrls(node, out = [], depth = 0) {
   if (!node || typeof node !== 'object' || depth > 6 || out.length > 5) return out;
   for (const v of Object.values(node)) {
@@ -380,10 +383,19 @@ function scopedNodes(node, placeId, out = [], depth = 0) {
     if (!v || typeof v !== 'object') continue;
     const byKey  = k.includes(placeId);
     const bySelf = !Array.isArray(v) && String(v.id ?? v.placeId ?? '') === placeId;
-    if (byKey || bySelf) out.push(v);
+    if (byKey || bySelf) { out.push(v); v.__key = k; }
     scopedNodes(v, placeId, out, depth + 1);
   }
   return out;
+}
+
+/* 리뷰 노드에도 description 이라는 이름의 본문이 들어 있다.
+   그대로 훑으면 손님 리뷰가 소개글 자리를 차지한다. 실제로 그런 일이 있었다. */
+function isReviewNode(nd) {
+  if (!nd || typeof nd !== 'object') return false;
+  if (/review|comment|reply|ugc/i.test(String(nd.__key || ''))) return true;
+  const dated = DATE_KEYS.some(k => nd[k] != null);
+  return dated && (nd.rating != null || nd.author != null || nd.authorName != null || nd.score != null);
 }
 
 /* harvest 는 스칼라와 배열만 담는다.
@@ -749,6 +761,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
   const foundBy = {};             // 이름이 아니라 뜻으로 찾은 항목 (target → 실제 키 이름)
   const numbers = {};             // 가게 노드 안의 숫자 전부 — 못 찾은 값을 추적할 단서
   const links = {};               // 링크 필드 아래에 실제로 있는 주소
+  let baseHasIntro = false;       // 업체 기본 정보 노드에서 소개글 자리를 확인했는가
   const jsons = [];
   const sources = [];
 
@@ -767,13 +780,24 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
          가게 노드를 못 찾았을 때만 트리 전체를 훑는다 (없는 것보단 낫다). */
       const scoped = scopedNodes(json, id);
       if (scoped.length) {
+        /* 소개글은 업체 기본 정보 노드(업체명·카테고리가 같이 있는 곳)에만 있다.
+           리뷰 노드에도 description 이라는 이름의 본문이 들어 있어서, 그냥 훑으면
+           손님 리뷰가 소개글 자리에 들어온다. 실제로 그런 일이 있었다.
+           기본 정보 노드를 찾았다면 소개글은 거기서만 가져온다. */
+        const baseNodes = scoped.filter(nd => !Array.isArray(nd) && nd.name
+                                              && (nd.category || nd.roadAddress || nd.address));
+        for (const b of baseNodes) harvest(b, TEXT_FROM_BASE, data);
+
+        const noIntro = PLACE_FIELDS.filter(f => !TEXT_FROM_BASE.includes(f));
         for (const s of scoped) {
-          harvest(s, PLACE_FIELDS, data);
-          harvestPresence(s, PLACE_FIELDS, present);
+          // 리뷰 노드에서는 글을 가져오지 않는다. 숫자는 그대로 쓴다.
+          harvest(s, isReviewNode(s) ? noIntro : PLACE_FIELDS, data);
+          harvestPresence(s, noIntro, present);
         }
+        const fields = noIntro;
         /* 가게 노드에 없는 값은 바깥에서 보충한다. 버리면 진짜 값까지 잃는다.
            다만 개수 항목을 바깥에서 주웠다는 사실은 기억해 두고 근거에 밝힌다. */
-        const loose = harvest(json, PLACE_FIELDS, {});
+        const loose = harvest(json, fields, {});
         for (const [k, v] of Object.entries(loose)) {
           if (isEmptyVal(v) || !isEmptyVal(data[k])) continue;
           data[k] = v;
