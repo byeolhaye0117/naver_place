@@ -243,6 +243,12 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .srv-res{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:15px;background:var(--surface-2)}
 .srv-res h5{font-size:13.5px;font-weight:800;margin:0 0 10px}
 /* 저장 내역 */
+.mb-row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.mb-txt{flex:1;min-width:0;font-size:14px}
+.mb-txt b{display:block}
+.mb-txt span{display:block;font-size:12.5px;color:var(--muted);margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#manual-bar .btn:last-child{width:100%;margin-top:12px}
 .saves-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .saves-top b{font-size:13.5px}
 .saves-list{margin-top:11px;display:grid;gap:8px}
@@ -530,6 +536,16 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <div id="p-out"></div>
   </section>
 
+  <!-- 자동 수집이 되면 1·2·3 은 손댈 일이 없다. 한 줄로 접어 두고 필요할 때만 편다. -->
+  <div id="manual-bar" class="card" style="display:none">
+    <div class="mb-row">
+      <div class="mb-txt"><b>입력은 다 끝났습니다</b><span id="mb-sum"></span></div>
+      <button class="btn ghost sm" type="button" id="btn-manual-open">값 보기·고치기</button>
+    </div>
+    <button class="btn" type="button" id="btn-bar-run">진단 실행 →</button>
+  </div>
+
+  <div id="manual-wrap">
   <!-- STEP 1 -->
   <section class="card" id="sec1">
     <h2><span class="step-no">1</span> 플레이스 정보 <em class="ttl-note">전부 자동</em></h2>
@@ -608,6 +624,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <button class="btn ghost" id="btn-reset" type="button">체크 해제</button>
     </div>
   </section>
+  </div><!-- /manual-wrap -->
 
   <!-- 기기 간 이어쓰기 -->
   <section class="card" id="xfer">
@@ -1432,6 +1449,7 @@ document.addEventListener("change", e=>{
 document.addEventListener("click", e=>{
   const b = e.target.closest(".cf-edit"); if(!b) return;
   const el = $(b.dataset.edit); if(!el) return;
+  if($("manual-wrap")?.style.display === "none") openManual();
   const sec = el.closest(".card");
   if(sec?.classList.contains("folded")){
     sec.classList.remove("folded");
@@ -1461,6 +1479,7 @@ document.addEventListener("click", e=>{
 /* 결과 화면에서 바로 진단 실행 */
 document.addEventListener("click", e=>{
   if(!e.target.closest("#btn-run-man") && !e.target.closest("#btn-run-na")) return;
+  // 3단계가 감춰져 있어도 진단은 그대로 돌아간다 (체크는 결과 안에서 했다)
   $("btn-run").click();
   $("result")?.scrollIntoView({ behavior:"smooth", block:"start" });
 });
@@ -2100,6 +2119,32 @@ function foldSection(id, summary){
   h2.querySelector(".fold-btn").textContent = "펼치기";
 }
 
+/* 자동 수집이 끝나면 1·2·3 은 손댈 일이 없다. 통째로 감추고 한 줄만 남긴다.
+   지우지는 않는다 — 값을 고칠 때와, 서버 없이 휴대폰만 쓸 때는 그 칸이 유일한 입력 경로다. */
+function collapseManual(){
+  const wrap = $("manual-wrap"), bar = $("manual-bar");
+  if(!wrap || !bar) return;
+  const intro = ($("i-intro").value || "").trim();
+  const kw = ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value.trim()).filter(Boolean);
+  const fac = document.querySelectorAll("[data-fac]:checked").length;
+  $("mb-sum").textContent =
+    [$("i-name").value.trim(), $("i-area").value.trim(),
+     intro ? `소개글 ${intro.length}자` : "소개글 없음",
+     `키워드 ${kw.length}개`, fac ? `시설 ${fac}개` : ""].filter(Boolean).join(" · ");
+  wrap.style.display = "none";
+  bar.style.display = "block";
+}
+function openManual(){
+  $("manual-wrap").style.display = "block";
+  $("manual-bar").style.display = "none";
+  $("sec1")?.scrollIntoView({ behavior:"smooth", block:"start" });
+}
+$("btn-manual-open")?.addEventListener("click", openManual);
+$("btn-bar-run")?.addEventListener("click", ()=>{
+  $("btn-run").click();
+  $("result")?.scrollIntoView({ behavior:"smooth", block:"start" });
+});
+
 /* 채워진 칸만 접는다. 비어 있는 칸을 접으면 사장님이 넣을 곳을 못 찾는다.
    요약은 값이 아니라 "왜 이 칸이 있는지"를 먼저 말한다. 값만 보여주면
    자동으로 채워진 것인지, 내가 채워야 하는 것인지 구분이 안 된다. */
@@ -2230,6 +2275,16 @@ $("s-collect")?.addEventListener("click", async ()=>{
       $("i-type").value = dv.type; filled.push("주력 업종");
     }
 
+    /* 보유 시설도 네이버 편의시설에서 켠다. 마지막 남은 손 입력이었다.
+       이미 손으로 켜 둔 것은 끄지 않는다 — 네이버에 안 적힌 시설도 있다. */
+    if((dv.facilities||[]).length){
+      let on = 0;
+      document.querySelectorAll("[data-fac]").forEach(el=>{
+        if(dv.facilities.includes(el.value) && !el.checked){ el.checked = true; on++; }
+      });
+      if(on) filled.push(`보유 시설 ${on}개`);
+    }
+
     // 목표 키워드는 플레이스에 없는 값(사장님의 목표)이라 가져올 수 없다.
     // 대신 지역·업종으로 흔히 쓰는 조합을 제안해 넣어둔다. 고쳐 쓰면 된다.
     let suggested = "";
@@ -2269,7 +2324,8 @@ $("s-collect")?.addEventListener("click", async ()=>{
 
     // 자동 판정 적용 — 근거가 있는 항목만 체크하고, 어떤 근거인지 화면에 남긴다
     const judged = applyJudgement(res.judge || {});
-    foldFilledInputs();   // 채워진 1·2단계는 접는다
+    foldFilledInputs();   // 안쪽 카드도 접어 둔다 (펼쳤을 때를 위해)
+    collapseManual();     // 1·2·3 을 통째로 감추고 한 줄만 남긴다
 
     /* 이 정보 맞나요? — 채점에 쓰이는 값만 추려 눈으로 확인하고 넘어간다.
        사진 14/19, 메뉴 19처럼 우리가 확신할 수 없던 값들이 바로 여기 걸린다. */

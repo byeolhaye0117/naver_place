@@ -538,6 +538,23 @@ function keywordsFromIntro(text, hints) {
   return best || [];
 }
 
+/* 화면의 시설 항목 ← 네이버 편의시설 표기.
+   같은 뜻인데 말이 다르다 (주차 가능 / 무료주차, 락커 / 사물함). */
+const FACILITY_MAP = [
+  ['주차 가능',    ['주차']],
+  ['샤워실',      ['샤워']],
+  ['락커',        ['락커', '라커', '사물함']],
+  ['운동복 대여',  ['운동복', '운동화', '대여']],
+  ['사우나',      ['사우나', '찜질']],
+  ['24시간 운영',  ['24시', '24시간', '연중무휴']],
+  ['여성 전용존',  ['여성', '여성전용']],
+  ['GX 프로그램',  ['GX', '그룹운동', '단체']],
+  ['PT 상담 무료', ['무료상담', '상담무료', '무료 상담']],
+  ['인바디 측정',  ['인바디', '체성분']],
+  ['무인 출입',    ['무인', '키오스크']],
+  ['단백질바',    ['단백질', '헬스보충', '카페']],
+];
+
 function deriveInputs(data, jsons) {
   const all = Array.isArray(jsons) ? jsons : [jsons];
   const pick = (...names) => {
@@ -562,8 +579,18 @@ function deriveInputs(data, jsons) {
     : keywordsFromIntro(data.description, [...areas, '헬스', 'PT', 'pt', '피트니스', '짐']);
   const repList = kwList.length ? kwList : fromIntro;
 
+  /* 편의시설은 개수만 세고 이름은 버리고 있었다. 이름이 있으면 화면의 시설 체크를
+     사람이 누를 필요가 없다. 네이버 표기와 우리 항목 이름이 조금씩 다르므로 뜻으로 잇는다. */
+  const convRaw = pick('conveniences', 'amenities', 'facilities', 'options', 'conveniencesInfo')
+    .map(v => String(v?.name ?? v ?? '').trim()).filter(Boolean);
+  const facilities = FACILITY_MAP
+    .filter(([ours, res]) => convRaw.some(c => res.some(w => c.includes(w))))
+    .map(([ours]) => ours);
+
   return {
     areas,
+    facilities,
+    conveniences: convRaw.slice(0, 30),
     area:  areas[0] || '',
     repkwFrom: kwList.length ? '등록값' : (fromIntro.length ? '소개글' : ''),
     areaFrom: station ? '대표키워드' : (fromAddr.length ? '주소' : ''),
