@@ -433,9 +433,10 @@ function areaCandidates(addr) {
     // "서울특별시" → "서울특별" 같은 광역자치단체 조각은 검색어로 못 쓴다
     if (/(특별|광역|자치)$/.test(m[1])) continue;
     const rank = { '동': 0, '읍': 0, '면': 0, '구': 1, '시': 2, '군': 2 }[m[2]];
-    out.push({ name: m[1], rank });
+    // 동은 붙여 써야 검색어가 된다 (쌍용동 헬스장). 구·시는 떼는 쪽이 자연스럽다 (천안 헬스장).
+    out.push({ name: rank === 0 ? tok : m[1], rank });
   }
-  return out.sort((a, b) => a.rank - b.rank).map(x => x.name);
+  return [...new Set(out.sort((a, b) => a.rank - b.rank).map(x => x.name))];
 }
 
 function guessType(category) {
@@ -468,7 +469,9 @@ function deriveInputs(data, jsons) {
   const kwList = pick('keywords')
     .map(k => String(k?.name ?? k).trim()).filter(Boolean);
   const menus  = pick('menus', 'menuInfo');
-  const fromAddr = areaCandidates(data.roadAddress || data.address);
+  /* 도로명 주소에는 동이 없는 경우가 많다 ("천안시 서북구 미란7길 26").
+     지번 주소를 같이 봐야 쌍용동이 나온다. 손님은 구가 아니라 동으로 검색한다. */
+  const fromAddr = areaCandidates([data.roadAddress, data.address].filter(Boolean).join(' '));
 
   // 이미 등록해 둔 대표키워드가 가장 강한 신호다.
   // 주소는 "어디에 있는가"일 뿐이고, 대표키워드는 "어디로 검색되고 싶은가"다.

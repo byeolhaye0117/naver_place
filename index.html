@@ -1629,6 +1629,9 @@ function apiUrl(pathAndQuery){
     SERVER = await r.json();
     $("srv").style.display = "block";
     $("srv-off").style.display = "none";
+    /* 붙여넣기는 서버가 없을 때의 대체 수단이다.
+       서버가 켜져 있으면 할 일이 아니라 선택지로만 남겨 둔다. */
+    foldSection("paste", "서버가 켜져 있어 필요 없습니다 (폰 단독으로 쓸 때만)");
     if(SERVER.ai) $("srv-badge").textContent = "서버 연결됨 · AI 프록시 사용 가능";
     if(SERVER.lanUrl && /^(localhost|127\.0\.0\.1)$/.test(h)){
       $("lan-row").style.display = "block";
