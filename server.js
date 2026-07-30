@@ -57,7 +57,16 @@ function accessKey() {
 }
 const KEY = accessKey();
 
+/* 렌더 같은 호스팅은 프록시가 컨테이너 안쪽 127.0.0.1 로 붙는다.
+   그래서 socket 주소만 보면 인터넷에서 온 요청까지 "이 PC"로 보이고,
+   접근 키 검사가 통째로 무력해진다 — 서버가 통째로 열린다.
+   프록시를 거친 흔적(x-forwarded-for)이 있으면 무조건 외부로 본다. */
 function isLocal(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) {
+    const first = String(fwd).split(',')[0].trim();
+    return first === '127.0.0.1' || first === '::1' || first === '::ffff:127.0.0.1';
+  }
   const a = req.socket.remoteAddress || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
@@ -1525,7 +1534,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true, version: 2, built,
         ai: Boolean(process.env.ANTHROPIC_API_KEY),
-        lanUrl: ip ? `http://${ip}:${PORT}/#k=${KEY}` : null,
+        /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —
+           키를 알려주면 키를 두는 의미가 없다. 이 PC 화면에서만 보인다. */
+        lanUrl: (ip && isLocal(req)) ? `http://${ip}:${PORT}/#k=${KEY}` : null,
       });
     }
 
