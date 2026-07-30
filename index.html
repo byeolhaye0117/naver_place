@@ -111,6 +111,32 @@ input,select,textarea{font:inherit;color:inherit}
 .pill b{display:block;font-size:14px;font-weight:700}
 .pill small{font-size:11.5px;color:#a9b5c6;line-height:1.5;display:block;margin-top:3px}
 
+/* 메뉴 — 진단 / 채우기. 쓰는 시점이 다르므로 한 번에 하나만 보여준다. */
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px;
+  position:sticky;top:0;z-index:40;padding:10px 0;
+  background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(10px)}
+.tab{position:relative;appearance:none;cursor:pointer;text-align:left;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 14px;
+  color:var(--muted);font:inherit;transition:.15s}
+.tab b{display:block;font-size:15.5px;font-weight:800;color:var(--ink)}
+.tab small{display:block;font-size:11.5px;margin-top:2px;line-height:1.4}
+.tab:hover{border-color:color-mix(in srgb,var(--navy) 30%,var(--line))}
+.tab.on{background:var(--navy);border-color:var(--navy);color:#c3ccda;
+  box-shadow:0 6px 18px color-mix(in srgb,var(--navy) 22%,transparent)}
+.tab.on b{color:#fff}
+.tab-dot{display:none;position:absolute;top:8px;right:9px;width:8px;height:8px;border-radius:50%;
+  background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.tab-dot.on{display:block}
+.gonext,.need-diag{text-align:center}
+.gonext b,.need-diag b{display:block;font-size:16.5px;font-weight:800}
+.gonext p,.need-diag p{margin:7px 0 14px;color:var(--muted);font-size:13.5px;line-height:1.65}
+.gonext .btn,.need-diag .btn{width:auto;padding:12px 22px}
+@media (max-width:400px){
+  .tab{padding:10px 11px}
+  .tab b{font-size:14px}
+  .tab small{font-size:10.5px}
+}
+
 /* 카드 */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
   box-shadow:var(--shadow);padding:24px;margin-top:18px}
@@ -510,6 +536,16 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
 <main class="wrap">
 
+  <!-- 두 페이지 — 진단은 "지금 뭐가 비었나", 도구는 "그 빈칸을 뭘로 채우나" -->
+  <nav class="tabs" id="tabs" role="tablist">
+    <button type="button" class="tab on" id="tab-diag" role="tab" aria-selected="true" aria-controls="view-diag">
+      <b>🔍 진단</b><small>뭐가 비었나 찾기</small></button>
+    <button type="button" class="tab" id="tab-tools" role="tab" aria-selected="false" aria-controls="view-tools">
+      <b>✍️ 채우기</b><small>빈칸 채울 문장 만들기</small><i class="tab-dot" id="tab-dot"></i></button>
+  </nav>
+
+  <div class="view" id="view-diag" role="tabpanel" aria-labelledby="tab-diag">
+
   <!-- 서버 연동 (로컬 서버 실행 중일 때만 표시) -->
   <section class="card" id="srv" style="display:none">
     <h2>🔗 자동 수집 · 순위 추적 <span id="srv-badge" class="srv-badge">서버 연결됨</span></h2>
@@ -754,6 +790,24 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     </div>
   </section>
 
+  <!-- 진단이 끝나면 채우기로 넘어가는 문 -->
+  <div class="card gonext" id="gonext" style="display:none">
+    <b>진단 끝났습니다. 이제 채울 차례입니다.</b>
+    <p>부족하다고 나온 항목에 맞춰 소개글·키워드·답글·소식 글감을 바로 만들어 드립니다.</p>
+    <button class="btn" type="button" id="btn-gotools">✍️ 채우기 도구로 →</button>
+  </div>
+
+  </div><!-- /view-diag -->
+
+  <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" style="display:none">
+
+  <!-- 진단을 아직 안 돌렸을 때 -->
+  <div class="card need-diag" id="need-diag" style="display:none">
+    <b>먼저 진단을 한 번 돌려주세요.</b>
+    <p>업체명·지역·키워드·시설을 진단에서 읽어와 문장에 넣습니다. 진단 없이 만들면 빈칸투성이 문장이 나옵니다.</p>
+    <button class="btn ghost" type="button" id="btn-godiag">🔍 진단으로 →</button>
+  </div>
+
   <!-- 문장 생성 -->
   <section id="writer">
     <div class="card">
@@ -813,6 +867,8 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       </div>
     </div>
   </section>
+
+  </div><!-- /view-tools -->
 
 </main>
 
@@ -959,6 +1015,36 @@ const ITEMS = [
    ============================================================ */
 const $ = id => document.getElementById(id);
 const norm = s => (s||"").replace(/\s+/g,"").toLowerCase();
+
+/* ============================================================
+   메뉴 — 진단 / 채우기
+   진단은 "뭐가 비었나", 채우기는 "그 빈칸에 넣을 문장". 쓰는 시점이 다르니
+   한 번에 하나만 보여주고, 마지막에 본 쪽을 기억한다.
+   ============================================================ */
+const VIEW_KEY = "np_view_v1";
+let VIEW = "diag";
+function showView(name, opts){
+  VIEW = (name === "tools") ? "tools" : "diag";
+  const diag = VIEW === "diag";
+  $("view-diag").style.display  = diag ? "" : "none";
+  $("view-tools").style.display = diag ? "none" : "";
+  $("tab-diag").classList.toggle("on", diag);
+  $("tab-tools").classList.toggle("on", !diag);
+  $("tab-diag").setAttribute("aria-selected", String(diag));
+  $("tab-tools").setAttribute("aria-selected", String(!diag));
+  try{ localStorage.setItem(VIEW_KEY, VIEW); }catch{}
+  /* 도구 쪽은 진단값을 먹고 산다. 아직 진단을 안 돌렸으면 문장 대신 안내를 보여준다. */
+  const ran = $("writer") && $("writer").style.display === "block";
+  if($("need-diag")) $("need-diag").style.display = (!diag && !ran) ? "" : "none";
+  if(!diag) $("tab-dot").classList.remove("on");
+  if(!opts || !opts.keepScroll) window.scrollTo({top:0, behavior:"smooth"});
+}
+$("tab-diag").addEventListener("click", ()=>showView("diag"));
+$("tab-tools").addEventListener("click", ()=>showView("tools"));
+$("btn-gotools")?.addEventListener("click", ()=>showView("tools"));
+$("btn-godiag")?.addEventListener("click", ()=>showView("diag"));
+try{ showView(localStorage.getItem(VIEW_KEY) || "diag", {keepScroll:true}); }
+catch{ showView("diag", {keepScroll:true}); }
 
 const EN_BATCHIM = new Set(["l","m","n","r","f","h","s","x"]);
 function hasBatchim(word){
@@ -1297,12 +1383,18 @@ $("btn-run").addEventListener("click", ()=>{
   renderPrompt();
   renderWorklog();
   ["result","writer"].forEach(id=>$(id).style.display="block");
+  /* 진단이 끝나면 채우기 쪽에 할 일이 생겼다는 표시를 남긴다 */
+  $("gonext").style.display = "";
+  if(VIEW === "diag") $("tab-dot").classList.add("on");
+  if($("need-diag")) $("need-diag").style.display = "none";
   $("result").scrollIntoView({behavior:"smooth", block:"start"});
 });
 
 $("btn-reset").addEventListener("click", ()=>{
   document.querySelectorAll("[data-item]:checked").forEach(e=>e.checked=false);
   ["result","writer"].forEach(id=>$(id).style.display="none");
+  $("gonext").style.display = "none";
+  $("tab-dot").classList.remove("on");
   save();
   window.scrollTo({top:0, behavior:"smooth"});
 });
