@@ -391,6 +391,25 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .audit-row span{display:block;color:var(--muted);font-size:11.5px;margin-top:1px;overflow-wrap:anywhere}
 .audit-row.no b{color:var(--acc-fg)}
 
+/* 키워드 발굴 */
+.kwf-row{display:grid;gap:12px;margin-top:16px}
+@media(min-width:620px){.kwf-row{grid-template-columns:2fr 1fr}}
+.kwf-cand{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.kwf-cand span{font-size:12.5px;padding:5px 11px;border-radius:8px;border:1px solid var(--line);
+  background:var(--surface-2);cursor:pointer;user-select:none}
+.kwf-cand span.off{opacity:.4;text-decoration:line-through}
+.kwf-cand .kwf-none{border:0;background:none;color:var(--muted);cursor:default}
+table.kwf{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:14px}
+table.kwf th,table.kwf td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}
+table.kwf thead th{font-size:12px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line)}
+table.kwf td.r{text-align:right;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+table.kwf td .v{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:6px;white-space:nowrap}
+.v.now{background:var(--ok-bg);color:var(--ok-fg)}
+.v.soon{background:var(--acc-bg);color:var(--acc-fg)}
+.v.later{background:var(--track);color:var(--muted)}
+.kwf-note{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.75}
+.kwf-use{margin-top:12px}
+
 /* 출력 박스 */
 .out{margin-top:16px}
 .out h4{font-size:14px;font-weight:800;margin:0 0 8px;display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -978,6 +997,28 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <button class="btn ghost" type="button" id="btn-godiag">🔍 진단으로 →</button>
   </div>
 
+  <!-- 키워드 발굴 — 무엇을 노릴지부터 정한다 -->
+  <section class="card" id="kwfind">
+    <h2><span class="ic">🎯</span> 키워드 발굴 <em class="ttl-note">실제 내 순위로 판정</em></h2>
+    <p class="desc">
+      순위는 계단입니다. 경쟁 심한 키워드에 바로 달려들면 점수 쌓일 발판이 없습니다.
+      <b>지금 우리가 이미 30위 안에 들어 있는 키워드</b>부터 1페이지로 올리는 편이 빠릅니다.
+      아래는 지역과 업종을 조합해 후보를 만들고, <b>각각 우리가 몇 위인지 실제로 조회</b>합니다.
+    </p>
+    <div class="kwf-row">
+      <label class="f"><span>지역 (쉼표로 여러 개)</span>
+        <input id="kf-area" type="text" placeholder="예) 쌍용동, 봉명동"></label>
+      <label class="f"><span>조회할 개수</span>
+        <select id="kf-n"><option value="8">8개 (약 1분)</option><option value="12" selected>12개 (약 2분)</option></select></label>
+    </div>
+    <div id="kf-cand" class="kwf-cand"></div>
+    <div class="btn-row">
+      <button class="btn ghost" id="kf-make" type="button">후보 만들기</button>
+      <button class="btn" id="kf-rank" type="button">순위 일괄 조회</button>
+    </div>
+    <div id="kf-out"></div>
+  </section>
+
   <!-- 문장 생성 -->
   <section id="writer">
     <div class="card">
@@ -989,8 +1030,9 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
           손님의 고민 → 미루면 생기는 손해 → 해결책(망설임 5가지) → <b>실제 리뷰 인용</b>
           → 방문 유도 → <b>찾아오는 길(역·정류장 자동)</b> → 영업정보.
           체크 안 한 시설은 한 글자도 쓰지 않습니다.</p>
-        <label class="f" style="margin:0 0 10px"><span>이 글을 읽을 손님 (첫 줄이 바뀝니다)</span>
+        <label class="f" style="margin:0 0 4px"><span>이 글을 읽을 손님 (첫 줄이 바뀝니다)</span>
           <select id="w-persona"></select></label>
+        <p class="hint" id="w-persona-why" style="margin:0 0 10px"></p>
         <div class="box" id="o-intro"><button class="btn sm ghost copy" data-t="o-intro">복사</button></div>
         <div class="audit" id="intro-audit"></div>
         <div class="cw" id="char-warn" style="display:none"></div></div>
@@ -1757,13 +1799,34 @@ const PERSONAS = {
     hook:"기구 앞에서 뻘쭘하셨나요",
     pain:"기구를 어떻게 쓰는지 몰라서 결국 러닝머신만 30분 뛰다 나옵니다. 그러니 몸이 바뀔 리가 없습니다.",
     need:o=>o.fac.includes("PT 상담 무료")||o.fac.includes("인바디 측정") },
+  price:{ label:"가격부터 따져보는 분",
+    hook:"가격이 얼마인지부터 궁금하시죠",
+    pain:"헬스장마다 가격을 안 밝혀 두니 전화해서 물어보는 것부터가 일입니다. 등록하고 나서 안 맞으면 돈이 아까워 더 망설이게 됩니다.",
+    need:o=>Boolean(o.price) },
   base: { label:"운동을 다시 시작하려는 분",
     hook:"올해도 미루고 계신가요",
     pain:"작년에도 같은 생각을 하셨을 겁니다. 등록은 해야겠는데 어디로 갈지 정하는 것부터가 일입니다.",
     need:()=>true },
 };
-const PERSONA_ORDER = ["late","shift","woman","rookie","base"];
-function autoPersona(o){ return PERSONA_ORDER.find(k=>PERSONAS[k].need(o)) || "base"; }
+const PERSONA_ORDER = ["price","late","shift","woman","rookie","base"];
+
+/* 손님이 리뷰에 실제로 쓴 말 → 페르소나.
+   시설만 보고 고르면 "우리가 자랑하고 싶은 것"이 기준이 된다.
+   리뷰를 보고 고르면 "손님이 실제로 신경 쓰는 것"이 기준이 된다. */
+const VOICE_TO_PERSONA = {
+  "가격":"price", "시간대":"late", "혼자 조용히":"woman",
+  "처음 시작":"rookie", "PT·지도":"rookie",
+};
+function personaEvidence(){
+  const v = (window.__place?.material?.voice || []).filter(x=>VOICE_TO_PERSONA[x.label]);
+  return v[0] || null;
+}
+function autoPersona(o){
+  const ev = personaEvidence();
+  const byVoice = ev && VOICE_TO_PERSONA[ev.label];
+  if(byVoice && PERSONAS[byVoice]) return byVoice;
+  return PERSONA_ORDER.find(k=>PERSONAS[k].need(o)) || "base";
+}
 function currentPersona(o){
   const sel = $("w-persona")?.value;
   return (sel && PERSONAS[sel]) ? sel : autoPersona(o);
@@ -2006,20 +2069,77 @@ function buildKeywords(o){
     + `\n※ 2주 뒤 '내 업체 검색 유입 키워드'에서 실제 유입이 잡히는지 확인하고, 안 잡히는 건 교체하세요.`;
 }
 
+/* ── 리뷰 답글 ─────────────────────────────────────────────
+   답글은 리뷰 쓴 손님에게만 하는 말이 아니다. 그 답글을 읽는 다음 손님이
+   "아 여기는 이런 곳이구나" 하고 알게 만드는 자리다. 그래서 세 가지를 담는다.
+     감사 + 매장 강점 한 가지 + 다시 오실 이유
+   수집한 실제 리뷰가 있으면 그 리뷰에 맞춰 만든다. 없으면 별점대별 견본을 준다.
+   ───────────────────────────────────────────────────────── */
+
+/* 리뷰가 무엇을 말하는지 골라, 거기에 얹을 우리 강점을 정한다 */
+const REPLY_TOPIC = [
+  { key:"price", hit:["가격","저렴","합리","가성비","비용","만원"],
+    line:o=>o.price ? `가격은 앞으로도 올리지 않고 ${o.price} 기준을 지키겠습니다.`
+                    : `가격은 앞으로도 부담스럽지 않게 유지하겠습니다.` },
+  { key:"clean", hit:["깨끗","청결","쾌적","넓","시설"],
+    line:()=>`기구 점검과 청소는 매일 하고 있습니다. 눈에 걸리는 곳 있으면 바로 말씀해 주세요.` },
+  { key:"kind",  hit:["친절","상담","설명","알려주"],
+    line:()=>`처음 오시는 분께 기구 사용법을 알려드리는 건 저희가 당연히 할 일이라 생각합니다.` },
+  { key:"alone", hit:["혼자","조용","눈치","시선","집중"],
+    line:o=>o.fac.includes("여성 전용존")
+      ? `혼자 오시는 분이 많아서 여성 전용존도 따로 두었습니다.`
+      : `혼자 오셔서 조용히 하시는 분이 많습니다. 그 분위기는 계속 지키겠습니다.` },
+  { key:"time",  hit:["새벽","야간","밤","24시","아침","퇴근","교대"],
+    line:o=>o.fac.includes("24시간 운영")
+      ? `24시간 열어 두니 근무 시간이 바뀌셔도 편한 때 오세요.`
+      : `오시기 편한 시간대에 맞춰 이용해 주세요.` },
+  { key:"pt",    hit:["PT","피티","트레이너","선생님","코치","자세"],
+    line:()=>`자세는 계속 봐 드리겠습니다. 무게보다 자세가 먼저입니다.` },
+  { key:"start", hit:["처음","초보","입문","시작"],
+    line:()=>`처음 두세 달이 제일 어렵습니다. 그 구간만 넘기시면 훨씬 수월해집니다.` },
+];
+
+function replyFor(review, o){
+  const N = o.name;
+  const t = REPLY_TOPIC.find(x => x.hit.some(w => review.includes(w))) || REPLY_TOPIC[1];
+  const q = review.length > 40 ? review.slice(0, 38) + "..." : review;
+  return { quote:q, text:
+    `안녕하세요, ${N}입니다. 시간 내어 후기 남겨주셔서 감사합니다. `
+    + `${t.line(o)} `
+    + `운동하시다 필요한 기구나 불편한 점 있으시면 데스크로 편하게 말씀해 주세요. 다음에 뵙겠습니다.` };
+}
+
 function buildReplies(o){
-  const N=o.name;
+  const N = o.name;
+  const revs = (window.__place?.material?.reviews || []).slice(0, 3);
+
+  if(revs.length){
+    const made = revs.map((r,i)=>{
+      const { quote, text } = replyFor(r, o);
+      return `[${i+1}] 실제 리뷰 - ${quote}\n답글: ${text}`;
+    }).join("\n\n");
+    return `${made}
+
+[별 1~2개 리뷰가 달렸을 때]
+안녕하세요, ${N} 대표입니다. 불편을 드려 죄송합니다. 말씀해 주신 내용은 저희가 놓치고 있던 부분이 맞습니다. 바로 확인해서 고치겠습니다. 괜찮으시면 데스크로 한 번 연락 주시면 직접 설명드리고 조치해 드리겠습니다.
+
+* 위 답글은 수집한 실제 리뷰에 맞춰 만들었습니다. 그대로 쓰지 마시고 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
+* 답글은 리뷰 쓴 손님보다 그 답글을 읽는 다음 손님을 위한 것입니다. 우리 강점이 한 가지는 들어가야 합니다.
+* 불만 리뷰일수록 빨리, 정중하게. 다른 예비 회원이 그 답글을 보고 판단합니다.`;
+  }
+
   const fac = o.fac.length ? `${o.fac[0]} 등 시설` : "시설";
-  return `━ 좋은 리뷰 (별 4~5개) ━
-안녕하세요, ${N}입니다. 운동 잘하고 계신다니 저희도 기분이 좋습니다. 말씀해 주신 ${fac} 부분은 앞으로도 신경 써서 관리하겠습니다. 운동하시다 불편한 점이나 필요한 기구가 있으면 언제든 편하게 말씀해 주세요. 다음에 뵙겠습니다.
+  return `[별 4~5개]
+안녕하세요, ${N}입니다. 운동 잘하고 계신다니 저희도 기분이 좋습니다. 말씀해 주신 ${fac} 부분은 앞으로도 신경 써서 관리하겠습니다. 필요한 기구가 있으면 언제든 편하게 말씀해 주세요. 다음에 뵙겠습니다.
 
-━ 보통 리뷰 (별 3개) ━
-안녕하세요, ${N}입니다. 시간 내어 후기 남겨주셔서 감사합니다. 아쉬우셨던 부분 저희도 다시 확인해 보겠습니다. 혹시 구체적으로 불편하셨던 점이 있다면 데스크나 전화로 말씀해 주시면 바로 반영하겠습니다. 더 나은 환경으로 보답하겠습니다.
+[별 3개]
+안녕하세요, ${N}입니다. 시간 내어 후기 남겨주셔서 감사합니다. 아쉬우셨던 부분 저희도 다시 확인해 보겠습니다. 구체적으로 불편하셨던 점이 있다면 데스크나 전화로 말씀해 주시면 바로 반영하겠습니다.
 
-━ 불만 리뷰 (별 1~2개) ━
-안녕하세요, ${N} 대표입니다. 불편을 드려 죄송합니다. 말씀해 주신 내용은 저희가 놓치고 있던 부분이 맞습니다. 바로 확인해서 개선하겠습니다. 괜찮으시다면 데스크로 한 번 연락 주시면 직접 설명드리고 조치해 드리겠습니다. 다시 한번 죄송합니다.
+[별 1~2개]
+안녕하세요, ${N} 대표입니다. 불편을 드려 죄송합니다. 말씀해 주신 내용은 저희가 놓치고 있던 부분이 맞습니다. 바로 확인해서 고치겠습니다. 괜찮으시면 데스크로 한 번 연락 주시면 직접 설명드리고 조치해 드리겠습니다.
 
-※ '감사합니다' 한 줄 답글은 효과가 없습니다. 손님이 읽느라 머무는 시간이 점수라서, 2~3줄로 시설·프로그램을 언급해야 의미가 있습니다.
-※ 불만 리뷰일수록 빠르고 정중하게 답하세요. 다른 예비 회원이 그 답글을 보고 판단합니다.`;
+* 자동 수집을 하시면 실제 리뷰에 맞춘 답글로 바뀝니다.
+* '감사합니다' 한 줄은 효과가 없습니다. 손님이 읽느라 머무는 시간이 점수라서, 2~3줄로 시설이나 프로그램을 언급해야 의미가 있습니다.`;
 }
 
 function buildNews(o){
@@ -2069,10 +2189,16 @@ function renderPersonaPicker(o){
   const auto = autoPersona(o);
   if(!sel.options.length){
     sel.innerHTML = PERSONA_ORDER.map(k=>
-      `<option value="${k}">${PERSONAS[k].label}${k===auto?" (시설 보고 자동 선택)":""}</option>`).join("");
+      `<option value="${k}">${PERSONAS[k].label}</option>`).join("");
     sel.value = auto;
     sel.addEventListener("change", ()=>{ const i=getInfo(); buildWriter(i); });
   }
+  const why = $("w-persona-why"); if(!why) return;
+  const ev = personaEvidence();
+  why.innerHTML = ev
+    ? `손님 리뷰에서 <b>${ev.words.join(", ")}</b> 를 ${ev.n}회 언급했습니다.
+       그래서 <b>${PERSONAS[auto].label}</b>을 기본으로 골랐습니다.`
+    : `리뷰를 아직 수집하지 못해 시설 구성으로 골랐습니다.`;
 }
 
 /* 붙여넣기 직전 점검 — 책에서는 사장님이 종이에 체크하는 목록이다.
@@ -2120,6 +2246,149 @@ function setBox(id,text){
   el.textContent = text;
   if(btn) el.appendChild(btn);
 }
+
+/* ============================================================
+   키워드 발굴
+
+   무엇을 노릴지 정하는 일이 글을 잘 쓰는 일보다 먼저다.
+   순위는 계단이라, 경쟁 심한 키워드에 바로 달려들면 점수 쌓일 발판이 없다.
+   이미 30위 안에 들어 있는 키워드를 1페이지로 올리는 편이 훨씬 빠르고,
+   그렇게 쌓인 점수는 더 어려운 키워드에도 그대로 붙는다.
+
+   "월 검색량"은 광고 API 가 있어야 보이지만, "이 검색어로 우리가 지금 몇 위인가"는
+   우리가 직접 잴 수 있다. 무엇을 먼저 할지 정하는 데는 이쪽이 더 곧은 근거다.
+   ============================================================ */
+const KF_MOD  = ["", "추천", "가격", "24시간", "여성", "PT", "필라테스", "1인", "저렴한"];
+const KF_BIZ  = { "헬스장":["헬스장","헬스","피트니스"], "PT 전문":["PT","피티","퍼스널트레이닝"],
+                  "헬스+PT":["헬스장","PT","피트니스"], "필라테스":["필라테스","소도구필라테스"],
+                  "크로스핏":["크로스핏","박스"] };
+
+/* 정류장 이름이 전부 검색어가 되지는 않는다. "열린치과"는 아무도 헬스장을
+   찾을 때 치지 않는다. 역과 상권 이름만 남긴다 — 그건 사람들이 실제로 친다. */
+const LANDMARK_OK = /(역$|거리|시장|사거리|광장|타워|프라자|플라자|센터|단지|아파트|지구|상가)/;
+
+function kfAreas(){
+  const raw = ($("kf-area")?.value || "").split(",").map(s=>s.trim()).filter(Boolean);
+  if(raw.length) return raw;
+  const o = getInfo();
+  const m = window.__place?.material || {};
+  /* 지역이 비면 우리가 아는 것으로 채운다 — 입력 칸을 또 만들지 않기 위해서다. */
+  const near = (m.landmarks || []).map(String).filter(x=>LANDMARK_OK.test(x)).slice(0,2);
+  return [...new Set([o.area, ...near].filter(Boolean))];
+}
+
+function kfCandidates(){
+  const o = getInfo();
+  const biz = KF_BIZ[o.type] || KF_BIZ["헬스장"];
+  const areas = kfAreas();
+  const out = [];
+  /* 지역을 번갈아 넣는다. 한 지역을 다 소진하고 다음으로 가면
+     조회 개수 제한에 걸려 두 번째 지역이 통째로 잘린다. */
+  const push = (a,b,m) => out.push(`${a}${b}${m}`);
+  for(const a of areas) push(a, biz[0], "");                       // 가장 기본형 먼저
+  for(const m of KF_MOD.filter(Boolean)) for(const a of areas) push(a, biz[0], m);
+  for(const b of biz.slice(1)) for(const a of areas){
+    push(a, b, "");
+    for(const m of KF_MOD.filter(Boolean)) push(a, b, m);
+  }
+  /* 이미 노리고 있는 키워드는 맨 앞으로 — 결과를 볼 때 기준이 된다 */
+  const mine = o.keywords.map(k=>k.replace(/\s+/g,"")).filter(Boolean);
+  const rest = out.filter(k=>!mine.includes(k));
+  return [...new Set([...mine, ...rest])];
+}
+
+let KF_PICK = [];
+function renderCandidates(){
+  const box = $("kf-cand"); if(!box) return;
+  const n = Number($("kf-n")?.value || 12);
+  const all = kfCandidates();
+  KF_PICK = all.slice(0, n);
+  box.innerHTML = all.slice(0, Math.max(n + 8, 20)).map(k=>
+    `<span data-kw="${k}" class="${KF_PICK.includes(k) ? "" : "off"}">${k}</span>`).join("")
+    || `<span class="kwf-none">지역과 업종을 먼저 채워 주세요.</span>`;
+}
+
+$("kf-make")?.addEventListener("click", renderCandidates);
+$("kf-n")?.addEventListener("change", renderCandidates);
+$("kf-cand")?.addEventListener("click", e=>{
+  const el = e.target.closest("[data-kw]"); if(!el) return;
+  const k = el.dataset.kw, on = KF_PICK.includes(k);
+  const n = Number($("kf-n")?.value || 12);
+  if(on) KF_PICK = KF_PICK.filter(x=>x!==k);
+  else if(KF_PICK.length >= n){ showToast(`한 번에 ${n}개까지만 조회합니다`); return; }
+  else KF_PICK.push(k);
+  el.classList.toggle("off", on);
+});
+
+/* 순위 구간별 판정 — 무엇을 지금 하고 무엇을 미룰지 */
+function kfVerdict(rank){
+  if(rank == null)  return { cls:"later", t:"아직 밖", why:"지금 붙으면 자원만 샙니다. 나중에." };
+  if(rank <= 5)     return { cls:"now",   t:"1페이지",  why:"이미 잡았습니다. 유지만 하세요." };
+  if(rank <= 10)    return { cls:"now",   t:"2페이지",  why:"거의 다 왔습니다. 여기부터 미세요." };
+  if(rank <= 30)    return { cls:"soon",  t:"한 발 남음", why:"제일 먼저 공략할 자리입니다." };
+  return { cls:"later", t:`${rank}위`, why:"뒤로 미루고 위쪽부터 잡으세요." };
+}
+
+$("kf-rank")?.addEventListener("click", async ()=>{
+  if(needServer()) return;
+  const url = $("s-url").value.trim();
+  if(!url){ alert("위 검색줄에 플레이스 주소를 넣어 주세요."); $("s-url").focus(); return; }
+  if(!KF_PICK.length) renderCandidates();
+  if(!KF_PICK.length){ alert("먼저 후보를 만들어 주세요."); return; }
+
+  const btn = $("kf-rank");
+  btn.disabled = true; btn.textContent = `조회 중… (${KF_PICK.length}개)`;
+  $("kf-out").innerHTML = `<div class="srv-res"><h5>순위 조회 중…</h5>
+    <p class="hint">키워드 하나에 3~6초 걸립니다. 창을 닫지 마세요.</p></div>`;
+  try{
+    const r = await (await fetch(apiUrl(
+      `/api/rank-batch?keywords=${encodeURIComponent(KF_PICK.join(","))}&url=${encodeURIComponent(url)}`))).json();
+    if(!r.ok){ $("kf-out").innerHTML = srvError("순위 일괄 조회 실패", r); return; }
+
+    const rows = (r.rows || []).map(x=>({ ...x, v: kfVerdict(x.found ? x.rank : null) }));
+    const order = { now:0, soon:1, later:2 };
+    rows.sort((a,b)=> (order[a.v.cls]-order[b.v.cls]) || ((a.rank ?? 999)-(b.rank ?? 999)));
+    window.__kfRows = rows;
+
+    const soon = rows.filter(x=>x.v.cls==="soon");
+    const now  = rows.filter(x=>x.v.cls==="now");
+    $("kf-out").innerHTML = `<div class="srv-res">
+      <h5>조회 결과 ${rows.length}개</h5>
+      <table class="kwf"><thead><tr><th>키워드</th><th>내 순위</th><th>판정</th></tr></thead><tbody>
+      ${rows.map(x=>`<tr>
+        <td>${x.keyword}</td>
+        <td class="r">${x.found ? x.rank + "위" : "—"}</td>
+        <td><span class="v ${x.v.cls}">${x.v.t}</span></td></tr>`).join("")}
+      </tbody></table>
+      <div class="kwf-note">
+        ${soon.length
+          ? `<b>먼저 공략할 키워드 ${soon.length}개</b> — ${soon.slice(0,3).map(x=>x.keyword).join(", ")}.
+             이미 30위 안이라 한 발만 더 밀면 1페이지입니다. 여기에 자원을 모으세요.`
+          : now.length
+            ? `이미 1~2페이지에 있는 키워드가 ${now.length}개입니다. 그 자리를 지키면서
+               조금 더 어려운 키워드를 다음 목표로 잡으세요.`
+            : `아직 30위 안에 든 키워드가 없습니다. 지역을 더 좁힌 말
+               (동 이름, 역 이름, 상가 이름)로 후보를 다시 만들어 보세요. 경쟁자가 적습니다.`}
+        <br>순위는 조회 시점 기준이고 검색 위치에 따라 달라질 수 있습니다.
+      </div>
+      ${soon.length ? `<div class="btn-row kwf-use">
+        <button class="btn dark" id="kf-apply" type="button">먼저 공략할 키워드를 목표로 넣기</button></div>` : ""}
+    </div>`;
+  }catch(e){
+    $("kf-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
+  }finally{ btn.disabled=false; btn.textContent="순위 일괄 조회"; }
+});
+
+/* 찾은 키워드를 목표 키워드 칸에 넣는다 — 진단·소개글이 그 값을 바로 쓴다 */
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#kf-apply")) return;
+  const soon = (window.__kfRows || []).filter(x=>x.v?.cls === "soon").slice(0,3);
+  if(!soon.length) return;
+  ["i-kw1","i-kw2","i-kw3"].forEach((id,i)=>{ if(soon[i]) $(id).value = soon[i].keyword; });
+  save();
+  showToast(`목표 키워드 ${soon.length}개를 바꿨습니다`);
+  $("btn-run").click();
+});
 
 /* ============================================================
    AI 지시문 만들기 — API 키 없이 쓰는 길

@@ -79,6 +79,8 @@ function lanIp() {
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 '
          + '(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function get(url, extraHeaders = {}) {
   const res = await fetch(url, {
     redirect: 'follow',
@@ -1025,6 +1027,34 @@ function nearest(list, n) {
 /* 이벤트로 보이는 메뉴 줄. 사장님이 메뉴판에 걸어 둔 혜택이 곧 방문 유도 재료다. */
 const EVENT_HINT = /(이벤트|무료|할인|증정|특가|오픈|첫 ?방문|체험|혜택|\d+\s*%|\d[\d,.]*\s*(만원|원))/;
 
+/* 리뷰에서 손님의 말을 센다. 은코치는 리뷰 100개를 AI 에게 읽혀 페르소나를 만든다.
+   우리는 AI 없이 단어 빈도로 센다. 정밀도는 낮지만 근거가 눈에 보이고 공짜다.
+   무엇보다 "우리가 정한 페르소나"가 아니라 "손님이 실제로 쓴 말"이 된다. */
+const VOICE_MAP = [
+  ['혼자 조용히',   ['혼자', '조용', '눈치', '시선', '집중']],
+  ['처음 시작',     ['처음', '초보', '입문', '시작', '몰라']],
+  ['가격',         ['가격', '저렴', '합리', '비용', '가성비', '만원']],
+  ['시설·청결',     ['깨끗', '청결', '쾌적', '넓', '시설', '신상', '최신']],
+  ['친절·상담',     ['친절', '상담', '설명', '알려주', '챙겨']],
+  ['시간대',       ['새벽', '야간', '밤', '24시', '아침', '퇴근', '교대']],
+  ['PT·지도',      ['PT', '피티', '트레이너', '선생님', '코치', '자세']],
+  ['샤워·편의',     ['샤워', '락커', '라커', '운동복', '주차']],
+  ['체중·체형',     ['다이어트', '감량', '체중', '체형', '근력', '벌크']],
+];
+
+function reviewVoice(texts) {
+  const body = texts.join(' ');
+  if (!body.trim()) return [];
+  return VOICE_MAP
+    .map(([label, words]) => {
+      let n = 0;
+      for (const w of words) n += body.split(w).length - 1;
+      return { label, n, words: words.filter(w => body.includes(w)) };
+    })
+    .filter(v => v.n > 0)
+    .sort((a, b) => b.n - a.n);
+}
+
 function introMaterial(data, jsons) {
   const all = Array.isArray(jsons) ? jsons : [jsons];
   const grab = t => all.flatMap(j => nodesOfType(j, t));
@@ -1038,18 +1068,22 @@ function introMaterial(data, jsons) {
     name: b.name, walkTime: b.walkTime ?? null, distance: b.walkingDistance ?? null,
   }));
 
-  /* 리뷰 본문. 같은 글이 여러 노드에 중복으로 실려 있어 앞부분으로 중복을 제거한다. */
-  const seen = new Set(), reviews = [];
-  for (const t of ['PlaceDetailTopPhotoItem', 'VisitorReview', 'FsasReview']) {
-    for (const n of grab(t)) {
-      const txt = String(n.description || n.body || n.contents || '').trim().replace(/\s+/g, ' ');
-      if (txt.length < 30 || txt.length > 400) continue;
-      const key = txt.slice(0, 25);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      reviews.push(txt);
-    }
+  /* 리뷰 본문. 같은 글이 여러 노드에 중복으로 실려 있어 앞부분으로 중복을 제거한다.
+     방문자 리뷰(짧고 직접적)와 블로그 후기(길고 서술적)를 나눠 담는다 —
+     소개글 인용에는 앞쪽이, 페르소나 분석에는 둘 다 쓸모가 있다. */
+  const seen = new Set(), reviews = [], blogs = [];
+  const push = (bag, txt, min, max) => {
+    const t = String(txt || '').trim().replace(/\s+/g, ' ');
+    if (t.length < min || t.length > max) return;
+    const key = t.slice(0, 25);
+    if (seen.has(key)) return;
+    seen.add(key);
+    bag.push(t);
+  };
+  for (const t of ['PlaceDetailTopPhotoItem', 'VisitorReview', 'VisitorReviewItem', 'ReviewItem']) {
+    for (const n of grab(t)) push(reviews, n.description || n.body || n.contents || n.reviewText, 25, 500);
   }
+  for (const n of grab('FsasReview')) push(blogs, n.contents || n.body || n.description, 120, 3000);
 
   /* 메뉴는 아폴로 캐시에서 Menu 노드로 흩어져 저장된다. 배열 이름으로 찾으면 안 잡힌다. */
   const menus = grab('Menu');
@@ -1071,7 +1105,11 @@ function introMaterial(data, jsons) {
     payments: strList(base.paymentInfo),
     conveniences: strList(base.conveniences),
     events,
-    reviews: reviews.slice(0, 6),
+    reviews: reviews.slice(0, 20),
+    blogs: blogs.slice(0, 5),
+    /* 리뷰 문장에서 손님이 실제로 쓴 말을 센다. 프리셋 페르소나 대신
+       "우리 손님이 무엇 때문에 왔다고 쓰는가"를 근거로 쓰기 위해서다. */
+    voice: reviewVoice([...reviews, ...blogs]),
     booking: base.bookingUrl || data.bookingUrl || null,
     talktalk: base.talktalkUrl || data.talktalkUrl || null,
   };
@@ -1506,6 +1544,31 @@ const server = http.createServer(async (req, res) => {
         appendHistory({ keyword: kw, placeId, rank: r.rank, scanned: r.scanned });
       }
       return sendJson(res, 200, r);
+    }
+
+    /* 키워드 발굴 — 후보를 한꺼번에 순위 조회한다.
+       "월 검색량"은 광고 API 없이는 못 보지만, "이 검색어로 우리가 지금 몇 위인가"는
+       우리가 직접 잴 수 있다. 그리고 무엇을 먼저 공략할지 정할 때는 이쪽이 더 곧다. */
+    if (u.pathname === '/api/rank-batch') {
+      const target = q.get('url');
+      const list = (q.get('keywords') || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 14);
+      if (!target || !list.length) {
+        return sendJson(res, 400, { ok: false, error: 'keywords, url 파라미터가 필요합니다.' });
+      }
+      const placeId = await resolvePlaceId(target);
+      const pages = Number(q.get('pages') || 2);
+      const rows = [];
+      for (const kw of list) {
+        try {
+          const r = await findRank(kw, placeId, pages);
+          rows.push({ keyword: kw, ok: r.ok, found: r.found, rank: r.rank ?? null,
+                      scanned: r.scanned ?? null, top: (r.top || []).slice(0, 3) });
+        } catch (e) {
+          rows.push({ keyword: kw, ok: false, error: String(e.message || e) });
+        }
+        await sleep(220);   // 연속 요청으로 막히지 않게 사이를 둔다
+      }
+      return sendJson(res, 200, { ok: true, placeId, rows });
     }
 
     if (u.pathname === '/api/competitors') {
