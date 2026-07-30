@@ -655,6 +655,26 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <div class="out"><h4>소식 글감 4주치</h4>
         <div class="box" id="o-news"><button class="btn sm ghost copy" data-t="o-news">복사</button></div></div>
 
+      <!-- 키 없이 쓰는 AI — 지시문을 만들어 주고, 실행은 쓰시는 AI 채팅에서 -->
+      <div class="out" id="ai-prompt">
+        <h4>🤖 AI에게 시킬 지시문 <span class="cnt">API 키 불필요</span></h4>
+        <p class="hint" style="margin:0 0 8px">
+          진단으로 알아낸 값(업체명·지역·키워드·시설·부족한 항목·경쟁사 표현)을 전부 넣어
+          <b>그대로 붙여넣기만 하면 되는 지시문</b>을 만듭니다.
+          쓰시는 AI 채팅에 붙여넣으세요. <b>추가 비용이 들지 않습니다.</b>
+        </p>
+        <select id="ai-kind" class="f" style="width:100%;margin-bottom:8px">
+          <option value="intro">플레이스 소개글 (500자 이상)</option>
+          <option value="kw">대표키워드 5개</option>
+          <option value="reply">리뷰 답글 3종 (칭찬·보통·불만)</option>
+          <option value="news">소식·이벤트 글감 4주치</option>
+          <option value="blog">블로그 홍보글 1편</option>
+          <option value="info">블로그 정보글 1편 (지수 올리기용)</option>
+          <option value="fix">진단 결과로 개선 계획 짜기</option>
+        </select>
+        <div class="box" id="o-prompt"><button class="btn sm ghost copy" data-t="o-prompt">복사</button></div>
+      </div>
+
       <div class="note">
         <b>주의 —</b> 업체명에 키워드를 욱여넣거나 리뷰·저장수를 구매하는 건 제재 대상입니다.
         위 문장에 <b>실제로 없는 시설이 적혀 있으면 반드시 지우세요.</b> 방문 후기에서 바로 드러나고 그게 더 큰 손해입니다.
@@ -1116,6 +1136,7 @@ $("btn-run").addEventListener("click", ()=>{
     : `<div class="all-good">22개 항목 전부 통과했습니다. 이 상태를 유지하면서 리뷰와 소식만 꾸준히 관리하세요.</div>`;
 
   buildWriter(o);
+  renderPrompt();
   renderWorklog();
   ["result","writer"].forEach(id=>$(id).style.display="block");
   $("result").scrollIntoView({behavior:"smooth", block:"start"});
@@ -1249,6 +1270,117 @@ function setBox(id,text){
   el.textContent = text;
   if(btn) el.appendChild(btn);
 }
+
+/* ============================================================
+   AI 지시문 만들기 — API 키 없이 쓰는 길
+
+   도구 안에서 AI를 부르려면 키가 필요하고 요금이 붙는다. 그런데 사장님은
+   이미 AI 채팅을 쓰고 계신다. 그러면 도구가 할 일은 글을 쓰는 것이 아니라,
+   "진단으로 알아낸 사실을 빠짐없이 담은 지시문"을 만들어 주는 것이다.
+   재료(업체명·지역·키워드·시설·미달 항목·경쟁사 표현)는 도구만 알고 있다.
+   ============================================================ */
+function promptFacts(){
+  const o = getInfo();
+  const comp = window.__lastComp;
+  const L = [];
+  L.push(`- 업체명: ${o.name || "(모름)"}`);
+  L.push(`- 지역: ${o.area || "(모름)"}`);
+  L.push(`- 업종: ${o.type}`);
+  if(o.price) L.push(`- 1개월 이용권: ${o.price}`);
+  L.push(`- 목표 키워드: ${o.keywords.join(", ") || "(없음)"}`);
+  L.push(`- 보유 시설: ${o.fac.join(", ") || "(체크 안 함)"}`);
+  L.push(`- 현재 소개글: ${o.intro ? `${o.intro.length}자 — "${o.intro.slice(0,200)}${o.intro.length>200?"…":""}"` : "없음"}`);
+  if(o.repkw.length) L.push(`- 등록된 대표키워드: ${o.repkw.join(", ")}`);
+
+  // 진단에서 미달로 나온 것 — 무엇을 보완해야 하는지 AI 가 알아야 한다
+  const miss = ITEMS.filter(x => !x.auto && !$("chk-"+x.id)?.checked).map(x => x.t);
+  if(miss.length) L.push(`- 아직 안 된 항목: ${miss.slice(0,8).join(" / ")}`);
+
+  if(comp){
+    const gaps = (comp.gaps||[]).filter(g=>!g.inMine).map(g=>g.term);
+    if(gaps.length) L.push(`- 상위권이 쓰는데 우리 글에 없는 표현: ${gaps.join(", ")}`);
+    if(comp.myRank) L.push(`- "${comp.keyword}" 현재 순위: ${comp.myRank}위`);
+    const rivals = (comp.rivals||[]).map(v=>`${v.rank}위 ${v.name}`).join(", ");
+    if(rivals) L.push(`- 상위권: ${rivals}`);
+  }
+  return L.join("\n");
+}
+
+const PROMPT_KIND = {
+  intro: f => `네이버 스마트플레이스 "상세설명(소개글)"을 써 주세요.
+
+${f}
+
+조건:
+- 500자 이상 800자 이하
+- 목표 키워드를 자연스럽게 3~5회 (억지로 반복하면 역효과입니다)
+- 첫 문장에 지역+업종이 들어가게
+- 보유 시설을 구체적으로 (없는 시설은 절대 쓰지 마세요 — 방문 후기에서 드러납니다)
+- 광고 문구 말고, 처음 오는 사람이 궁금해할 것부터 (운영시간, 주차, 샤워실, 초보 대응)
+- 과장·효과 보장 표현 금지`,
+
+  kw: f => `네이버 스마트플레이스 "대표키워드" 5개를 정해 주세요.
+
+${f}
+
+조건:
+- 손님이 실제로 검색창에 칠 법한 말로 (업계 용어 말고)
+- 지역+업종 조합을 최소 2개
+- 5개가 서로 겹치지 않게 (같은 검색어의 변형은 낭비입니다)
+- 각각 왜 그 키워드인지 한 줄 근거를 붙여 주세요`,
+
+  reply: f => `네이버 플레이스 리뷰 답글 3종을 써 주세요.
+
+${f}
+
+- 칭찬 리뷰용 / 보통 리뷰용 / 불만 리뷰용 각 1개
+- 복붙 티가 안 나게, 문장 구조를 서로 다르게
+- 불만 답글은 변명하지 말고 무엇을 어떻게 바꾸겠다는 것만
+- 각 3~5문장, 목표 키워드를 억지로 넣지 마세요`,
+
+  news: f => `네이버 플레이스 "소식"에 올릴 글감 4주치를 만들어 주세요.
+
+${f}
+
+- 주 1개씩 4개
+- 이벤트가 없어도 되는 소재로 (운동 팁, 시설 안내, 회원 후기 소개 등)
+- 각 제목 + 본문 3~4문장
+- 매주 같은 형식이 반복되지 않게`,
+
+  blog: f => `헬스장 네이버 블로그 홍보글 1편을 써 주세요.
+
+${f}
+
+방문 상담 예약으로 이어지도록, 고객 고민에서 출발해 주세요.
+상위노출을 위한 키워드 배치와 이미지 넣을 위치도 함께 알려 주시고,
+저품질에 걸릴 만한 표현이 있으면 미리 걸러 주세요.`,
+
+  info: f => `헬스장 블로그에 올릴 "정보성 글" 1편을 써 주세요.
+홍보가 목적이 아니라, 검색으로 들어온 사람에게 실제로 도움이 되는 글입니다.
+
+${f}
+
+- 다이어트·운동법·초보 가이드 중에서 계절과 지역에 맞는 주제로
+- 지역 키워드를 자연스럽게 얹되, 센터 홍보는 마지막에 한 문단만
+- 효과를 보장하는 표현은 쓰지 마세요`,
+
+  fix: f => `아래는 제 네이버 플레이스 진단 결과입니다.
+
+${f}
+
+이걸 보고 개선 계획을 짜 주세요.
+- 오늘 당장 할 수 있는 것 / 몇 주 걸리는 것 / 못 바꾸는 것으로 나눠서
+- 순위에 미치는 영향이 큰 순서대로
+- 각 항목마다 "무엇을 어떻게" 까지 구체적으로
+- 제가 못 하는 것을 시키지 마세요 (리뷰 구매 같은 제재 대상 포함)`,
+};
+
+function renderPrompt(){
+  const kind = $("ai-kind")?.value || "intro";
+  const build = PROMPT_KIND[kind]; if(!build) return;
+  setBox("o-prompt", build(promptFacts()));
+}
+$("ai-kind")?.addEventListener("change", renderPrompt);
 
 /* 복사 */
 /* 결과 안에서 체크하면 3단계 체크박스와 같이 움직인다.
@@ -2059,6 +2191,8 @@ $("s-comp")?.addEventListener("click", async ()=>{
   try{
     const r = await (await fetch(apiUrl(`/api/competitors?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`))).json();
     if(!r.ok){ $("s-out").innerHTML = srvError(`"${kw}" 상위권 분석 실패 (${r.stage} 단계)`, r); return; }
+    window.__lastComp = r;   // 지시문 만들 때 경쟁사 결과를 재료로 쓴다
+    renderPrompt();
 
     const cols = r.rivals.map(v=>`${v.rank}위`).join("</th><th>");
     const row = (c)=>{
