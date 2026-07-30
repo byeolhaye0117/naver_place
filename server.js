@@ -252,6 +252,8 @@ const PLACE_STRATEGIES = [
   id => `https://m.place.naver.com/place/${id}/review/visitor`,
   id => `https://m.place.naver.com/place/${id}/review/ugc`,
   id => `https://m.place.naver.com/place/${id}/photo`,
+  id => `https://m.place.naver.com/place/${id}/news`,
+  id => `https://m.place.naver.com/place/${id}/feed`,
   id => `https://m.place.naver.com/place/${id}/information`,
   id => `https://m.place.naver.com/hairshop/${id}/home`,
   id => `https://map.naver.com/p/api/place/summary/${id}`,
@@ -471,6 +473,24 @@ function findDatedList(node, minLen = 3, depth = 0, best = null) {
   return best;
 }
 
+/* 날짜가 없어도 "몇 장이나 실려 있는지"는 셀 수 있다.
+   네이버가 준 imageCount 가 무엇을 센 값인지 확실하지 않아, 비교 대상으로 쓴다. */
+function biggestListLen(jsons) {
+  let best = 0;
+  const walk = (n, d = 0) => {
+    if (!n || typeof n !== 'object' || d > 8) return;
+    for (const v of Object.values(n)) {
+      if (Array.isArray(v)) {
+        const objs = v.filter(x => x && typeof x === 'object').length;
+        if (objs > best) best = objs;
+      }
+      if (v && typeof v === 'object') walk(v, d + 1);
+    }
+  };
+  jsons.forEach(j => walk(j));
+  return best;
+}
+
 function listStats(jsons) {
   const items = jsons.map(j => findDatedList(j)).filter(Boolean)
                      .sort((a, b) => b.length - a.length)[0];
@@ -508,7 +528,9 @@ function judgeItems(data, present, userType, extra = {}) {
   // ── 수치가 그대로 있는 항목 ──────────────────────────────
   const photo = n('imageCount', 'photoCount', 'photoTotal', 'imageTotal', 'totalImageCount');
   photo == null ? unknown('p2', '사진 수를 가져오지 못했습니다')
-                : put('p2', photo >= 30, `사진 ${photo}장${src()}`);
+                : put('p2', photo >= 30,
+                    `사진 ${photo}장 (네이버 ${usedKey} 값${extra.photoListN ? `, 사진 탭 목록에는 ${extra.photoListN}장` : ''})`
+                    + src());
 
   const rev = n('visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal',
                 'visitorReviewsCount', 'totalReviewCount', 'fsasReviewCount', 'reviewCount', 'reviewTotal');
@@ -569,6 +591,16 @@ function judgeItems(data, present, userType, extra = {}) {
                     ` — 스마트플레이스 등록 자체가 사업자 인증을 거칩니다`);
   else
     unknown('d2', '사장님이 등록한 흔적을 찾지 못했습니다 (미등록 플레이스일 수 있습니다)');
+
+  /* 주소에 건물·층이 들어 있는지. 지도 핀 정확도는 사람만 알 수 있지만
+     주소가 어디까지 적혀 있는지는 글자만 보면 안다. */
+  const addr = String(data.roadAddress || data.address || '');
+  if (!addr) unknown('d4', '주소를 가져오지 못했습니다');
+  else {
+    const detail = /\d+\s*층|\bB\d|\d+\s*호|빌딩|타워|프라자|플라자|센터|스퀘어|아파트|상가/.test(addr);
+    put('d4', detail, detail ? `주소에 건물·층 정보 있음 — ${addr}`
+                             : `건물명·층이 없습니다 — ${addr}`);
+  }
 
   // ── 카테고리: 주력 업종과 맞는지 ────────────────────────
   const cat = String(data.category || '');
@@ -686,7 +718,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
       // 다만 깊게 볼 때는 리뷰·사진 탭을 한 번은 들러야 답글·갱신 판정이 산다.
       const seen = re => sources.some(x => re.test(x.url));
       const enough = KEY_FIELDS.every(f => data[f] !== undefined)
-        && (!deep || (seen(/review/) && seen(/photo/)));
+        && (!deep || (seen(/review/) && seen(/photo/) && seen(/news|feed/)));
       if (enough) break;
     } catch (e) {
       attempts.push({ url, result: `요청 실패: ${e.message}` });
@@ -711,6 +743,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
       loose: looseCount, foundBy,
       reviews: listStats(jsons.filter((_, i) => /review/.test(sources[i]?.url || ''))) || listStats(jsons),
       photos: listStats(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
+      photoListN: biggestListLen(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
     }),
     derived: deriveInputs(data, jsons),
   };
