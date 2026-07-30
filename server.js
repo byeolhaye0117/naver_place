@@ -316,6 +316,36 @@ const CONCEPTS = {
   },
 };
 
+/* 링크는 "필드가 있다"로 판단하면 안 된다.
+   실제로 homepages 라는 객체가 있는데 안에 주소가 하나도 없는 경우가 있다.
+   껍데기만 보고 "연결됨"이라 하면 사장님이 확인할 방법이 없다. */
+const LINK_FIELDS = ['homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials'];
+
+function findUrls(node, out = [], depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 6 || out.length > 5) return out;
+  for (const v of Object.values(node)) {
+    if (typeof v === 'string' && /^https?:\/\/\S+$/.test(v.trim())) out.push(v.trim());
+    else if (v && typeof v === 'object') findUrls(v, out, depth + 1);
+  }
+  return out;
+}
+
+/* 링크 필드 아래에 실제로 존재하는 주소만 모은다 */
+function collectLinks(nodes, out = {}, depth = 0) {
+  for (const node of nodes) walkLinks(node, out);
+  return out;
+}
+function walkLinks(node, out, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 8) return;
+  for (const [k, v] of Object.entries(node)) {
+    if (LINK_FIELDS.includes(k)) {
+      const urls = typeof v === 'string' ? (/^https?:\/\//.test(v.trim()) ? [v.trim()] : []) : findUrls(v);
+      if (urls.length) (out[k] ||= []).push(...urls);
+    }
+    if (v && typeof v === 'object') walkLinks(v, out, depth + 1);
+  }
+}
+
 /* 좌표나 아이디 같은 것 말고, 세는 값으로 보이는 숫자만 모은다 */
 function collectNumbers(node, out = {}, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 6 || Object.keys(out).length > 80) return out;
@@ -594,11 +624,16 @@ function judgeItems(data, present, userType, extra = {}) {
   }
 
   {
-    const w = which('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials');
-    const url = [data.homepage, data.snsUrl, data.instagramUrl].find(v => !isEmptyVal(v));
-    put('d3', w.length > 0, w.length
-      ? `외부 채널 연결됨 (${w.join(', ')}${url ? ` — ${String(url).slice(0, 60)}` : ''})`
-      : '홈페이지·SNS 연결 없음');
+    /* 실제 주소가 있어야 연결된 것이다. 필드만 있는 것은 연결이 아니다. */
+    const found = Object.entries(extra.links || {});
+    const urls = [...new Set(found.flatMap(([, v]) => v))];
+    const shell = which('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials');
+    if (urls.length)
+      put('d3', true, `외부 채널 연결됨 — ${urls.slice(0, 2).map(u => u.slice(0, 50)).join(', ')}`);
+    else if (shell.length)
+      put('d3', false, `${shell.join(', ')} 필드는 있으나 실제 주소가 없습니다 — 연결 안 된 것으로 봅니다`);
+    else
+      put('d3', false, '홈페이지·SNS 연결 없음');
   }
 
   has('businessHours', 'newBusinessHours', 'businessHoursInfo', 'operationTime')
@@ -710,6 +745,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
   const looseCount = new Set();   // 가게 노드 밖에서 주운 개수 항목
   const foundBy = {};             // 이름이 아니라 뜻으로 찾은 항목 (target → 실제 키 이름)
   const numbers = {};             // 가게 노드 안의 숫자 전부 — 못 찾은 값을 추적할 단서
+  const links = {};               // 링크 필드 아래에 실제로 있는 주소
   const jsons = [];
   const sources = [];
 
@@ -744,6 +780,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
         /* 가게 노드 안의 숫자를 전부 모아 둔다.
            뜻으로도 못 찾은 값이 있을 때, 어떤 이름으로 오는지 볼 유일한 단서다. */
         for (const node of scoped) collectNumbers(node, numbers);
+        collectLinks(scoped, links);
 
         /* 이름으로 못 찾은 개수는 뜻으로 찾아본다. 가게 노드 안에서만 본다. */
         for (const [target, c] of Object.entries(CONCEPTS)) {
@@ -792,9 +829,10 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
     missing: KEY_FIELDS.filter(f =>
       (CONCEPTS[f]?.alts || [f]).every(a => isEmptyVal(data[a]))),
     numbers,
+    links,
     foundBy,
     judge: judgeItems(data, present, userType, {
-      loose: looseCount, foundBy,
+      loose: looseCount, foundBy, links,
       reviews: listStats(jsons.filter((_, i) => /review/.test(sources[i]?.url || ''))) || listStats(jsons),
       photos: listStats(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
       photoListN: biggestListLen(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
