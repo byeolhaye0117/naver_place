@@ -1030,9 +1030,12 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
           손님의 고민 → 미루면 생기는 손해 → 해결책(망설임 5가지) → <b>실제 리뷰 인용</b>
           → 방문 유도 → <b>찾아오는 길(역·정류장 자동)</b> → 영업정보.
           체크 안 한 시설은 한 글자도 쓰지 않습니다.</p>
-        <label class="f" style="margin:0 0 4px"><span>이 글을 읽을 손님 (첫 줄이 바뀝니다)</span>
+        <label class="f" style="margin:0 0 4px"><span>첫 줄을 걸 손님 <i>1명</i></span>
           <select id="w-persona"></select></label>
-        <p class="hint" id="w-persona-why" style="margin:0 0 10px"></p>
+        <p class="hint" id="w-persona-why" style="margin:0 0 9px"></p>
+        <span style="display:block;font-size:13px;font-weight:700">함께 다룰 고민 <i style="font-style:normal;color:var(--muted);font-weight:500">여러 명 선택 가능</i></span>
+        <div class="hint" style="margin:2px 0 4px">체크한 손님의 고민이 본문에 번호로 들어갑니다. 손님은 한 종류가 아닙니다.</div>
+        <div class="chips" id="w-also" style="margin-bottom:12px"></div>
         <div class="box" id="o-intro"><button class="btn sm ghost copy" data-t="o-intro">복사</button></div>
         <div class="audit" id="intro-audit"></div>
         <div class="cw" id="char-warn" style="display:none"></div></div>
@@ -1783,29 +1786,56 @@ const KEYWORD_BASE = {
 /* 페르소나 — 헬스장에 오는 사람은 대체로 이 다섯 중 하나다.
    시설 구성을 보고 자동으로 고르고, 도구 화면에서 바꿀 수 있다. */
 const PERSONAS = {
-  late: { label:"퇴근이 늦은 직장인",
-    hook:"퇴근하면 이미 문 닫혀 있지 않나요",
-    pain:"일이 끝나면 9시, 10시입니다. 그 시간에 문 연 곳을 찾다가 결국 집으로 갔던 날이 한두 번이 아니실 겁니다.",
-    need:o=>o.fac.includes("24시간 운영")||o.fac.includes("무인 출입") },
-  shift:{ label:"교대근무라 시간이 불규칙한 분",
-    hook:"근무가 바뀌면 운동도 끊기시죠",
-    pain:"이번 주는 주간, 다음 주는 야간. 시간표가 계속 바뀌니 운동 습관을 잡을 틈이 없습니다. 등록해 두고 못 가는 달이 생깁니다.",
-    need:o=>o.fac.includes("24시간 운영") },
-  woman:{ label:"혼자 조용히 운동하고 싶은 분",
-    hook:"시선이 신경 쓰여 망설이시나요",
-    pain:"운동은 하고 싶은데 사람들 시선이 신경 쓰입니다. 특히 프리웨이트 쪽은 발을 들이기가 쉽지 않습니다.",
-    need:o=>o.fac.includes("여성 전용존") },
-  rookie:{ label:"헬스가 처음인 초보",
-    hook:"기구 앞에서 뻘쭘하셨나요",
-    pain:"기구를 어떻게 쓰는지 몰라서 결국 러닝머신만 30분 뛰다 나옵니다. 그러니 몸이 바뀔 리가 없습니다.",
-    need:o=>o.fac.includes("PT 상담 무료")||o.fac.includes("인바디 측정") },
   price:{ label:"가격부터 따져보는 분",
     hook:"가격이 얼마인지부터 궁금하시죠",
     pain:"헬스장마다 가격을 안 밝혀 두니 전화해서 물어보는 것부터가 일입니다. 등록하고 나서 안 맞으면 돈이 아까워 더 망설이게 됩니다.",
+    q:"금액이 부담되시나요?",
+    a:o=>o.price
+      ? `1개월 ${o.price} 기준이고 3개월, 6개월은 조건이 달라집니다. 등록 전에 금액을 알고 오시는 편이 서로 편하다고 생각해 적어 둡니다.`
+      : `금액은 등록 기간에 따라 달라집니다. 전화나 방문으로 물어보시면 조건 없이 바로 알려드립니다.`,
     need:o=>Boolean(o.price) },
+
+  late: { label:"퇴근이 늦은 직장인",
+    hook:"퇴근하면 이미 문 닫혀 있지 않나요",
+    pain:"일이 끝나면 9시, 10시입니다. 그 시간에 문 연 곳을 찾다가 결국 집으로 갔던 날이 한두 번이 아니실 겁니다.",
+    q:"퇴근이 늦어 시간이 안 맞으시나요?",
+    a:o=>o.fac.includes("24시간 운영")
+      ? `24시간 운영합니다. 늦은 밤이나 새벽에 오셔도 됩니다.`
+      : `퇴근 후 시간대에 오시는 분이 많습니다. 영업시간은 아래에 적어 두었습니다.`,
+    need:o=>o.fac.includes("24시간 운영")||o.fac.includes("무인 출입") },
+
+  shift:{ label:"교대근무라 시간이 불규칙한 분",
+    hook:"근무가 바뀌면 운동도 끊기시죠",
+    pain:"이번 주는 주간, 다음 주는 야간. 시간표가 계속 바뀌니 운동 습관을 잡을 틈이 없습니다. 등록해 두고 못 가는 달이 생깁니다.",
+    q:"근무 시간이 계속 바뀌시나요?",
+    a:o=>o.fac.includes("무인 출입")
+      ? `무인 출입이라 시간에 맞춰 오실 필요가 없습니다. 근무표가 바뀌어도 그대로 다니실 수 있습니다.`
+      : `시간대를 가리지 않고 오시는 분들이 많습니다. 근무표가 바뀌어도 이용에 지장 없습니다.`,
+    need:o=>o.fac.includes("24시간 운영") },
+
+  woman:{ label:"혼자 조용히 운동하고 싶은 분",
+    hook:"시선이 신경 쓰여 망설이시나요",
+    pain:"운동은 하고 싶은데 사람들 시선이 신경 쓰입니다. 특히 프리웨이트 쪽은 발을 들이기가 쉽지 않습니다.",
+    q:"혼자 가기 눈치 보이시나요?",
+    a:o=>o.fac.includes("여성 전용존")
+      ? `여성 전용존을 따로 두었습니다. 시선이 부담되시는 분도 편하게 쓰실 수 있습니다.`
+      : `혼자 오셔서 조용히 하시는 분이 대부분입니다. 그 분위기는 계속 지키고 있습니다.`,
+    need:o=>o.fac.includes("여성 전용존") },
+
+  rookie:{ label:"헬스가 처음인 초보",
+    hook:"기구 앞에서 뻘쭘하셨나요",
+    pain:"기구를 어떻게 쓰는지 몰라서 결국 러닝머신만 30분 뛰다 나옵니다. 그러니 몸이 바뀔 리가 없습니다.",
+    q:"기구를 어떻게 쓰는지 몰라 망설여지시나요?",
+    a:o=>o.fac.includes("PT 상담 무료")
+      ? `처음 오시는 분께는 기구 사용법과 동선을 직접 알려드립니다. 상담은 등록과 상관없이 무료입니다.`
+      : `처음 오시는 분께는 기구 사용법과 동선을 직접 알려드립니다. 물어보시는 걸 귀찮아하지 않습니다.`,
+    need:o=>o.fac.includes("PT 상담 무료")||o.fac.includes("인바디 측정") },
+
   base: { label:"운동을 다시 시작하려는 분",
     hook:"올해도 미루고 계신가요",
     pain:"작년에도 같은 생각을 하셨을 겁니다. 등록은 해야겠는데 어디로 갈지 정하는 것부터가 일입니다.",
+    q:"또 작심삼일이 될까 걱정되시나요?",
+    a:()=>`첫 2주는 몸을 만드는 기간이 아니라 오는 습관을 만드는 기간입니다. 일주일에 두세 번이라도 빠지지 않고 오시면 됩니다.`,
     need:()=>true },
 };
 const PERSONA_ORDER = ["price","late","shift","woman","rookie","base"];
@@ -1817,19 +1847,73 @@ const VOICE_TO_PERSONA = {
   "가격":"price", "시간대":"late", "혼자 조용히":"woman",
   "처음 시작":"rookie", "PT·지도":"rookie",
 };
+
+/* 리뷰 근거가 있는 순서로 페르소나를 줄 세운다. 근거가 없으면 시설로 잇는다.
+   손님은 한 종류가 아니다. 한 명만 잡으면 나머지를 흘려보낸다. */
+function personaRanked(o){
+  const voice = window.__place?.material?.voice || [];
+  const score = {};
+  voice.forEach(v=>{
+    const k = VOICE_TO_PERSONA[v.label];
+    if(k) score[k] = Math.max(score[k] || 0, v.n);
+  });
+  const ev = {};
+  voice.forEach(v=>{ const k = VOICE_TO_PERSONA[v.label];
+    if(k && (!ev[k] || v.n > ev[k].n)) ev[k] = v; });
+
+  return PERSONA_ORDER
+    .map(k=>({ key:k, n: score[k] || 0, ev: ev[k] || null, fits: PERSONAS[k].need(o) }))
+    .filter(x=>x.n > 0 || x.fits)
+    .sort((a,b)=> (b.n - a.n) || (Number(b.fits) - Number(a.fits))
+                || PERSONA_ORDER.indexOf(a.key) - PERSONA_ORDER.indexOf(b.key));
+}
+
 function personaEvidence(){
   const v = (window.__place?.material?.voice || []).filter(x=>VOICE_TO_PERSONA[x.label]);
   return v[0] || null;
 }
 function autoPersona(o){
-  const ev = personaEvidence();
-  const byVoice = ev && VOICE_TO_PERSONA[ev.label];
-  if(byVoice && PERSONAS[byVoice]) return byVoice;
-  return PERSONA_ORDER.find(k=>PERSONAS[k].need(o)) || "base";
+  const r = personaRanked(o);
+  return r.length ? r[0].key : "base";
 }
 function currentPersona(o){
   const sel = $("w-persona")?.value;
   return (sel && PERSONAS[sel]) ? sel : autoPersona(o);
+}
+
+/* 첫 줄 손님 말고 "또 다른 고민"으로 다룰 사람들.
+   화면에서 체크한 것이 있으면 그것을, 없으면 근거 순서대로 2~3명을 쓴다. */
+let ALSO_PICK = null;
+function alsoPersonas(o){
+  const main = currentPersona(o);
+  const ranked = personaRanked(o).map(x=>x.key).filter(k=>k !== main);
+  if(ALSO_PICK) return ALSO_PICK.filter(k=>k !== main && PERSONAS[k]);
+  return ranked.slice(0, 3);
+}
+
+/* 고민 목록에서 답하는 주제는 위쪽 시설 칸과 겹친다. 같은 말을 두 번 하면
+   글이 길어지기만 하고 읽는 사람은 지루해진다. 겹치는 칸은 뺀다. */
+const PERSONA_COVERS = { price:"cost", late:"time", shift:"time", rookie:"first" };
+function coveredByAlso(o){
+  return new Set(alsoPersonas(o).map(k=>PERSONA_COVERS[k]).filter(Boolean));
+}
+
+/* 3단계 뒤 — 다른 손님들의 고민을 번호로 훑는다.
+   답에는 리뷰에서 실제로 나온 말을 근거로 붙인다. */
+function alsoText(o, max){
+  const keys = alsoPersonas(o).slice(0, max ?? 3);
+  if(!keys.length) return "";
+  const voice = window.__place?.material?.voice || [];
+  const items = keys.map((k, i)=>{
+    const P = PERSONAS[k];
+    const vk = Object.keys(VOICE_TO_PERSONA).find(lab => VOICE_TO_PERSONA[lab] === k);
+    const v = voice.find(x => x.label === vk);
+    const cite = v && v.n >= 3
+      ? ` 실제로 리뷰에도 ${v.words.slice(0,2).map(w=>`'${w}'`).join(", ")} 같은 말이 자주 나옵니다.`
+      : "";
+    return `${i+1}. ${P.q}\n${P.a(o)}${cite}`;
+  });
+  return `[혹시 이런 고민 때문에 망설이고 계신가요]\n` + items.join("\n\n");
 }
 
 /* 3단계 — 망설임 5가지. 체크된 시설이 없으면 그 칸은 통째로 뺀다.
@@ -1992,7 +2076,8 @@ function buildIntro(o){
   /* 3 — 해결책 + 망설임 지우기 */
   const head = `${N}${josa(N,"은")} ${A}에서 ${o.type} 중심으로 운영합니다. `
     + `망설이게 되는 것들을 먼저 적어 두겠습니다. 읽어보시고 판단해 주세요.`;
-  const blocks = OBJECTION.filter(x => x.need(o))
+  const skip = coveredByAlso(o);
+  const blocks = OBJECTION.filter(x => x.need(o) && !skip.has(x.key))
     .map(x => `[${x.head}]\n${objectionText(x.key, o).replace(/\s+/g," ").trim()}`).join("\n\n");
 
   const flow = `[처음 오시면]\n`
@@ -2007,13 +2092,15 @@ function buildIntro(o){
 
   /* 1,200~1,800자 안에 들어가야 한다. 넘치면 인용 리뷰부터 줄인다 —
      리뷰는 많을수록 좋지만, 길이를 넘겨 잘리는 것보다는 낫다. */
-  const assemble = q => naverSafe(
-    [step1, step2, head, blocks, flow, proofText(o, q), visitText(o), routeText(o), bizText(o)]
+  const assemble = (q, a) => naverSafe(
+    [step1, step2, head, blocks, alsoText(o, a), flow, proofText(o, q), visitText(o), routeText(o), bizText(o)]
       .filter(Boolean).join("\n\n"));
-  let text = assemble(3);
-  for(const q of [2, 1, 0]){
+  /* 넘치면 인용 리뷰부터, 그래도 넘치면 고민 개수를 줄인다.
+     리뷰와 고민은 둘 다 값진데, 길이를 넘겨 잘리는 것보다는 낫다. */
+  let text = assemble(3, 3);
+  for(const [q, a] of [[2,3],[1,3],[1,2],[0,2],[0,1]]){
     if(text.length <= 1800) break;
-    text = assemble(q);
+    text = assemble(q, a);
   }
   return text;
 }
@@ -2039,6 +2126,11 @@ function introAudit(text, o){
       note: kwHits.length
         ? kwHits.map(x=>`${x.k} ${x.n}회`).join(" · ") + (kwHits.some(x=>!x.n) ? " - 0회인 키워드는 소개글에 직접 넣어 주세요" : "")
         : "목표 키워드 미입력" },
+    { t:"여러 손님의 고민을 다룬다",
+      ok: /\[혹시 이런 고민/.test(text),
+      note: (()=>{ const k=alsoPersonas(o); return k.length
+        ? `첫 줄 ${PERSONAS[currentPersona(o)].label} + ${k.map(x=>PERSONAS[x].label).join(", ")}`
+        : "한 명만 다루고 있습니다"; })() },
     { t:"실제 리뷰를 인용했다", ok: /^- /m.test(text),
       note: (m.reviews||[]).length ? `수집한 리뷰 ${(m.reviews||[]).length}개 중 인용` : "리뷰 본문 수집 안 됨" },
     { t:"찾아오는 길에 랜드마크가 있다", ok: Boolean(m.subway?.name || (m.bus||[]).length),
@@ -2191,15 +2283,38 @@ function renderPersonaPicker(o){
     sel.innerHTML = PERSONA_ORDER.map(k=>
       `<option value="${k}">${PERSONAS[k].label}</option>`).join("");
     sel.value = auto;
-    sel.addEventListener("change", ()=>{ const i=getInfo(); buildWriter(i); });
+    sel.addEventListener("change", ()=>{ ALSO_PICK = null; buildWriter(getInfo()); });
   }
-  const why = $("w-persona-why"); if(!why) return;
+  const main = currentPersona(o);
+
+  /* 왜 이 사람을 골랐는지, 그리고 지금 무엇이 골라져 있는지를 같이 밝힌다.
+     자동 선택만 적으면 사장님이 바꾼 뒤에 설명이 어긋난다. */
+  const why = $("w-persona-why");
   const ev = personaEvidence();
-  why.innerHTML = ev
-    ? `손님 리뷰에서 <b>${ev.words.join(", ")}</b> 를 ${ev.n}회 언급했습니다.
-       그래서 <b>${PERSONAS[auto].label}</b>을 기본으로 골랐습니다.`
-    : `리뷰를 아직 수집하지 못해 시설 구성으로 골랐습니다.`;
+  if(why){
+    const base = ev
+      ? `손님 리뷰에서 <b>${ev.words.join(", ")}</b> 를 ${ev.n}회 언급해서 <b>${PERSONAS[auto].label}</b>을 기본으로 골랐습니다.`
+      : `리뷰를 아직 수집하지 못해 시설 구성으로 골랐습니다.`;
+    why.innerHTML = base + (main !== auto ? ` 지금은 <b>${PERSONAS[main].label}</b>으로 바꿔 두셨습니다.` : "");
+  }
+
+  /* 함께 다룰 손님 — 근거(리뷰 언급 횟수)를 칩에 같이 적는다 */
+  const box = $("w-also"); if(!box) return;
+  const ranked = personaRanked(o);
+  const on = alsoPersonas(o);
+  box.innerHTML = PERSONA_ORDER.filter(k=>k !== main).map(k=>{
+    const r = ranked.find(x=>x.key === k);
+    const tag = r && r.n ? ` <b style="font-weight:700;color:var(--muted)">${r.n}회</b>` : "";
+    return `<label class="chip"><input type="checkbox" data-also value="${k}"${on.includes(k)?" checked":""}>
+      <span>${PERSONAS[k].label}${tag}</span></label>`;
+  }).join("");
 }
+
+document.addEventListener("change", e=>{
+  if(!e.target.matches("[data-also]")) return;
+  ALSO_PICK = [...document.querySelectorAll("[data-also]:checked")].map(x=>x.value);
+  buildWriter(getInfo());
+});
 
 /* 붙여넣기 직전 점검 — 책에서는 사장님이 종이에 체크하는 목록이다.
    사람이 세는 대신 글을 직접 읽어 판정한다. 틀린 항목은 무엇이 부족한지도 적는다. */
