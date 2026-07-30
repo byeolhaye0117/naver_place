@@ -41,6 +41,10 @@ const KEYFILE  = path.join(DATA_DIR, 'access-key.txt');
  * 키는 파일에 저장하므로 서버를 다시 켜도 휴대폰 북마크가 그대로 동작한다.
  * ========================================================================== */
 function accessKey() {
+  /* 인터넷에 올려 두고 쓸 때는 파일이 배포마다 사라진다.
+     그래서 환경변수로 준 키를 최우선으로 쓴다 — 주소를 북마크해 두면 계속 통한다. */
+  const env = String(process.env.ACCESS_KEY || '').trim();
+  if (env) return env;
   try { return fs.readFileSync(KEYFILE, 'utf8').trim(); }
   catch {
     const k = crypto.randomBytes(9).toString('base64url');

@@ -1,0 +1,19 @@
+# 휴대폰만으로 배포하기 위한 설정 파일.
+# render.com 에서 이 저장소를 고르면 아래 내용을 그대로 읽어 서버를 띄운다.
+# 터미널도, 설치도 필요 없다.
+services:
+  - type: web
+    name: gym-place-check
+    runtime: node
+    plan: free
+    buildCommand: ""        # 의존성이 없어서 설치할 것이 없다
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      # 인터넷에 열려 있으므로 접근 키를 반드시 둔다.
+      # generateValue 는 렌더가 무작위로 만들어 주고, 대시보드에서 값을 볼 수 있다.
+      - key: ACCESS_KEY
+        generateValue: true
+      # AI 문장 생성을 쓰려면 대시보드에서 직접 넣는다. 안 넣으면 그 기능만 꺼진다.
+      - key: ANTHROPIC_API_KEY
+        sync: false

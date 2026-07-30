@@ -324,6 +324,8 @@ table.cmp td.gap{font-size:12px;font-weight:700}
   box-shadow:inset 0 0 0 2px var(--surface),inset 0 0 0 3px var(--ok-fg)}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+.wake{border:1px solid var(--acc-line);background:var(--acc-bg);border-radius:11px;padding:14px}
+.wake p{margin:5px 0 0;font-size:13px;color:var(--muted)}
 .jb .man-note{margin:6px 0 8px;font-weight:600}
 .ttl-note{font-style:normal;font-size:11.5px;font-weight:700;color:var(--muted);
   background:var(--surface-3);border:1px solid var(--line);border-radius:6px;padding:2px 7px;margin-left:6px;vertical-align:middle}
@@ -1684,7 +1686,18 @@ function apiUrl(pathAndQuery){
     && (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(h) || hasKey);
   if(!servable) return;
   try{
-    const r = await fetch(apiUrl("/api/health"), { signal: AbortSignal.timeout(2000) });
+    /* 인터넷에 올려 둔 서버는 안 쓰면 잠든다. 깨우는 데 1분 가까이 걸리므로
+       2초 만에 포기하면 멀쩡한 서버를 두고 수동 모드로 떨어진다. */
+    const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(h);
+    let r;
+    try{
+      r = await fetch(apiUrl("/api/health"), { signal: AbortSignal.timeout(local ? 2500 : 6000) });
+    }catch(e){
+      if(local) return;
+      $("srv-off").innerHTML = `<div class="wake"><b>서버를 깨우는 중입니다…</b>
+        <p>인터넷에 올려 둔 서버는 한동안 안 쓰면 잠듭니다. 처음 한 번만 1분쯤 걸립니다.</p></div>`;
+      r = await fetch(apiUrl("/api/health"), { signal: AbortSignal.timeout(90000) });
+    }
     if(!r.ok) return;
     SERVER = await r.json();
     $("srv").style.display = "block";
@@ -1705,8 +1718,13 @@ function srvError(title, res){
     `· ${a.result}${a.status?` (HTTP ${a.status})`:""}\n  ${a.url||""}`).join("\n");
   return `<div class="srv-err"><b>${title}</b><br>${res.error||""}
     ${tried?`<pre>${tried}</pre>`:""}
-    <div style="margin-top:8px">터미널에서 <b>node server.js --probe "키워드" "플레이스URL"</b> 을 실행하고
-    출력을 알려주시면 파서를 맞출 수 있습니다.</div></div>`;
+    ${/^(localhost|127\.0\.0\.1|\[::1\]|192\.|10\.|172\.)/.test(location.hostname)
+      ? `<div style="margin-top:8px">터미널에서 <b>node server.js --probe "키워드" "플레이스URL"</b> 을 실행하고
+         출력을 알려주시면 파서를 맞출 수 있습니다.</div>`
+      : `<div style="margin-top:8px"><b>인터넷에 올려 둔 서버에서 실패했습니다.</b>
+         네이버가 데이터센터에서 오는 요청을 막았을 가능성이 큽니다.
+         이 경우 집 PC에서 서버를 켜는 방식으로 돌아가야 합니다 — 같은 주소를 집 PC에서 열어 보면
+         차단 때문인지 아닌지 바로 알 수 있습니다.</div>`}</div>`;
 }
 
 const FIELD_LABEL = {
