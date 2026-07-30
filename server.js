@@ -31,6 +31,7 @@ const ROOT     = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 const HISTORY  = path.join(DATA_DIR, 'rank-history.json');
 const KEYFILE  = path.join(DATA_DIR, 'access-key.txt');
+const STATE    = path.join(DATA_DIR, 'state.json');   // 기기 사이 공유 저장
 
 /* ============================================================================
  * 접근 키
@@ -1342,6 +1343,31 @@ const server = http.createServer(async (req, res) => {
       const kw = q.get('keyword');
       const all = readHistory().records;
       return sendJson(res, 200, { ok: true, records: kw ? all.filter(r => r.keyword === kw) : all });
+    }
+
+    /* ---- 기기 사이 공유 저장 ----
+       체크·대표키워드·개선 기록을 서버에 둔다. 그래야 폰에서 체크한 것이
+       PC 에서도 그대로 보인다.
+
+       무료 요금제는 배포할 때마다 디스크가 지워진다. 그래서 서버를 유일한
+       원본으로 삼지 않는다. 각 기기도 자기 사본을 갖고 있다가, 서버 것이
+       사라졌으면 다시 올려 준다. 어느 쪽이 최신인지는 저장 시각으로 가른다. */
+    if (u.pathname === '/api/state') {
+      if (req.method === 'GET') {
+        try { return sendJson(res, 200, { ok: true, state: JSON.parse(fs.readFileSync(STATE, 'utf8')) }); }
+        catch { return sendJson(res, 200, { ok: true, state: null }); }
+      }
+      if (req.method === 'PUT') {
+        const body = JSON.parse(await readBody(req));
+        if (!body || typeof body !== 'object') return sendJson(res, 400, { ok: false, error: '형식 오류' });
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(STATE, JSON.stringify(body));
+        return sendJson(res, 200, { ok: true, at: body.at || null });
+      }
+      if (req.method === 'DELETE') {
+        try { fs.unlinkSync(STATE); } catch {}
+        return sendJson(res, 200, { ok: true });
+      }
     }
 
     if (u.pathname === '/api/ai' && req.method === 'POST') {
