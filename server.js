@@ -583,8 +583,25 @@ function deriveInputs(data, jsons) {
      사람이 누를 필요가 없다. 네이버 표기와 우리 항목 이름이 조금씩 다르므로 뜻으로 잇는다. */
   const convRaw = pick('conveniences', 'amenities', 'facilities', 'options', 'conveniencesInfo')
     .map(v => String(v?.name ?? v ?? '').trim()).filter(Boolean);
+  /* 네이버 편의시설 목록은 업종 공통 항목이라 헬스장 사정을 다 담지 못한다.
+     실제로 24시간 운영·샤워실·여성전용을 하는데도 목록엔 안 잡히는 곳이 많다.
+     사장님이 직접 쓴 소개글·찾아오는 길·메뉴판에는 그 말이 들어 있으므로 같이 읽는다.
+     사장님이 쓴 글이므로 없는 시설을 지어낼 위험은 없다. */
+  /* data 에는 KEY_FIELDS 만 들어 있어 road·소개글이 빠질 수 있다.
+     아폴로 캐시의 base 노드와 Menu 노드를 직접 읽어 원문을 확보한다. */
+  const baseNodes = all.flatMap(j => nodesOfType(j, 'PlaceDetailBase'));
+  const menuNodes = all.flatMap(j => nodesOfType(j, 'Menu'));
+  const ownText = [
+    data.description, data.road, data.microReview,
+    ...baseNodes.flatMap(b => [b.road, b.description, b.microReview]),
+    ...baseNodes.flatMap(b => (Array.isArray(b.microReviews) ? b.microReviews : [])),
+    ...menus.map(m => String(m?.name ?? '')),
+    ...menuNodes.map(m => String(m?.name ?? '')),
+    ...convRaw,
+  ].filter(Boolean).map(String).join(' ');
   const facilities = FACILITY_MAP
-    .filter(([ours, res]) => convRaw.some(c => res.some(w => c.includes(w))))
+    .filter(([ours, res]) => convRaw.some(c => res.some(w => c.includes(w)))
+                          || res.some(w => ownText.includes(w)))
     .map(([ours]) => ours);
 
   return {
@@ -975,6 +992,88 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
       photoListN: biggestListLen(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
     }),
     derived: deriveInputs(data, jsons),
+    material: introMaterial(data, jsons),   // 소개글 8단 구성에 쓸 재료
+  };
+}
+
+/* ============================================================================
+ * 소개글 재료 — 네이버가 이미 갖고 있는 것들
+ *
+ * 좋은 소개글은 "찾아오는 길(랜드마크 + 교통수단별)"과 "실제 리뷰 인용"이
+ * 있어야 한다. 보통은 사장님이 손으로 적어 넣는 항목인데, 네이버 응답 안에
+ * 지하철역·버스정류장·도보 시간·리뷰 본문이 그대로 들어 있다. 긁어서 쓴다.
+ * ========================================================================== */
+
+/* 타입 이름으로 노드를 모은다. 아폴로 캐시는 "SubwayStationInfo:1409" 같은
+   키를 쓰므로 __typename 을 보는 편이 이름 규칙 변화에 강하다. */
+function nodesOfType(node, typeName, out = [], depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return out;
+  if (!Array.isArray(node) && node.__typename === typeName) out.push(node);
+  for (const v of Object.values(node)) if (v && typeof v === 'object') nodesOfType(v, typeName, out, depth + 1);
+  return out;
+}
+
+/* 가까운 순으로, 같은 이름은 하나만 */
+function nearest(list, n) {
+  const seen = new Set();
+  return list
+    .filter(x => x && x.name && !seen.has(x.name) && seen.add(x.name))
+    .sort((a, b) => (a.walkTime ?? 999) - (b.walkTime ?? 999))
+    .slice(0, n);
+}
+
+/* 이벤트로 보이는 메뉴 줄. 사장님이 메뉴판에 걸어 둔 혜택이 곧 방문 유도 재료다. */
+const EVENT_HINT = /(이벤트|무료|할인|증정|특가|오픈|첫 ?방문|체험|혜택|\d+\s*%|\d[\d,.]*\s*(만원|원))/;
+
+function introMaterial(data, jsons) {
+  const all = Array.isArray(jsons) ? jsons : [jsons];
+  const grab = t => all.flatMap(j => nodesOfType(j, t));
+
+  const sub = nearest(grab('SubwayStationInfo'), 1).map(s => ({
+    name: s.displayName || (s.name ? s.name + '역' : ''),
+    exit: s.nearestExit || '', walkTime: s.walkTime ?? null, distance: s.walkingDistance ?? null,
+  }));
+
+  const bus = nearest(grab('BusStation'), 3).map(b => ({
+    name: b.name, walkTime: b.walkTime ?? null, distance: b.walkingDistance ?? null,
+  }));
+
+  /* 리뷰 본문. 같은 글이 여러 노드에 중복으로 실려 있어 앞부분으로 중복을 제거한다. */
+  const seen = new Set(), reviews = [];
+  for (const t of ['PlaceDetailTopPhotoItem', 'VisitorReview', 'FsasReview']) {
+    for (const n of grab(t)) {
+      const txt = String(n.description || n.body || n.contents || '').trim().replace(/\s+/g, ' ');
+      if (txt.length < 30 || txt.length > 400) continue;
+      const key = txt.slice(0, 25);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      reviews.push(txt);
+    }
+  }
+
+  /* 메뉴는 아폴로 캐시에서 Menu 노드로 흩어져 저장된다. 배열 이름으로 찾으면 안 잡힌다. */
+  const menus = grab('Menu');
+  const events = [...new Set(menus.map(m => String(m?.name || '').trim())
+    .filter(n => n && EVENT_HINT.test(n)))].slice(0, 5);
+
+  /* 결제·편의시설·찾아오는 길도 같은 이유로 base 노드에서 직접 읽는다.
+     harvest 가 모은 data 에는 KEY_FIELDS 만 들어 있어 여기엔 없다. */
+  const base = grab('PlaceDetailBase')[0] || {};
+  const strList = v => (Array.isArray(v) ? v : []).map(x => String(x?.name ?? x).trim()).filter(Boolean);
+
+  return {
+    subway: sub[0] || null,
+    bus,
+    /* 버스정류장·지하철역 이름은 그 동네 사람만 쓰는 저경쟁 검색어다.
+       "쌍용패션거리" 처럼 상권 이름이 잡히면 소개글에 넣을 값어치가 있다. */
+    landmarks: [...new Set([...(sub[0] ? [sub[0].name] : []), ...bus.map(b => b.name)])],
+    road: String(base.road || data.road || '').trim(),
+    payments: strList(base.paymentInfo),
+    conveniences: strList(base.conveniences),
+    events,
+    reviews: reviews.slice(0, 6),
+    booking: base.bookingUrl || data.bookingUrl || null,
+    talktalk: base.talktalkUrl || data.talktalkUrl || null,
   };
 }
 
