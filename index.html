@@ -966,7 +966,7 @@ function bottleneck(pct){
        손님 행동은 직접 만들 수 없지만, 그 행동을 유발하는 장치(대표사진·구역 사진·리뷰 답글·소식)는 사장님이 만들 수 있습니다.
        아래 '간접유도' 항목부터 처리하세요. 결과지표는 그 뒤에 따라옵니다.`,
     D:`<b>거리·신뢰에서 막혀 있습니다.</b> 헬스장은 생활권 업종이라 거리 가중치가 특히 큽니다.
-       핀이 실제 출입구가 아닌 곳에 찍혀 있으면 바로 옆 동네 검색에서 통째로 빠집니다.
+       핀이 엉뚱한 건물에 찍혀 있으면 바로 옆 동네 검색에서 통째로 빠집니다.
        점수는 작아 보여도 잘못됐을 때 손실이 가장 큰 축입니다. 지금 지도를 열어 확인하세요.`
   }[low];
 
@@ -1212,6 +1212,16 @@ function setBox(id,text){
 }
 
 /* 복사 */
+/* 수집 결과가 다시 그려질 때마다 버튼이 새로 생기므로 위임으로 받는다 */
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#btn-copy-nums")) return;
+  const text = window.__numsText || "";
+  navigator.clipboard.writeText(text).then(showToast, ()=>{
+    const ta=document.createElement("textarea"); ta.value=text;
+    document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); showToast();
+  });
+});
+
 document.addEventListener("click", e=>{
   const b = e.target.closest(".copy"); if(!b) return;
   const el = $(b.dataset.t);
@@ -1769,11 +1779,16 @@ $("s-collect")?.addEventListener("click", async ()=>{
     const missBlock = (res.missing||[]).length && numKeys.length
       ? `<details class="man-more" style="margin-top:10px">
            <summary>못 가져온 값 ${res.missing.length}개 — 네이버가 준 숫자 ${numKeys.length}개 보기</summary>
-           <p class="hint" style="margin:6px 0">이 중에 찾는 숫자가 다른 이름으로 있을 수 있습니다.
-             화면을 캡처해 알려주시면 이름을 맞추겠습니다.</p>
+           <p class="hint" style="margin:6px 0">이 중에 찾는 숫자가 다른 이름으로 들어 있을 수 있습니다.
+             아래 버튼을 눌러 복사한 뒤 그대로 붙여넣어 주시면 이름을 맞추겠습니다.</p>
+           <button type="button" class="btn ghost" id="btn-copy-nums" style="margin-bottom:8px">
+             숫자 목록 복사</button>
            <dl class="kv-grid">${numKeys.sort().map(k=>
              `<dt>${k}</dt><dd>${nums[k]}</dd>`).join("")}</dl></details>`
       : "";
+    // 복사 내용은 따로 만들어 둔다 (버튼은 화면에 그려진 뒤 연결)
+    window.__numsText = `못 가져온 값: ${(res.missing||[]).join(", ")}\n`
+      + numKeys.sort().map(k=>`${k} = ${nums[k]}`).join("\n");
 
     // 자동 판정 적용 — 근거가 있는 항목만 체크하고, 어떤 근거인지 화면에 남긴다
     const judged = applyJudgement(res.judge || {});

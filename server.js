@@ -642,7 +642,7 @@ function judgeItems(data, present, userType, extra = {}) {
   // ── 사람 눈이 있어야만 아는 것 ──────────────────────────
   unknown('p1', '대표사진이 시설 전경인지는 사진을 봐야 압니다');
   unknown('p3', '어느 구역 사진이 있는지는 사진을 봐야 압니다');
-  unknown('d1', '핀이 실제 출입구인지는 지도를 직접 봐야 합니다');
+  unknown('d1', '지도를 열어 핀이 우리 건물 위에 있는지만 보시면 됩니다 (10초)');
 
   return J;
 }
@@ -1263,6 +1263,17 @@ async function probe(keyword, placeUrl) {
     if (r.attempts.length) {
       line('  시도 내역:');
       r.attempts.forEach(a => line(`     ${a.result} ← ${a.url || ''} ${a.status ? '(HTTP ' + a.status + ')' : ''}`));
+    }
+    /* 못 가져온 값이 있으면, 네이버가 준 숫자를 전부 보여준다.
+       그 안에 다른 이름으로 들어 있을 수 있고, 그게 이름을 맞출 유일한 단서다. */
+    if (r.ok && r.missing?.length) {
+      line(`  ⚠ 못 가져온 값: ${r.missing.join(', ')}`);
+      const nums = Object.entries(r.numbers || {});
+      if (nums.length) {
+        line(`  네이버가 준 숫자 ${nums.length}개 (이 중에 있을 수 있습니다):`);
+        nums.sort(([a], [b]) => a.localeCompare(b))
+            .forEach(([k, v]) => line(`     ${k.padEnd(28)} ${v}`));
+      }
     }
   }
 
