@@ -253,6 +253,14 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .srv-res{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:15px;background:var(--surface-2)}
 .srv-res h5{font-size:13.5px;font-weight:800;margin:0 0 10px}
 /* 저장 내역 */
+.calib-on{border:1px solid var(--ok-line);background:var(--ok-bg);color:var(--ok-fg);
+  border-radius:10px;padding:11px 13px;font-size:13px;margin-bottom:12px}
+.calib-on span{display:block;margin-top:4px;font-weight:700;color:var(--ink)}
+.calib-off{border:1px solid var(--line);background:var(--surface-2);color:var(--muted);
+  border-radius:10px;padding:11px 13px;font-size:12.5px;margin-bottom:12px}
+.calib-badge{font-style:normal;font-size:10.5px;font-weight:800;text-decoration:none;
+  background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-line);
+  border-radius:5px;padding:1px 5px;margin-left:5px;cursor:help}
 .build{margin-top:10px;font-size:11.5px;color:var(--muted);opacity:.8}
 .mb-row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .mb-txt{flex:1;min-width:0;font-size:14px}
@@ -687,6 +695,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <div class="card">
       <h2>할 일 <span id="r-todo-count" style="font-size:14px;color:var(--muted);font-weight:600"></span></h2>
       <p class="desc">순위 영향이 큰 순서입니다. 위에서부터 처리하세요.</p>
+      <div id="r-calib"></div>
       <div id="r-todo"></div>
     </div>
 
@@ -780,6 +789,19 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 /* 서버 연결 여부는 저장·불러오기에서도 쓰이므로 맨 앞에서 선언한다.
    뒤에서 선언하면 그 전에 실행되는 코드가 접근할 수 없다. */
 let SERVER = null;   // 연결되면 서버 정보 객체
+
+/* ============================================================
+   기준 보정
+
+   "사진 30장, 리뷰 50개" 같은 숫자는 내가 정한 추정치다. 근거가 약하다.
+   그런데 상위 3곳 분석을 돌리면 그 키워드에서 실제로 3위 안에 든 가게들의
+   숫자가 나온다. 추정치를 그 실측값으로 갈아치우면 기준이 근거를 갖는다.
+
+   지역·업종·경쟁 강도가 다 다르므로, 전국 공통 숫자보다 그 키워드의
+   실제 진입선이 맞다. 보정 전후를 화면에 밝혀 무엇이 바뀌었는지 보이게 한다.
+   ============================================================ */
+let CALIB = null;    // { bars:{photo:{bar,mine,...}}, keyword, at }
+const CALIB_MAP = { p2:'photo', p6:'review', p7:'blog', p10:'score' };
 
 const CONFIG = {
   aiModel: "claude-opus-5"
@@ -1028,8 +1050,11 @@ function autoScore(o, kwAnalysis){
 
   // r3 — 소개글 길이 (부분 점수)
   const len = o.intro.trim().length;
-  s.r3 = len>=500 ? 5 : len>=300 ? 3 : len>=100 ? 1 : 0;
-  s.r3_note = `소개글 ${len}자` + (len>=500 ? " — 충분합니다." : len>=300 ? " — 500자까지 200자 정도 더 채우세요." : " — 많이 부족합니다.");
+  const introBar = CALIB?.bars?.introLen?.bar || 500;   // 실측 진입선이 있으면 그걸 쓴다
+  s.r3 = len>=introBar ? 5 : len>=introBar*0.6 ? 3 : len>=introBar*0.2 ? 1 : 0;
+  s.r3_note = `소개글 ${len}자 (기준 ${Math.round(introBar)}자 · `
+    + (CALIB?.bars?.introLen ? `"${CALIB.keyword}" 상위 3곳 최저)` : `일반 권장값)`)
+    + (len>=introBar ? " — 충분합니다." : ` — ${Math.max(0, Math.round(introBar-len))}자 더 필요합니다.`);
 
   // r4 — 키워드 매칭 (핵심, 8점 배분)
   s.r4 = Math.round(8 * kwAnalysis.coverage);
@@ -1189,6 +1214,7 @@ $("btn-run").addEventListener("click", ()=>{
     .sort((a,b)=>b.lost-a.lost);
 
   $("r-todo-count").textContent = todo.length ? `· ${todo.length}건` : "";
+  $("r-calib").innerHTML = calibNote();   // 어떤 기준으로 재는지 먼저 밝힌다
   $("r-todo").innerHTML = todo.length
     ? todo.map(({x,lost})=>{
         const c = CTRL[x.c], P = PILLARS[x.p];
@@ -1781,6 +1807,7 @@ function snapshot(){
   o.fac  = [...document.querySelectorAll("[data-fac]:checked")].map(e=>e.value);
   o.chk  = [...document.querySelectorAll("[data-item]:checked")].map(e=>e.dataset.item);
   o.work = readWork();          // 개선 기록도 함께 옮긴다
+  o.calib = CALIB;              // 보정 기준도 기기 사이에 따라다녀야 한다
   o.at   = new Date().toISOString();
   return o;
 }
@@ -1791,6 +1818,7 @@ function restore(o){
   document.querySelectorAll("[data-fac]").forEach(e => e.checked = (o.fac||[]).includes(e.value));
   document.querySelectorAll("[data-item]").forEach(e => e.checked = (o.chk||[]).includes(e.dataset.item));
   if(Array.isArray(o.work)) writeWork(o.work);
+  if(o.calib && o.calib.bars) CALIB = o.calib;
   $("i-intro").dispatchEvent(new Event("input"));
 }
 
@@ -2181,6 +2209,51 @@ function foldFilledInputs(){
   foldSection("sec3", "체크는 선택 — 아래 버튼만 누르면 진단됩니다");
 }
 
+/* 상위 3곳 실측으로 기준을 갈아치우고, 그 기준으로 다시 판정한다 */
+function applyCalibration(comp){
+  if(!comp || !Array.isArray(comp.comparison)) return;
+  const bars = {};
+  comp.comparison.forEach(c=>{
+    if(!c.unknown && c.min != null) bars[c.key] = {
+      bar: c.min, mine: c.mine, rivals: c.rivals, label: c.label, unit: c.unit };
+  });
+  if(!Object.keys(bars).length) return;
+
+  CALIB = { bars, keyword: comp.keyword || $("i-kw1").value.trim(), at: new Date().toISOString() };
+
+  document.querySelectorAll(".calib-badge").forEach(e=>e.remove());
+  let changed = 0;
+  for(const [id, key] of Object.entries(CALIB_MAP)){
+    const b = bars[key]; if(!b || b.mine == null) continue;
+    const box = $("chk-"+id); if(!box) continue;
+    const pass = Number(b.mine) >= Number(b.bar);
+    if(box.checked !== pass) changed++;
+    box.checked = pass;
+
+    const label = box.closest(".item")?.querySelector(".t");
+    if(label && !label.querySelector(".calib-badge")){
+      const u = document.createElement("u");
+      u.className = "calib-badge";
+      u.textContent = `기준 ${b.bar}${b.unit}`;
+      u.title = `"${CALIB.keyword}" 상위 3곳 실측 [${b.rivals.join(', ')}] 중 최저값.\n`
+              + `우리 ${b.mine}${b.unit} → ${pass ? '충족' : `${Math.round((b.bar-b.mine)*10)/10}${b.unit} 부족`}`;
+      label.appendChild(u);
+    }
+  }
+  save();
+  return changed;
+}
+
+/* 무엇이 실측이고 무엇이 추정인지 화면에 밝힌다 */
+function calibNote(){
+  if(!CALIB) return `<div class="calib-off">기준 숫자(사진 30장·리뷰 50개 등)는 <b>추정값</b>입니다.
+    <b>상위 3곳 분석</b>을 돌리면 이 키워드의 실제 진입선으로 바뀝니다.</div>`;
+  const rows = Object.entries(CALIB.bars)
+    .map(([k,b])=>`${b.label} ${b.bar}${b.unit}`).join(" · ");
+  return `<div class="calib-on"><b>기준 보정됨</b> — "${CALIB.keyword}" 상위 3곳 실측 진입선을 씁니다.
+    <span>${rows}</span></div>`;
+}
+
 function applyJudgement(judge){
   const ITEM = Object.fromEntries(ITEMS.map(x=>[x.id,x]));
   const done = [], todo = [], manual = [], unavail = [];
@@ -2485,6 +2558,7 @@ $("s-comp")?.addEventListener("click", async ()=>{
     const r = await (await fetch(apiUrl(`/api/competitors?keyword=${encodeURIComponent(kw)}&url=${encodeURIComponent(url)}`))).json();
     if(!r.ok){ $("s-out").innerHTML = srvError(`"${kw}" 상위권 분석 실패 (${r.stage} 단계)`, r); return; }
     window.__lastComp = r;   // 지시문 만들 때 경쟁사 결과를 재료로 쓴다
+    applyCalibration(r);     // 추정 기준을 이 키워드의 실측 진입선으로 바꾼다
     renderPrompt();
 
     const cols = r.rivals.map(v=>`${v.rank}위`).join("</th><th>");
