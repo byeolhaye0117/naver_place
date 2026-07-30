@@ -296,6 +296,11 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .jb.na b{color:var(--ink)}
 .jb.fill{border-color:var(--acc-line);background:var(--acc-bg);margin-top:14px}
 .jb .man-note{margin:6px 0 8px;font-weight:600}
+.jb li:has(.man-row){list-style:none;margin-left:-18px}
+.man-row{display:flex;gap:8px;align-items:flex-start;cursor:pointer;padding:2px 0}
+.man-row input{margin-top:3px;width:16px;height:16px;flex:none;accent-color:var(--accent);cursor:pointer}
+.man-row input:checked + span b{text-decoration:line-through;color:var(--muted)}
+.jb #btn-run-man,.jb #btn-run-na{margin-top:8px;font-size:13px;padding:9px 14px}
 .jb .w{font-style:normal;font-size:11.5px;font-weight:800;color:var(--accent);
   background:var(--acc-bg);border:1px solid var(--acc-line);border-radius:5px;padding:0 4px;margin-left:2px}
 .man-more{margin:6px 0 4px}
@@ -1214,6 +1219,21 @@ function setBox(id,text){
 }
 
 /* 복사 */
+/* 결과 안에서 체크하면 3단계 체크박스와 같이 움직인다.
+   같은 항목이 두 곳에 보이는데 따로 논다면 어느 쪽이 진짜인지 알 수 없다. */
+document.addEventListener("change", e=>{
+  const box = e.target.closest(".man-chk"); if(!box) return;
+  const real = $("chk-" + box.dataset.man);
+  if(real){ real.checked = box.checked; save(); }
+});
+
+/* 결과 화면에서 바로 진단 실행 */
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#btn-run-man") && !e.target.closest("#btn-run-na")) return;
+  $("btn-run").click();
+  $("result")?.scrollIntoView({ behavior:"smooth", block:"start" });
+});
+
 /* 수집 결과가 다시 그려질 때마다 버튼이 새로 생기므로 위임으로 받는다 */
 document.addEventListener("click", e=>{
   if(!e.target.closest("#btn-copy-nums")) return;
@@ -1705,7 +1725,15 @@ function applyJudgement(judge){
   const line = ({item,v}) => `<li><b>${item.t}</b> — ${v.evidence}</li>`;
   // 직접 확인은 무게 순으로 세운다. 열한 개를 한 번에 들이밀면 아무것도 안 하게 된다.
   manual.sort((a,b)=> b.item.w - a.item.w);
-  const lineW = ({item,v}) => `<li><b>${item.t}</b> <em class="w">${item.w}점</em> — ${v.evidence}</li>`;
+  /* 여기서 바로 체크할 수 있어야 한다.
+     확인은 이 목록을 보면서 하는데 체크는 3단계까지 내려가야 한다면 두 번 일하는 것이다. */
+  const lineW = ({item,v}) => {
+    const on = $("chk-"+item.id)?.checked ? " checked" : "";
+    return `<li><label class="man-row">
+      <input type="checkbox" class="man-chk" data-man="${item.id}"${on}>
+      <span><b>${item.t}</b> <em class="w">${item.w}점</em> — ${v.evidence}</span>
+    </label></li>`;
+  };
   const first = manual.slice(0,3), rest = manual.slice(3);
 
   const html = `
@@ -1720,12 +1748,14 @@ function applyJudgement(judge){
         ${rest.length?`<details class="man-more"><summary>나머지 ${rest.length}개 (무게 작음)</summary>
           <ul>${rest.map(lineW).join("")}</ul></details>`:""}
         <p>사진을 눈으로 보거나 지도를 직접 봐야 알 수 있어서 자동으로 판정하지 않습니다.
-           추측으로 채우면 점수가 거짓이 되므로 비워 둡니다.</p></div>`:""}
+           추측으로 채우면 점수가 거짓이 되므로 비워 둡니다.</p>
+        <button type="button" class="btn" id="btn-run-man">확인한 것만 체크하고 진단 →</button></div>`:""}
       ${unavail.length?`<div class="jb na"><b>네이버가 공개하지 않음 ${unavail.length}개</b>
         <ul>${unavail.map(lineW).join("")}</ul>
         <p>이 값들은 네이버가 아예 내주지 않아 <b>누구도 자동으로 확인할 수 없습니다.</b>
            도구 문제가 아니니 신경 쓰지 않으셔도 됩니다.
-           스마트플레이스 관리자 화면에서 보고 직접 체크하시면 점수에 반영됩니다.</p></div>`:""}
+           스마트플레이스 관리자 화면에서 보고 직접 체크하시면 점수에 반영됩니다.</p>
+        <button type="button" class="btn ghost" id="btn-run-na">체크한 대로 다시 진단 →</button></div>`:""}
     </div>`;
   return { html, auto: done.length + todo.length, manual: manual.length, unavail: unavail.length };
 }
