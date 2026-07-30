@@ -1759,6 +1759,19 @@ $("s-collect")?.addEventListener("click", async ()=>{
     const rows = Object.entries(d).map(([k,v])=>
       `<dt>${FIELD_LABEL[k]||k}</dt><dd>${String(v).slice(0,120)}</dd>`).join("");
 
+    /* 못 가져온 값이 있으면, 네이버가 준 숫자를 통째로 보여준다.
+       거기에 그 값이 다른 이름으로 들어 있을 수 있고, 그러면 이름을 맞출 수 있다. */
+    const nums = res.numbers || {};
+    const numKeys = Object.keys(nums);
+    const missBlock = (res.missing||[]).length && numKeys.length
+      ? `<details class="man-more" style="margin-top:10px">
+           <summary>못 가져온 값 ${res.missing.length}개 — 네이버가 준 숫자 ${numKeys.length}개 보기</summary>
+           <p class="hint" style="margin:6px 0">이 중에 찾는 숫자가 다른 이름으로 있을 수 있습니다.
+             화면을 캡처해 알려주시면 이름을 맞추겠습니다.</p>
+           <dl class="kv-grid">${numKeys.sort().map(k=>
+             `<dt>${k}</dt><dd>${nums[k]}</dd>`).join("")}</dl></details>`
+      : "";
+
     // 자동 판정 적용 — 근거가 있는 항목만 체크하고, 어떤 근거인지 화면에 남긴다
     const judged = applyJudgement(res.judge || {});
     foldFilledInputs();   // 채워진 1·2단계는 접는다
@@ -1778,6 +1791,7 @@ $("s-collect")?.addEventListener("click", async ()=>{
             : ""}
         ${dv.areaFrom ? `<p style="margin-top:6px">지역은 ${dv.areaFrom}에서 뽑았습니다.</p>` : ""}</div>` : ""}
       ${judged.html}
+      ${missBlock}
     </div>`;
     showToast(`입력 ${filled.length}곳 · 판정 ${judged.auto}개 자동 완료`);
   }catch(e){

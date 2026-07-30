@@ -273,6 +273,41 @@ const COUNT_FIELDS = [
   'newsCount', 'feedCount', 'announcementCount', 'visitorReviewScore',
 ];
 
+/* 이름 목록으로 찾는 방식은 네이버가 이름을 바꾸면 그대로 놓친다.
+   실제로 블로그 리뷰·저장수·소식이 전부 "가져오지 못했습니다"로 남았다.
+   그래서 이름을 모를 때는 뜻으로 찾는다 — 무엇에 관한 키인지 + 개수인지. */
+const COUNT_PATTERNS = {
+  visitorReviewCount:  [/visitor|review/i,                        /count|total|num|cnt/i],
+  blogCafeReviewCount: [/blog|cafe|ugc/i,                         /count|total|num|cnt/i],
+  bookmarkCount:       [/bookmark|favorite|keep|save|wish|scrap/i, /count|total|num|cnt/i],
+  newsCount:           [/news|feed|announce|notice|event|post/i,  /count|total|num|cnt/i],
+  imageCount:          [/image|photo|picture/i,                   /count|total|num|cnt/i],
+};
+
+/* 좌표나 아이디 같은 것 말고, 세는 값으로 보이는 숫자만 모은다 */
+function collectNumbers(node, out = {}, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 6 || Object.keys(out).length > 80) return out;
+  for (const [k, v] of Object.entries(node)) {
+    if (typeof v === 'number' && isFinite(v) && !/^(x|y|lat|lng|longitude|latitude|id)$/i.test(k)
+        && out[k] === undefined) out[k] = v;
+    if (v && typeof v === 'object') collectNumbers(v, out, depth + 1);
+  }
+  return out;
+}
+
+function scanNumeric(node, reWhat, reCount, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 6) return null;
+  for (const [k, v] of Object.entries(node)) {
+    if (typeof v === 'number' && isFinite(v) && v >= 0 && reWhat.test(k) && reCount.test(k))
+      return { key: k, value: v };
+    if (v && typeof v === 'object') {
+      const hit = scanNumeric(v, reWhat, reCount, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 /* 이 플레이스를 가리키는 노드를 찾는다.
    아폴로 캐시는 "PlaceDetailBase:11716617" 처럼 키에 번호가 박히고,
    그렇지 않은 경우에도 노드 안에 id 가 들어 있다. */
@@ -454,7 +489,9 @@ function listStats(jsons) {
 
 function judgeItems(data, present, userType, extra = {}) {
   const loose = extra.loose || new Set();
-  const note = k => loose.has(k) ? ' (가게 정보 밖에서 읽은 값 — 확인해 주세요)' : '';
+  const foundBy = extra.foundBy || {};
+  const note = k => loose.has(k) ? ' (가게 정보 밖에서 읽은 값 — 확인해 주세요)'
+                  : foundBy[k]   ? ` (${foundBy[k]} 에서 읽음)` : '';
   let usedKey = null;   // 방금 n() 이 어떤 필드에서 값을 가져왔는지
   const n = (...k) => {
     for (const x of k) { const v = Number(data[x]); if (isFinite(v)) { usedKey = x; return v; } }
@@ -513,9 +550,25 @@ function judgeItems(data, present, userType, extra = {}) {
   conv == null ? unknown('r7', '편의시설 정보를 가져오지 못했습니다')
                : put('r7', conv >= 4, `편의시설 ${conv}개 등록`);
 
-  has('isBusinessRegistered', 'businessRegistration', 'certified', 'isCertified', 'ownerVerified')
-    ? put('d2', true, '사업자 인증 확인됨')
-    : unknown('d2', '인증 여부를 확인하지 못했습니다');
+  /* 스마트플레이스는 사업자 인증을 거쳐야 등록·관리할 수 있다.
+     그러니 사장님이 직접 등록해 둔 흔적(예약·톡톡·대표키워드·소개글)이 있으면
+     인증은 이미 끝난 것으로 본다. 전용 필드만 찾다가 "모른다"고 남기는 건
+     사실과 다른 데다, 사장님에게 확인할 일거리만 늘린다. */
+  const ownerSigns = [
+    has('bookingUrl') && '네이버 예약',
+    has('talktalkUrl') && '톡톡',
+    has('keywords') && '대표키워드',
+    !isEmptyVal(data.description) && '소개글',
+    has('menus', 'menuInfo', 'prices') && '메뉴·가격',
+  ].filter(Boolean);
+
+  if (has('isBusinessRegistered', 'businessRegistration', 'certified', 'isCertified', 'ownerVerified'))
+    put('d2', true, '사업자 인증 확인됨');
+  else if (ownerSigns.length)
+    put('d2', true, `사장님이 직접 등록·운영 중 (${ownerSigns.join('·')} 등록됨)` +
+                    ` — 스마트플레이스 등록 자체가 사업자 인증을 거칩니다`);
+  else
+    unknown('d2', '사장님이 등록한 흔적을 찾지 못했습니다 (미등록 플레이스일 수 있습니다)');
 
   // ── 카테고리: 주력 업종과 맞는지 ────────────────────────
   const cat = String(data.category || '');
@@ -531,7 +584,7 @@ function judgeItems(data, present, userType, extra = {}) {
   // ── 소식 ────────────────────────────────────────────────
   const news = n('newsCount', 'feedCount', 'announcementCount', 'newsList', 'feedList');
   news == null ? unknown('p5', '소식 게시 여부를 확인하지 못했습니다')
-               : put('p5', news > 0, `소식 ${news}건`);
+               : put('p5', news > 0, `소식 ${news}건${src()}`);
 
   /* ── 리뷰 목록을 직접 세서 판정 ─────────────────────────
      목록을 못 가져오면 예전처럼 직접 확인으로 남긴다.
@@ -571,6 +624,8 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
   const data = {};
   const present = new Set();
   const looseCount = new Set();   // 가게 노드 밖에서 주운 개수 항목
+  const foundBy = {};             // 이름이 아니라 뜻으로 찾은 항목 (target → 실제 키 이름)
+  const numbers = {};             // 가게 노드 안의 숫자 전부 — 못 찾은 값을 추적할 단서
   const jsons = [];
   const sources = [];
 
@@ -600,6 +655,19 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
           if (isEmptyVal(v) || !isEmptyVal(data[k])) continue;
           data[k] = v;
           if (COUNT_FIELDS.includes(k)) looseCount.add(k);
+        }
+
+        /* 가게 노드 안의 숫자를 전부 모아 둔다.
+           뜻으로도 못 찾은 값이 있을 때, 어떤 이름으로 오는지 볼 유일한 단서다. */
+        for (const node of scoped) collectNumbers(node, numbers);
+
+        /* 이름으로 못 찾은 개수는 뜻으로 찾아본다. 가게 노드 안에서만 본다. */
+        for (const [target, [reWhat, reCount]] of Object.entries(COUNT_PATTERNS)) {
+          if (!isEmptyVal(data[target])) continue;
+          for (const node of scoped) {
+            const hit = scanNumeric(node, reWhat, reCount);
+            if (hit) { data[target] = hit.value; foundBy[target] = hit.key; break; }
+          }
         }
       } else {
         harvest(json, PLACE_FIELDS, data);
@@ -637,8 +705,10 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
     sources,                       // 어느 주소가 무엇을 보탰는지
     fields: found, data, attempts,
     missing: KEY_FIELDS.filter(f => data[f] === undefined),
+    numbers,
+    foundBy,
     judge: judgeItems(data, present, userType, {
-      loose: looseCount,
+      loose: looseCount, foundBy,
       reviews: listStats(jsons.filter((_, i) => /review/.test(sources[i]?.url || ''))) || listStats(jsons),
       photos: listStats(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
     }),
