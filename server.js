@@ -251,6 +251,7 @@ const PLACE_STRATEGIES = [
   id => `https://pcmap.place.naver.com/place/${id}/home`,
   id => `https://m.place.naver.com/place/${id}/review/visitor`,
   id => `https://m.place.naver.com/place/${id}/review/ugc`,
+  id => `https://m.place.naver.com/place/${id}/photo`,
   id => `https://m.place.naver.com/place/${id}/information`,
   id => `https://m.place.naver.com/hairshop/${id}/home`,
   id => `https://map.naver.com/p/api/place/summary/${id}`,
@@ -396,8 +397,70 @@ function deriveInputs(data, jsons) {
  * 근거가 없으면 null 을 반환해 "직접 확인"으로 남긴다.
  * 애매한 것을 추측으로 채우면 점수가 거짓이 되므로, 모르면 모른다고 한다.
  * ========================================================================== */
-function judgeItems(data, present, userType) {
-  const n = (...k) => { for (const x of k) { const v = Number(data[x]); if (isFinite(v)) return v; } return null; };
+/* ============================================================================
+ * 목록에서 직접 세기
+ *
+ * 리뷰 답글 비율, 마지막 리뷰 날짜, 마지막 사진 날짜는 "개수" 필드로 오지 않는다.
+ * 목록 안에 날짜와 답글이 들어 있으므로 직접 센다.
+ * 목록을 못 찾으면 아무것도 만들지 않는다 — 없는 것을 추측하지 않기 위해서다.
+ * ========================================================================== */
+
+const DATE_KEYS  = ['created', 'createdAt', 'createdDateTime', 'created_at', 'visited', 'visitDate',
+                    'visitedAt', 'date', 'writtenAt', 'regDate', 'registeredAt', 'updateTime', 'uploadDate'];
+const REPLY_KEYS = ['reply', 'ownerReply', 'authorReply', 'replyBody', 'ownerComment', 'comment', 'replies'];
+
+function parseWhen(v) {
+  if (v == null) return null;
+  if (typeof v === 'number') return v > 1e12 ? v : v * 1000;   // 초/밀리초 둘 다 온다
+  const s = String(v).trim().replace(/\./g, '-').replace(/-+$/, '');
+  const t = Date.parse(/^\d{4}-\d{1,2}-\d{1,2}$/.test(s) ? s + 'T00:00:00' : s);
+  return isFinite(t) ? t : null;
+}
+
+const whenOf = o => { for (const k of DATE_KEYS) { const t = parseWhen(o?.[k]); if (t) return t; } return null; };
+const hasReply = o => REPLY_KEYS.some(k => {
+  const v = o?.[k];
+  return Array.isArray(v) ? v.length > 0 : (v != null && v !== '' && v !== false);
+});
+
+/* 날짜가 들어 있는 객체 목록을 찾는다. 이름을 모르므로 "모양"으로 찾는다. */
+function findDatedList(node, minLen = 3, depth = 0, best = null) {
+  if (!node || typeof node !== 'object' || depth > 12) return best;
+  for (const v of Object.values(node)) {
+    if (Array.isArray(v) && v.length >= minLen) {
+      const dated = v.filter(x => x && typeof x === 'object' && whenOf(x));
+      if (dated.length >= minLen && (!best || dated.length > best.length)) best = dated;
+    }
+    if (v && typeof v === 'object') best = findDatedList(v, minLen, depth + 1, best);
+  }
+  return best;
+}
+
+function listStats(jsons) {
+  const items = jsons.map(j => findDatedList(j)).filter(Boolean)
+                     .sort((a, b) => b.length - a.length)[0];
+  if (!items) return null;
+  const times = items.map(whenOf).filter(Boolean).sort((a, b) => b - a);
+  if (!times.length) return null;
+  const replied = items.filter(hasReply).length;
+  return {
+    n: items.length,
+    latest: times[0],
+    daysSince: Math.floor((Date.now() - times[0]) / 86400000),
+    replyRate: items.length ? replied / items.length : 0,
+    replied,
+  };
+}
+
+function judgeItems(data, present, userType, extra = {}) {
+  const loose = extra.loose || new Set();
+  const note = k => loose.has(k) ? ' (가게 정보 밖에서 읽은 값 — 확인해 주세요)' : '';
+  let usedKey = null;   // 방금 n() 이 어떤 필드에서 값을 가져왔는지
+  const n = (...k) => {
+    for (const x of k) { const v = Number(data[x]); if (isFinite(v)) { usedKey = x; return v; } }
+    usedKey = null; return null;
+  };
+  const src = () => note(usedKey);
   const has = (...k) => k.some(x => present.has(x) || !isEmptyVal(data[x]));
 
   const J = {};
@@ -408,21 +471,21 @@ function judgeItems(data, present, userType) {
   // ── 수치가 그대로 있는 항목 ──────────────────────────────
   const photo = n('imageCount', 'photoCount', 'photoTotal', 'imageTotal', 'totalImageCount');
   photo == null ? unknown('p2', '사진 수를 가져오지 못했습니다')
-                : put('p2', photo >= 30, `사진 ${photo}장`);
+                : put('p2', photo >= 30, `사진 ${photo}장${src()}`);
 
   const rev = n('visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal',
                 'visitorReviewsCount', 'totalReviewCount', 'fsasReviewCount', 'reviewCount', 'reviewTotal');
   rev == null ? unknown('p6', '리뷰 수를 가져오지 못했습니다')
-              : put('p6', rev >= 50, `방문자 리뷰 ${rev}개`);
+              : put('p6', rev >= 50, `방문자 리뷰 ${rev.toLocaleString('ko-KR')}개${src()}`);
 
   const blog = n('blogCafeReviewCount', 'blogCafeReviewTotal', 'blogReviewCount',
                  'cafeReviewCount', 'ugcReviewCount');
   blog == null ? unknown('p7', '블로그 리뷰 수를 가져오지 못했습니다')
-               : put('p7', blog >= 10, `블로그 리뷰 ${blog}개`);
+               : put('p7', blog >= 10, `블로그 리뷰 ${blog}개${src()}`);
 
   const save = n('bookmarkCount', 'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount');
   save == null ? unknown('p10', '저장 수를 가져오지 못했습니다')
-               : put('p10', save >= 100, `저장 ${save}회`);
+               : put('p10', save >= 100, `저장 ${save.toLocaleString('ko-KR')}회${src()}`);
 
   // ── 있으면 충족인 항목 ──────────────────────────────────
   put('p11', has('bookingUrl', 'talktalkUrl'),
@@ -470,22 +533,44 @@ function judgeItems(data, present, userType) {
   news == null ? unknown('p5', '소식 게시 여부를 확인하지 못했습니다')
                : put('p5', news > 0, `소식 ${news}건`);
 
-  // ── 원리적으로 자동 판정이 불가능한 것 ──────────────────
+  /* ── 리뷰 목록을 직접 세서 판정 ─────────────────────────
+     목록을 못 가져오면 예전처럼 직접 확인으로 남긴다.
+     표본은 응답에 실려 온 최근 N개뿐이므로 근거에 그 사실을 적는다. */
+  const rs = extra.reviews;
+  if (rs && rs.n >= 3) {
+    put('p9', rs.daysSince <= 30,
+        `마지막 리뷰 ${rs.daysSince}일 전 (최근 ${rs.n}개 기준)`);
+    put('p8', rs.replyRate >= 0.9,
+        `최근 리뷰 ${rs.n}개 중 ${rs.replied}개에 답글 (${Math.round(rs.replyRate * 100)}%)`);
+  } else {
+    unknown('p9', '리뷰 목록을 가져오지 못했습니다');
+    unknown('p8', '리뷰 목록을 가져오지 못해 답글 비율을 세지 못했습니다');
+  }
+
+  const ps = extra.photos;
+  if (ps && ps.n >= 3) {
+    put('p4', ps.daysSince <= 183, `마지막 사진 ${ps.daysSince}일 전 (최근 ${ps.n}장 기준)`);
+  } else {
+    unknown('p4', '사진 업로드 시점이 응답에 없습니다');
+  }
+
+  // ── 사람 눈이 있어야만 아는 것 ──────────────────────────
   unknown('p1', '대표사진이 시설 전경인지는 사진을 봐야 압니다');
   unknown('p3', '어느 구역 사진이 있는지는 사진을 봐야 압니다');
-  unknown('p4', '사진 업로드 시점은 공개 정보로 확인되지 않습니다');
-  unknown('p8', '리뷰별 답글 유무는 리뷰를 하나씩 열어봐야 합니다');
-  unknown('p9', '리뷰 작성일은 리뷰 목록을 열어봐야 합니다');
   unknown('d1', '핀이 실제 출입구인지는 지도를 직접 봐야 합니다');
 
   return J;
 }
 
-async function collectPlace(idOrUrl, userType) {
+/* deep=true 는 내 가게용. 리뷰·사진 탭까지 반드시 들러 답글 비율과 갱신 시점을 센다.
+   경쟁사 분석에서는 그 항목을 쓰지 않으므로 얕게 훑어 왕복을 줄인다. */
+async function collectPlace(idOrUrl, userType, opts = {}) {
+  const deep = opts.deep !== false;
   const id = await resolvePlaceId(idOrUrl);
   const attempts = [];
   const data = {};
   const present = new Set();
+  const looseCount = new Set();   // 가게 노드 밖에서 주운 개수 항목
   const jsons = [];
   const sources = [];
 
@@ -508,11 +593,13 @@ async function collectPlace(idOrUrl, userType) {
           harvest(s, PLACE_FIELDS, data);
           harvestPresence(s, PLACE_FIELDS, present);
         }
-        // 개수가 아닌 항목(주소·전화·링크 등)은 바깥에서 보충해도 위험하지 않다
+        /* 가게 노드에 없는 값은 바깥에서 보충한다. 버리면 진짜 값까지 잃는다.
+           다만 개수 항목을 바깥에서 주웠다는 사실은 기억해 두고 근거에 밝힌다. */
         const loose = harvest(json, PLACE_FIELDS, {});
         for (const [k, v] of Object.entries(loose)) {
-          if (COUNT_FIELDS.includes(k)) continue;
-          if (isEmptyVal(data[k]) && !isEmptyVal(v)) data[k] = v;
+          if (isEmptyVal(v) || !isEmptyVal(data[k])) continue;
+          data[k] = v;
+          if (COUNT_FIELDS.includes(k)) looseCount.add(k);
         }
       } else {
         harvest(json, PLACE_FIELDS, data);
@@ -527,8 +614,12 @@ async function collectPlace(idOrUrl, userType) {
       jsons.push(json);
       sources.push({ url, gained });
 
-      // 필요한 값이 다 모였으면 남은 주소는 두드리지 않는다
-      if (KEY_FIELDS.every(f => data[f] !== undefined)) break;
+      // 필요한 값이 다 모였으면 남은 주소는 두드리지 않는다.
+      // 다만 깊게 볼 때는 리뷰·사진 탭을 한 번은 들러야 답글·갱신 판정이 산다.
+      const seen = re => sources.some(x => re.test(x.url));
+      const enough = KEY_FIELDS.every(f => data[f] !== undefined)
+        && (!deep || (seen(/review/) && seen(/photo/)));
+      if (enough) break;
     } catch (e) {
       attempts.push({ url, result: `요청 실패: ${e.message}` });
     }
@@ -546,7 +637,11 @@ async function collectPlace(idOrUrl, userType) {
     sources,                       // 어느 주소가 무엇을 보탰는지
     fields: found, data, attempts,
     missing: KEY_FIELDS.filter(f => data[f] === undefined),
-    judge: judgeItems(data, present, userType),
+    judge: judgeItems(data, present, userType, {
+      loose: looseCount,
+      reviews: listStats(jsons.filter((_, i) => /review/.test(sources[i]?.url || ''))) || listStats(jsons),
+      photos: listStats(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
+    }),
     derived: deriveInputs(data, jsons),
   };
 }
@@ -822,7 +917,7 @@ async function analyzeCompetitors(keyword, myUrl, topN = 3) {
   const rivals = [];
   for (const p of top) {
     await new Promise(r => setTimeout(r, 300));
-    const c = await collectPlace(p.id);
+    const c = await collectPlace(p.id, undefined, { deep: false });
     rivals.push({ rank: p.rank, id: p.id, name: p.name, ok: c.ok, m: c.ok ? toMetrics(c.data) : {} });
   }
 
