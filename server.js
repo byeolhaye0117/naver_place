@@ -572,8 +572,11 @@ function deriveInputs(data, jsons) {
     for (const j of all) for (const nm of names) { const v = harvestList(j, nm); if (v) return v; }
     return [];
   };
-  const kwList = pick('keywords')
-    .map(k => String(k?.name ?? k).trim()).filter(Boolean);
+  /* 네이버는 대표키워드를 keywordList 라는 이름으로 준다. keywords 만 찾다가
+     "관리자 전용 값이라 자동 수집이 불가능하다"고 잘못 안내하고 있었다.
+     홈·정보 어느 쪽에도 들어 있으므로 이름만 맞추면 그냥 딸려 온다. */
+  const kwList = pick('keywordList', 'keywords', 'repKeywords', 'keywordsForBusiness')
+    .map(k => String(k?.name ?? k?.keyword ?? k).trim()).filter(Boolean);
   const menus  = pick('menus', 'menuInfo');
   /* 도로명 주소에는 동이 없는 경우가 많다 ("천안시 서북구 미란7길 26").
      지번 주소를 같이 봐야 쌍용동이 나온다. 손님은 구가 아니라 동으로 검색한다. */
