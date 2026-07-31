@@ -424,6 +424,14 @@ table.kwf td .v{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:6
 .kwf-note{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.75}
 .kwf-use{margin-top:12px}
 
+/* 접어 두는 예비 기능 */
+.fold-x{margin-top:14px;border:1px solid var(--line);border-radius:11px;padding:11px 14px;background:var(--surface-2)}
+.fold-x > summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--muted);list-style:none}
+.fold-x > summary::-webkit-details-marker{display:none}
+.fold-x > summary::before{content:"▸ "}
+.fold-x[open] > summary::before{content:"▾ "}
+.fold-x > summary:hover{color:var(--ink)}
+
 /* 페이지 섹션 제목 — 주황 세로 막대 + 부제 */
 .sec-h{margin:26px 0 12px;padding-left:12px;border-left:4px solid var(--accent)}
 .sec-h b{display:block;font-size:17px;font-weight:800;letter-spacing:-.02em}
@@ -438,6 +446,8 @@ table.kwf td .v{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:6
 .tcard i{display:block;font-style:normal;font-size:26px;line-height:1;margin-bottom:9px}
 .tcard b{display:block;font-size:14.5px;font-weight:800;letter-spacing:-.02em}
 .tcard span{display:block;font-size:12px;color:var(--muted);margin-top:5px;line-height:1.55}
+.tcard.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 1px var(--accent) inset}
+.tcard.on b{color:var(--accent)}
 .tcard u{display:inline-block;text-decoration:none;font-size:11px;font-weight:700;margin-top:9px;
   color:var(--ok-fg);background:var(--ok-bg);border-radius:6px;padding:2px 8px}
 
@@ -1010,22 +1020,28 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <div id="saves-list" class="saves-list"></div>
       </section>
 
-      <!-- 기기 간 이어쓰기 -->
+      <!-- 저장과 초기화 -->
       <section class="card" id="xfer">
-        <h2>📱💻 다른 기기로 이어서 하기 <span id="save-state" class="save-state">저장됨</span></h2>
-        <p class="desc" id="xfer-desc">입력한 내용은 이 기기에 자동으로 저장됩니다. 다른 기기에서 이어 하시려면 코드를 옮기세요.</p>
+        <h2>💾 저장 <span id="save-state" class="save-state">저장됨</span></h2>
+        <p class="desc" id="xfer-desc">입력한 내용은 이 기기에 자동으로 저장됩니다.</p>
 
-        <div id="xfer-box" style="margin-top:16px">
-          <textarea id="xfer-code" class="xfer-code" rows="3" spellcheck="false"
-            placeholder="① 보낼 때 — 아래 '코드 만들기'를 누르면 여기에 코드가 생깁니다&#10;② 받을 때 — 받은 코드를 여기에 붙여넣고 '코드 불러오기'를 누르세요"></textarea>
-        </div>
-        <div class="btn-row">
-          <button class="btn dark" id="btn-export" type="button">코드 만들어 복사</button>
-          <button class="btn ghost" id="btn-import" type="button">코드 불러오기</button>
-        </div>
-        <p class="hint">보낼 때는 <b>코드 만들어 복사</b> → 카카오톡 '나에게 보내기'에 붙여넣기.<br>
-          받을 때는 그 코드를 위 칸에 붙여넣고 <b>코드 불러오기</b>.</p>
-        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <!-- 서버가 있으면 기기 사이 저장은 자동이라 코드 옮기기는 접어 둔다.
+             다만 서버를 못 쓸 때는 이것이 유일한 이동 수단이라 지우지는 않는다. -->
+        <details class="fold-x" id="xfer-fold">
+          <summary>서버를 못 쓸 때 - 코드로 다른 기기에 옮기기</summary>
+          <div id="xfer-box" style="margin-top:12px">
+            <textarea id="xfer-code" class="xfer-code" rows="3" spellcheck="false"
+              placeholder="보낼 때는 아래 '코드 만들어 복사'를 누르면 여기에 코드가 생깁니다&#10;받을 때는 받은 코드를 여기에 붙여넣고 '코드 불러오기'를 누르세요"></textarea>
+          </div>
+          <div class="btn-row">
+            <button class="btn dark" id="btn-export" type="button">코드 만들어 복사</button>
+            <button class="btn ghost" id="btn-import" type="button">코드 불러오기</button>
+          </div>
+          <p class="hint">보낼 때는 <b>코드 만들어 복사</b> 후 카카오톡 '나에게 보내기'에 붙여넣기.
+            받을 때는 그 코드를 위 칸에 붙여넣고 <b>코드 불러오기</b>.</p>
+        </details>
+
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
           <button class="btn ghost" id="btn-clear" type="button" style="width:auto;padding:9px 15px;font-size:13.5px">전체 지우기</button>
         </div>
       </section>
@@ -1045,22 +1061,22 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   <div class="sec-h"><b>무엇을 채울까요</b>
     <span>진단에서 알아낸 값으로 만듭니다. 누르면 그 칸으로 갑니다.</span></div>
   <div class="tools-grid">
-    <div class="tcard" data-go="kwfind"><i>🎯</i><b>키워드 발굴</b>
+    <div class="tcard" data-tcard="kwfind"><i>🎯</i><b>키워드 발굴</b>
       <span>무엇을 노릴지 정합니다</span><u>실제 내 순위</u></div>
-    <div class="tcard" data-go="o-intro"><i>📝</i><b>소개글</b>
+    <div class="tcard" data-tcard="intro"><i>📝</i><b>소개글</b>
       <span>손님 불안을 지우는 8단 구성</span><u>리뷰 자동 인용</u></div>
-    <div class="tcard" data-go="o-kw"><i>🔑</i><b>대표키워드 5개</b>
+    <div class="tcard" data-tcard="kw"><i>🔑</i><b>대표키워드 5개</b>
       <span>스마트플레이스 5칸을 채웁니다</span></div>
-    <div class="tcard" data-go="o-reply"><i>💬</i><b>리뷰 답글</b>
+    <div class="tcard" data-tcard="reply"><i>💬</i><b>리뷰 답글</b>
       <span>실제 리뷰에 맞춘 답글</span><u>리뷰 자동 수집</u></div>
-    <div class="tcard" data-go="o-news"><i>📢</i><b>소식 글감</b>
+    <div class="tcard" data-tcard="news"><i>📢</i><b>소식 글감</b>
       <span>4주치 미리 잡아 둡니다</span></div>
-    <div class="tcard" data-go="ai-prompt"><i>🤖</i><b>AI 지시문</b>
+    <div class="tcard" data-tcard="prompt"><i>🤖</i><b>AI 지시문</b>
       <span>쓰시는 AI 채팅에 붙여넣기</span><u>API 키 불필요</u></div>
   </div>
 
   <!-- 키워드 발굴 — 무엇을 노릴지부터 정한다 -->
-  <section class="card" id="kwfind">
+  <section class="card" id="kwfind" style="display:none">
     <h2><span class="ic">🎯</span> 키워드 발굴 <em class="ttl-note">실제 내 순위로 판정</em></h2>
     <p class="desc">
       순위는 계단입니다. 경쟁 심한 키워드에 바로 달려들면 점수 쌓일 발판이 없습니다.
@@ -1084,10 +1100,11 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   <!-- 문장 생성 -->
   <section id="writer">
     <div class="card">
-      <h2><span class="ic">✍️</span> 복붙용 문장</h2>
-      <p class="desc">목표 키워드가 자연스럽게 들어가도록 만들었습니다. 우리 센터 사정에 맞게 손보고 쓰세요.</p>
+      <h2><span class="ic">✍️</span> <span id="writer-title">복붙용 문장</span>
+        <button class="btn sm ghost" type="button" id="btn-tools-back" style="margin-left:auto">← 도구 목록</button></h2>
+      <p class="desc" id="writer-desc">목표 키워드가 자연스럽게 들어가도록 만들었습니다.</p>
 
-      <div class="out"><h4>플레이스 소개글 <span class="cnt" id="c-intro"></span></h4>
+      <div class="out" data-tool="intro"><h4>플레이스 소개글 <span class="cnt" id="c-intro"></span></h4>
         <p class="hint" style="margin:0 0 8px">
           손님의 고민 → 미루면 생기는 손해 → 해결책(망설임 5가지) → <b>실제 리뷰 인용</b>
           → 방문 유도 → <b>찾아오는 길(역·정류장 자동)</b> → 영업정보.
@@ -1101,15 +1118,15 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <div class="box" id="o-intro"><button class="btn sm ghost copy" data-t="o-intro">복사</button></div>
         <div class="audit" id="intro-audit"></div>
         <div class="cw" id="char-warn" style="display:none"></div></div>
-      <div class="out"><h4>대표키워드 5개</h4>
+      <div class="out" data-tool="kw"><h4>대표키워드 5개</h4>
         <div class="box" id="o-kw"><button class="btn sm ghost copy" data-t="o-kw">복사</button></div></div>
-      <div class="out"><h4>리뷰 답글 3종</h4>
+      <div class="out" data-tool="reply"><h4>리뷰 답글 3종</h4>
         <div class="box" id="o-reply"><button class="btn sm ghost copy" data-t="o-reply">복사</button></div></div>
-      <div class="out"><h4>소식 글감 4주치</h4>
+      <div class="out" data-tool="news"><h4>소식 글감 4주치</h4>
         <div class="box" id="o-news"><button class="btn sm ghost copy" data-t="o-news">복사</button></div></div>
 
       <!-- 키 없이 쓰는 AI — 지시문을 만들어 주고, 실행은 쓰시는 AI 채팅에서 -->
-      <div class="out" id="ai-prompt">
+      <div class="out" data-tool="prompt" id="ai-prompt">
         <h4>🤖 AI에게 시킬 지시문 <span class="cnt">API 키 불필요</span></h4>
         <p class="hint" style="margin:0 0 8px">
           진단으로 알아낸 값(업체명·지역·키워드·시설·부족한 항목·경쟁사 표현)을 전부 넣어
@@ -1128,12 +1145,12 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <div class="box" id="o-prompt"><button class="btn sm ghost copy" data-t="o-prompt">복사</button></div>
       </div>
 
-      <div class="note">
+      <div class="note" data-tool="intro kw reply news prompt">
         <b>주의 —</b> 업체명에 키워드를 욱여넣거나 리뷰·저장수를 구매하는 건 제재 대상입니다.
         위 문장에 <b>실제로 없는 시설이 적혀 있으면 반드시 지우세요.</b> 방문 후기에서 바로 드러나고 그게 더 큰 손해입니다.
       </div>
 
-      <div class="adm">
+      <div class="adm" data-tool="intro">
         <button type="button" id="adm-toggle">✨ Claude AI로 소개글 다시 쓰기</button>
         <div class="adm-panel" id="adm-panel">
           <div class="danger">
@@ -1328,8 +1345,9 @@ function showView(name, opts){
   document.querySelectorAll(".nav-sub").forEach(e=>e.style.display = diag ? "" : "none");
   try{ localStorage.setItem(VIEW_KEY, VIEW); }catch{}
   /* 도구 쪽은 진단값을 먹고 산다. 아직 진단을 안 돌렸으면 문장 대신 안내를 보여준다. */
-  const ran = $("writer") && $("writer").style.display === "block";
+  const ran = $("writer")?.dataset.ready === "1";
   if($("need-diag")) $("need-diag").style.display = (!diag && !ran) ? "" : "none";
+  if(!diag) try{ showTool(TOOL); }catch{}
   if(!diag) document.querySelectorAll(".tab-dot").forEach(e=>e.classList.remove("on"));
   closeSide();
   if(!opts || !opts.keepScroll) window.scrollTo({top:0, behavior:"smooth"});
@@ -1735,8 +1753,9 @@ $("btn-run").addEventListener("click", ()=>{
 
   buildWriter(o);
   renderPrompt();
+  try{ showTool(TOOL); }catch{}
   renderWorklog();
-  ["result","writer"].forEach(id=>$(id).style.display="block");
+  $("result").style.display = "block";
   showTopline(true);
   paintWho();
   /* 진단이 끝나면 채우기 쪽에 할 일이 생겼다는 표시를 남긴다 */
@@ -1749,6 +1768,7 @@ $("btn-run").addEventListener("click", ()=>{
 $("btn-reset").addEventListener("click", ()=>{
   document.querySelectorAll("[data-item]:checked").forEach(e=>e.checked=false);
   ["result","writer"].forEach(id=>$(id).style.display="none");
+  $("writer").dataset.ready = "";
   showTopline(false);
   $("gonext").style.display = "none";
   document.querySelectorAll(".tab-dot").forEach(e=>e.classList.remove("on"));
@@ -2323,6 +2343,7 @@ function buildNews(o){
 }
 
 function buildWriter(o){
+  const w = $("writer"); if(w) w.dataset.ready = "1";
   const intro = buildIntro(o);
   setBox("o-intro", intro);
   /* 글자수와 금지문자를 같이 보여준다. 복붙 직전에 알아야 할 두 가지다.
@@ -2427,6 +2448,68 @@ function setBox(id,text){
   el.textContent = text;
   if(btn) el.appendChild(btn);
 }
+
+/* ============================================================
+   도구 하나만 보기
+
+   여섯 개를 한 화면에 다 펼쳐 두면 무엇을 봐야 할지 모르게 된다.
+   목록에서 하나를 고르면 그것만 보이고 나머지는 접힌다.
+   ============================================================ */
+const TOOL_META = {
+  kwfind:{ t:"키워드 발굴",     d:"무엇을 노릴지 정합니다. 후보를 만들어 각각 지금 몇 위인지 실제로 조회합니다." },
+  intro: { t:"플레이스 소개글",  d:"손님의 불안을 지우는 순서로 만듭니다. 리뷰와 찾아오는 길은 네이버에서 가져옵니다." },
+  kw:    { t:"대표키워드 5개",   d:"스마트플레이스 대표키워드 5칸에 넣을 값입니다." },
+  reply: { t:"리뷰 답글",       d:"수집한 실제 리뷰에 맞춰 만듭니다. 답글은 그 답글을 읽는 다음 손님을 위한 것입니다." },
+  news:  { t:"소식 글감 4주치",  d:"월 1회 이상이면 충분합니다. 중요한 건 빈도보다 꾸준함입니다." },
+  prompt:{ t:"AI 지시문",       d:"진단으로 알아낸 값을 전부 담아, 쓰시는 AI 채팅에 붙여넣을 지시문을 만듭니다." },
+};
+const TOOL_KEY = "np_tool_v1";
+let TOOL = null;
+
+function showTool(name){
+  TOOL = TOOL_META[name] ? name : null;
+  try{ TOOL ? localStorage.setItem(TOOL_KEY, TOOL) : localStorage.removeItem(TOOL_KEY); }catch{}
+
+  document.querySelectorAll("[data-tcard]").forEach(c=>
+    c.classList.toggle("on", c.dataset.tcard === TOOL));
+
+  const kf = $("kwfind"), wr = $("writer");
+  if(kf) kf.style.display = (TOOL === "kwfind") ? "" : "none";
+
+  /* 문장 도구들은 한 카드 안에 있다. 고른 칸만 남긴다. */
+  const isText = Boolean(TOOL) && TOOL !== "kwfind";
+  if(wr){
+    const ran = wr.dataset.ready === "1";
+    wr.style.display = (isText && ran) ? "block" : "none";
+    document.querySelectorAll("#writer [data-tool]").forEach(el=>{
+      el.style.display = el.dataset.tool.split(" ").includes(TOOL) ? "" : "none";
+    });
+    if(isText && TOOL_META[TOOL]){
+      $("writer-title").textContent = TOOL_META[TOOL].t;
+      $("writer-desc").textContent  = TOOL_META[TOOL].d;
+    }
+  }
+}
+
+document.addEventListener("click", e=>{
+  const c = e.target.closest("[data-tcard]");
+  if(c){
+    showTool(c.dataset.tcard === TOOL ? null : c.dataset.tcard);
+    if(TOOL){
+      const el = (TOOL === "kwfind") ? $("kwfind") : ($("writer").style.display === "none" ? $("need-diag") : $("writer"));
+      requestAnimationFrame(()=> el?.scrollIntoView({ behavior:"smooth", block:"start" }));
+    }
+    return;
+  }
+  if(e.target.closest("#btn-tools-back")){
+    showTool(null);
+    $("view-tools")?.scrollIntoView({ behavior:"smooth", block:"start" });
+  }
+});
+
+/* 마지막에 보던 도구를 기억한다 — 새로고침하면 그 자리에서 이어진다 */
+try{ TOOL = localStorage.getItem(TOOL_KEY) || null; }catch{}
+showTool(TOOL);
 
 /* ============================================================
    키워드 발굴
