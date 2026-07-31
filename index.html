@@ -401,6 +401,24 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .audit-h em.todo{background:var(--track);color:var(--muted)}
 .audit-lead{padding:8px 13px;border-bottom:1px solid var(--line);
   font-size:11.5px;color:var(--muted);line-height:1.7}
+/* 리뷰 답글 */
+.rp-row{display:flex;gap:10px;align-items:flex-end;margin-top:10px;flex-wrap:wrap}
+.rp-row .f{margin:0;flex:none;width:150px}
+.rp-row .btn{flex:1;min-width:200px}
+.rp-res{margin-top:14px;border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.rp-h{padding:9px 13px;background:var(--surface-2);border-bottom:1px solid var(--line);
+  font-size:12.5px;font-weight:700;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.rp-h b{color:var(--accent)}
+.rp-h span{margin-left:auto;color:var(--muted);font-weight:500;font-size:11.5px}
+.rp-one{padding:11px 13px;border-top:1px solid var(--line)}
+.rp-one:first-of-type{border-top:0}
+.rp-one p{margin:0;font-size:13.5px;line-height:1.75;overflow-wrap:anywhere}
+.rp-foot{display:flex;align-items:center;gap:9px;margin-top:8px}
+.rp-foot i{font-style:normal;font-size:11.5px;font-weight:700;color:var(--muted)}
+.rp-foot .btn{margin-left:auto}
+.rp-tip{margin:0;padding:9px 13px;border-top:1px dashed var(--line);
+  font-size:11.5px;color:var(--muted);line-height:1.7}
+
 .fixrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
 .fixrow .pill{font-size:11.5px;padding:5px 10px;border-radius:8px;cursor:pointer;
   border:1px solid var(--acc-line);background:var(--acc-bg);color:var(--acc-fg);
@@ -1214,7 +1232,26 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <div class="cw" id="char-warn" style="display:none"></div></div>
       <div class="out" data-tool="kw"><h4>대표키워드 5개</h4>
         <div class="box" id="o-kw"><button class="btn sm ghost copy" data-t="o-kw">복사</button></div></div>
-      <div class="out" data-tool="reply"><h4>리뷰 답글 3종</h4>
+      <div class="out" data-tool="reply">
+        <h4>새로 달린 리뷰에 답글 달기 <span class="cnt">붙여넣으면 그 리뷰에 맞춰 만듭니다</span></h4>
+        <p class="hint" style="margin:0 0 8px">
+          아래 목록은 <b>수집한 과거 리뷰</b>로 만든 것입니다. <b>오늘 달린 리뷰</b>는 여기에 붙여넣으세요.
+          리뷰가 무슨 얘기인지 읽어서 <b>거기에 답하는</b> 답글을 세 가지로 만들어 드립니다.</p>
+        <textarea id="rp-paste" class="xfer-code" rows="3" spellcheck="false"
+          style="font-family:inherit;font-size:14px"
+          placeholder="예) 공부하느라 계속 앉아만 있으니까 어깨랑 허리도 아프고 자세가 무너지는 게 느껴져서 등록했어요."></textarea>
+        <div class="rp-row">
+          <label class="f"><span>별점</span>
+            <select id="rp-star">
+              <option value="5">별 5개</option><option value="4">별 4개</option>
+              <option value="3">별 3개 (아쉬움)</option><option value="2">별 2개 (불만)</option>
+              <option value="1">별 1개 (불만)</option>
+            </select></label>
+          <button class="btn" id="rp-make" type="button">이 리뷰에 맞춘 답글 만들기</button>
+        </div>
+        <div id="rp-out"></div>
+
+        <h4 style="margin-top:18px">수집한 리뷰로 만든 답글</h4>
         <div class="box" id="o-reply"><button class="btn sm ghost copy" data-t="o-reply">복사</button></div></div>
       <div class="out" data-tool="news"><h4>소식 글감 4주치</h4>
         <div class="box" id="o-news"><button class="btn sm ghost copy" data-t="o-news">복사</button></div></div>
@@ -2562,43 +2599,129 @@ typo.length ? `\n\n[오타 확인] ${typo.join(", ")}\n  지역명 "${A}"이 안
 }
 
 /* ── 리뷰 답글 ─────────────────────────────────────────────
-   답글은 리뷰 쓴 손님에게만 하는 말이 아니다. 그 답글을 읽는 다음 손님이
-   "아 여기는 이런 곳이구나" 하고 알게 만드는 자리다. 그래서 세 가지를 담는다.
-     감사 + 매장 강점 한 가지 + 다시 오실 이유
-   수집한 실제 리뷰가 있으면 그 리뷰에 맞춰 만든다. 없으면 별점대별 견본을 준다.
+   처음 만든 것은 세 리뷰에 거의 같은 답글이 나왔다. 주제를 하나만 골라
+   한 문장만 갈아 끼우는 구조였기 때문이다. 손님은 복붙 답글을 바로 알아본다.
+   그리고 "공부하느라 앉아만 있어 어깨가 아프다"는 리뷰에 "기구 사용법을
+   알려드리는 건 당연한 일" 이라고 답하면 읽은 사람이 없다는 뜻이 된다.
+
+   그래서 넷을 고쳤다.
+     1. 리뷰에서 주제를 하나가 아니라 여럿 뽑고, 겹치면 다음 주제로 넘긴다
+     2. 손님이 쓴 말을 되받는다 - 무엇을 읽었는지 드러나야 한다
+     3. 인사와 마무리를 돌려 써서 세 답글이 같은 문장으로 시작하지 않게 한다
+     4. 별점에 따라 톤을 바꾼다. 1~2점에 "기분이 좋습니다"는 재앙이다
+
+   답글은 리뷰 쓴 손님보다 그 답글을 읽는 다음 손님을 위한 것이다.
+   그래서 우리 강점 한 가지와, 지역·업종 표현이 한 번은 들어가게 둔다.
    ───────────────────────────────────────────────────────── */
 
-/* 리뷰가 무엇을 말하는지 골라, 거기에 얹을 우리 강점을 정한다 */
+/* 리뷰가 무엇을 말하는지. hit 이 많이 걸린 주제가 그 리뷰의 주제다. */
 const REPLY_TOPIC = [
-  { key:"price", hit:["가격","저렴","합리","가성비","비용","만원"],
+  { key:"price", label:"가격", hit:["가격","저렴","합리","가성비","비용","만원","부담"],
+    echo:"가격 부담 없이 다니신다니 다행입니다.",
     line:o=>o.price ? `가격은 앞으로도 올리지 않고 ${o.price} 기준을 지키겠습니다.`
                     : `가격은 앞으로도 부담스럽지 않게 유지하겠습니다.` },
-  { key:"clean", hit:["깨끗","청결","쾌적","넓","시설"],
+  { key:"clean", label:"시설·청결", hit:["깨끗","청결","쾌적","넓","시설","기구","머신","신상"],
+    echo:"기구와 공간을 좋게 봐 주셔서 감사합니다.",
     line:()=>`기구 점검과 청소는 매일 하고 있습니다. 눈에 걸리는 곳 있으면 바로 말씀해 주세요.` },
-  { key:"kind",  hit:["친절","상담","설명","알려주"],
-    line:()=>`처음 오시는 분께 기구 사용법을 알려드리는 건 저희가 당연히 할 일이라 생각합니다.` },
-  { key:"alone", hit:["혼자","조용","눈치","시선","집중"],
+  { key:"kind",  label:"친절·상담", hit:["친절","상담","설명","알려주","가르쳐","응대","전화"],
+    echo:"응대가 도움이 되셨다니 저희도 힘이 납니다.",
+    line:()=>`처음 오시는 분께 기구 사용법과 동선을 알려드리는 건 저희가 당연히 할 일이라 생각합니다.` },
+  { key:"alone", label:"혼자·조용", hit:["혼자","조용","눈치","시선","집중","한적","사람이 적"],
+    echo:"혼자 오셔서 편하게 하셨다니 다행입니다.",
     line:o=>o.fac.includes("여성 전용존")
       ? `혼자 오시는 분이 많아서 여성 전용존도 따로 두었습니다.`
       : `혼자 오셔서 조용히 하시는 분이 많습니다. 그 분위기는 계속 지키겠습니다.` },
-  { key:"time",  hit:["새벽","야간","밤","24시","아침","퇴근","교대"],
+  { key:"time",  label:"시간대", hit:["새벽","야간","밤","24시","아침","퇴근","교대","늦게","일찍"],
+    echo:"오시는 시간을 맞추기 어려우셨을 텐데 찾아와 주셔서 감사합니다.",
     line:o=>o.fac.includes("24시간 운영")
       ? `24시간 열어 두니 근무 시간이 바뀌셔도 편한 때 오세요.`
       : `오시기 편한 시간대에 맞춰 이용해 주세요.` },
-  { key:"pt",    hit:["PT","피티","트레이너","선생님","코치","자세"],
+  { key:"pt",    label:"PT·자세", hit:["PT","피티","트레이너","선생님","코치","자세","교정","레슨"],
+    echo:"수업 이야기를 남겨 주셔서 감사합니다.",
     line:()=>`자세는 계속 봐 드리겠습니다. 무게보다 자세가 먼저입니다.` },
-  { key:"start", hit:["처음","초보","입문","시작"],
+  { key:"start", label:"처음·초보", hit:["처음","초보","입문","시작","등록","몰라","막막"],
+    echo:"처음 시작하시는 게 제일 어려운데 첫발을 떼셨습니다.",
     line:()=>`처음 두세 달이 제일 어렵습니다. 그 구간만 넘기시면 훨씬 수월해집니다.` },
+  /* 아래 셋은 실제 리뷰에 자주 나오는데 우리가 못 알아듣던 주제다 */
+  { key:"pain",  label:"통증·자세", hit:["어깨","허리","목","무릎","아프","통증","뻐근","자세가 무너","거북목","디스크"],
+    echo:"오래 앉아 계시면 어깨와 허리부터 옵니다. 그 얘기 남겨 주셔서 감사합니다.",
+    line:()=>`아프신 부위가 있으시면 그 부위에 무리 가는 동작부터 빼고 잡아 드립니다. 참고 하시면 더 나빠집니다.` },
+  { key:"diet",  label:"체중·다이어트", hit:["다이어트","체중","감량","살","벌크","체지방","인바디","몸무게"],
+    echo:"목표를 정하고 오셨다니 절반은 하신 겁니다.",
+    line:o=>o.fac.includes("인바디 측정")
+      ? `인바디로 한 달에 한 번은 숫자를 확인하시는 편이 좋습니다. 체중보다 체지방이 중요합니다.`
+      : `체중보다 몸이 달라지는 속도를 보셔야 합니다. 한 달 단위로 같이 확인해 드리겠습니다.` },
+  { key:"with",  label:"동반·지인", hit:["친구","같이","동생","남편","아내","부부","지인","소개"],
+    echo:"같이 오시는 분이 있으면 훨씬 오래 가십니다.",
+    line:()=>`같이 오시면 빠지는 날이 확 줄어듭니다. 두 분 다 편하게 오실 수 있게 챙기겠습니다.` },
+  { key:"park",  label:"주차·위치", hit:["주차","가까","거리","위치","오기","찾아"],
+    echo:"오시는 길이 편하셨다니 다행입니다.",
+    line:o=>o.fac.includes("주차 가능")
+      ? `주차 공간은 계속 확보해 두겠습니다. 자리가 없으면 데스크로 말씀해 주세요.`
+      : `오시는 길이 불편하시면 데스크로 말씀해 주세요. 안내해 드리겠습니다.` },
 ];
 
-function replyFor(review, o){
-  const N = o.name;
-  const t = REPLY_TOPIC.find(x => x.hit.some(w => review.includes(w))) || REPLY_TOPIC[1];
-  const q = review.length > 40 ? review.slice(0, 38) + "..." : review;
-  return { quote:q, text:
-    `안녕하세요, ${N}입니다. 시간 내어 후기 남겨주셔서 감사합니다. `
-    + `${t.line(o)} `
-    + `운동하시다 필요한 기구나 불편한 점 있으시면 데스크로 편하게 말씀해 주세요. 다음에 뵙겠습니다.` };
+/* 인사와 마무리를 돌려 쓴다. 세 답글이 같은 문장으로 시작하면 복붙 티가 난다. */
+const RP_HELLO = [
+  n => `안녕하세요, ${n}입니다. 시간 내어 후기 남겨주셔서 감사합니다.`,
+  n => `${n}입니다. 남겨주신 후기 잘 읽었습니다. 감사합니다.`,
+  n => `반갑습니다, ${n}입니다. 이렇게 후기까지 남겨 주셔서 감사합니다.`,
+];
+const RP_BYE = [
+  `운동하시다 필요한 기구나 불편한 점 있으시면 데스크로 편하게 말씀해 주세요. 다음에 뵙겠습니다.`,
+  `오시다 궁금한 게 생기면 데스크나 톡톡으로 편하게 물어봐 주세요. 다음에 또 뵙겠습니다.`,
+  `필요하신 게 있으면 언제든 말씀해 주세요. 오래 다니실 수 있게 챙기겠습니다.`,
+];
+
+/* 별점이 낮은데 "기분이 좋습니다"로 시작하면 그 답글이 더 큰 문제가 된다 */
+const RP_LOW = (n, area, biz) => `안녕하세요, ${n} 대표입니다. 불편을 드려 죄송합니다. `
+  + `말씀해 주신 내용은 저희가 놓치고 있던 부분이 맞습니다. 바로 확인해서 고치겠습니다. `
+  + `괜찮으시면 데스크로 한 번 연락 주시면 직접 설명드리고 조치해 드리겠습니다. `
+  + `${area ? `${area}에서 ` : ""}오래 하려는 ${biz}이라 이런 말씀이 제일 도움이 됩니다.`;
+const RP_MID = (n) => `안녕하세요, ${n}입니다. 시간 내어 후기 남겨주셔서 감사합니다. `
+  + `아쉬우셨던 부분은 저희도 다시 확인해 보겠습니다. `
+  + `구체적으로 불편하셨던 점이 있으면 데스크나 전화로 말씀해 주시면 바로 반영하겠습니다.`;
+
+/* 리뷰에서 주제를 점수 순으로 뽑는다. 이미 쓴 주제는 뒤로 미뤄 답글이 겹치지 않게 한다. */
+function replyTopics(review, used){
+  const t = String(review || "");
+  const scored = REPLY_TOPIC
+    .map(x => ({ x, n: x.hit.filter(w => t.toLowerCase().includes(w.toLowerCase())).length }))
+    .filter(r => r.n > 0)
+    .sort((a, b) => (used.has(a.x.key) - used.has(b.x.key)) || (b.n - a.n));
+  return scored.map(r => r.x);
+}
+
+/* 손님이 쓴 말을 한 조각 되받는다. 무엇을 읽었는지 드러나야 한다. */
+function replyEcho(review, top){
+  const t = String(review || "").replace(/\s+/g, " ").trim();
+  const sent = t.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length >= 10);
+  const pick = sent.find(x => top && top.hit.some(w => x.toLowerCase().includes(w.toLowerCase())));
+  if(pick) return `"${pick.slice(0, 34)}${pick.length > 34 ? "..." : ""}"라고 해 주신 부분, 감사히 읽었습니다.`;
+  return top?.echo || "";
+}
+
+function replyFor(review, o, i = 0, used = new Set(), star = 5){
+  const N = o.name, A = o.area, S = SERVICE_WORD[o.type] || "헬스장";
+  if(star <= 2) return { topics:[], text: naverSafe(RP_LOW(N, A, S)) };
+
+  const tops = replyTopics(review, used);
+  const t1 = tops[0], t2 = tops.find(x => x !== t1 && !used.has(x.key));
+  if(t1) used.add(t1.key);
+  if(t2) used.add(t2.key);
+
+  if(star === 3) return { topics: tops.slice(0, 1),
+    text: naverSafe(`${RP_MID(N)} ${t1 ? t1.line(o) : ""}`.replace(/\s+/g, " ").trim()) };
+
+  const parts = [
+    RP_HELLO[i % RP_HELLO.length](N),
+    replyEcho(review, t1),
+    t1 ? t1.line(o) : "",
+    t2 ? t2.line(o) : "",
+    RP_BYE[i % RP_BYE.length],
+  ];
+  return { topics: [t1, t2].filter(Boolean),
+           text: naverSafe(parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim()) };
 }
 
 function buildReplies(o){
@@ -2606,17 +2729,25 @@ function buildReplies(o){
   const revs = (window.__place?.material?.reviews || []).slice(0, 3);
 
   if(revs.length){
-    const made = revs.map((r,i)=>{
-      const { quote, text } = replyFor(r, o);
-      return `[${i+1}] 실제 리뷰 - ${quote}\n답글: ${text}`;
+    const used = new Set();
+    const made = revs.map((r, i)=>{
+      const { text, topics } = replyFor(r, o, i, used, 5);
+      const q = String(r).replace(/\s+/g, " ");
+      return `[${i+1}] 실제 리뷰 - ${q.length > 46 ? q.slice(0, 44) + "..." : q}\n`
+        + `읽어낸 주제: ${topics.map(t=>t.label).join(", ") || "일반"}\n`
+        + `답글 (${[...text].length}자): ${text}`;
     }).join("\n\n");
     return `${made}
 
-[별 1~2개 리뷰가 달렸을 때]
-안녕하세요, ${N} 대표입니다. 불편을 드려 죄송합니다. 말씀해 주신 내용은 저희가 놓치고 있던 부분이 맞습니다. 바로 확인해서 고치겠습니다. 괜찮으시면 데스크로 한 번 연락 주시면 직접 설명드리고 조치해 드리겠습니다.
+[별 3개가 달렸을 때]
+${replyFor("", o, 0, new Set(), 3).text}
 
-* 위 답글은 수집한 실제 리뷰에 맞춰 만들었습니다. 그대로 쓰지 마시고 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
-* 답글은 리뷰 쓴 손님보다 그 답글을 읽는 다음 손님을 위한 것입니다. 우리 강점이 한 가지는 들어가야 합니다.
+[별 1~2개가 달렸을 때]
+${replyFor("", o, 0, new Set(), 2).text}
+
+* 세 답글은 서로 다른 주제로 만들었습니다. 같은 문장이 반복되면 손님이 바로 알아봅니다.
+* 그대로 쓰지 마시고 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
+* 답글은 리뷰 쓴 손님보다 그 답글을 읽는 다음 손님을 위한 것입니다.
 * 불만 리뷰일수록 빨리, 정중하게. 다른 예비 회원이 그 답글을 보고 판단합니다.`;
   }
 
@@ -2625,18 +2756,46 @@ function buildReplies(o){
 안녕하세요, ${N}입니다. 운동 잘하고 계신다니 저희도 기분이 좋습니다. 말씀해 주신 ${fac} 부분은 앞으로도 신경 써서 관리하겠습니다. 필요한 기구가 있으면 언제든 편하게 말씀해 주세요. 다음에 뵙겠습니다.
 
 [별 3개]
-안녕하세요, ${N}입니다. 시간 내어 후기 남겨주셔서 감사합니다. 아쉬우셨던 부분 저희도 다시 확인해 보겠습니다. 구체적으로 불편하셨던 점이 있다면 데스크나 전화로 말씀해 주시면 바로 반영하겠습니다.
+${replyFor("", o, 0, new Set(), 3).text}
 
 [별 1~2개]
-안녕하세요, ${N} 대표입니다. 불편을 드려 죄송합니다. 말씀해 주신 내용은 저희가 놓치고 있던 부분이 맞습니다. 바로 확인해서 고치겠습니다. 괜찮으시면 데스크로 한 번 연락 주시면 직접 설명드리고 조치해 드리겠습니다.
+${replyFor("", o, 0, new Set(), 2).text}
 
 * 자동 수집을 하시면 실제 리뷰에 맞춘 답글로 바뀝니다.
+* 위 붙여넣기 칸에 새 리뷰를 넣으시면 그 리뷰에 맞춰 만들어 드립니다.
 * '감사합니다' 한 줄은 효과가 없습니다. 손님이 읽느라 머무는 시간이 점수라서, 2~3줄로 시설이나 프로그램을 언급해야 의미가 있습니다.`;
 }
 
-/* 소식 글감 — 견본 네 줄을 주는 게 아니라, 수집한 재료로 채운다.
+/* 새로 달린 리뷰를 붙여넣으면 그 리뷰에 맞춰 만든다.
+   수집한 리뷰는 과거 것이라, 오늘 달린 리뷰에는 이 칸이 필요하다. */
+function makePastedReply(){
+  const box = $("rp-out"); if(!box) return;
+  const raw = ($("rp-paste")?.value || "").trim();
+  if(!raw){ alert("답글을 달 리뷰를 붙여넣어 주세요."); return; }
+  const star = Number($("rp-star")?.value || 5);
+  const o = getInfo();
+  const used = new Set();
+  const outs = [0, 1, 2].map(i => replyFor(raw, o, i, i === 0 ? used : new Set(), star));
+  const uniq = [...new Map(outs.map(x => [x.text, x])).values()];
+
+  box.innerHTML = `<div class="rp-res">
+    <div class="rp-h">읽어낸 주제 <b>${uniq[0].topics.map(t=>t.label).join(", ") || (star<=2 ? "불만 응대" : "일반")}</b>
+      <span>${star}점 기준</span></div>
+    ${uniq.map((x,i)=>{
+      const n = [...x.text].length;
+      const idx = cpPut(x.text);
+      return `<div class="rp-one"><p>${escH(x.text)}</p>
+        <div class="rp-foot"><i>${n}자</i>
+          <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div></div>`;
+    }).join("")}
+    <p class="rp-tip">셋 중 마음에 드는 것을 고르세요. 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
+      ${star <= 2 ? "<b>불만 리뷰는 하루 안에 다세요.</b> 다른 예비 회원이 그 답글을 보고 판단합니다." : ""}</p>
+  </div>`;
+}
+
+/* 소식 글감 - 견본 네 줄을 주는 게 아니라, 수집한 재료로 채운다.
    제목은 40자 제한이 있어서 몇 자인지 같이 적어 준다.
-   달이 바뀌면 소재도 바뀐다 — 1월과 7월에 같은 글을 올릴 수는 없다. */
+   달이 바뀌면 소재도 바뀐다 - 1월과 7월에 같은 글을 올릴 수는 없다. */
 const NEWS_SEASON = {
   1:"새해 목표를 운동으로 잡으신 분께", 2:"겨울에 늘어난 체중을 되돌리는 순서",
   3:"봄에 운동 시작하시는 분이 가장 많습니다", 4:"여름 준비는 지금부터가 딱 맞습니다",
@@ -2848,12 +3007,16 @@ function buildSnips(o){
 }
 
 const escH = s => String(s).replace(/[&<>"]/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[m]));
+
+/* 화면에 그린 문장을 그대로 복사하려면 원문을 어딘가 들고 있어야 한다.
+   HTML 속성에 넣으면 줄바꿈과 따옴표에서 깨지므로 배열에 담고 번호만 붙인다. */
+window.__cp = window.__cp || [];
+const cpPut = t => window.__cp.push(String(t)) - 1;
 const snipLen = (s, unit) => unit === "줄" ? s.split("\n").length : [...s].length;
 
 function renderSnips(o){
   const wrap = $("o-snip"); if(!wrap) return;
   const groups = buildSnips(o);
-  window.__snips = [];
 
   let total = 0, over = 0, empty = 0;
   wrap.innerHTML = groups.map(g=>{
@@ -2861,7 +3024,7 @@ function renderSnips(o){
       const n = snipLen(txt, g.unit);
       const ok = n <= g.max;
       total++; if(!ok) over++;
-      const idx = window.__snips.push(txt) - 1;
+      const idx = cpPut(txt);
       return `<div class="snip"><p>${escH(txt)}</p>
         <i class="${ok?"ok":"no"}">${n}${g.unit}</i>
         <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div>`;
@@ -2881,6 +3044,7 @@ function renderSnips(o){
 
 function buildWriter(o){
   const w = $("writer"); if(w) w.dataset.ready = "1";
+  window.__cp = [];              // 이번에 그린 문장만 복사 대상으로 둔다
   const intro = buildIntro(o);
   setBox("o-intro", intro);
   /* 글자수와 금지문자를 같이 보여준다. 복붙 직전에 알아야 할 두 가지다.
@@ -2898,6 +3062,7 @@ function buildWriter(o){
   renderCharWarn();
   setBox("o-kw", buildKeywords(o));
   setBox("o-reply", naverSafe(buildReplies(o)));
+  if($("rp-out")?.innerHTML.trim() && $("rp-paste")?.value.trim()){ try{ makePastedReply(); }catch{} }
   setBox("o-news", naverSafe(buildNews(o)));
   renderSnips(o);
 }
@@ -3069,13 +3234,14 @@ const TOOL_HOW = {
     care: "한 칸에 한 조합만 넣으세요. 쉼표로 여러 개를 욱여넣으면 어느 쪽도 제대로 안 잡힙니다. <b>오타가 있으면 그 칸은 아무것도 못 잡습니다</b> - 관리자 화면에서는 자기가 쓴 글이라 눈에 잘 안 띕니다.",
   },
   reply: {
-    when: "새 리뷰가 달렸을 때. 특히 별점이 낮은 리뷰는 빨리 다세요.",
+    when: "새 리뷰가 달렸을 때. 특히 별점이 낮은 리뷰는 하루 안에 다세요.",
     steps: [
-      "수집한 실제 리뷰와 그에 맞춘 답글이 나옵니다. 그대로 쓰지 마시고 <b>손님 이름이나 그날 상황을 한 줄</b> 얹으세요.",
+      "<b>새로 달린 리뷰를 그대로 붙여넣고</b> 별점을 고른 뒤 만들기를 누르세요. 리뷰가 무슨 얘기인지 읽어서 거기에 답합니다.",
+      "세 가지 중 하나를 고르고 <b>손님 이름이나 그날 상황을 한 줄</b> 얹으세요.",
       "복사해서 <b>스마트플레이스 - 리뷰 - 답글</b>에 붙여넣으세요.",
-      "별점 1~2개 리뷰는 견본이 따로 있습니다. <b>빨리, 정중하게</b> 다세요.",
+      "아래 <b>수집한 리뷰로 만든 답글</b>은 아직 답글을 안 단 과거 리뷰용입니다.",
     ],
-    care: "답글은 리뷰 쓴 손님보다 <b>그 답글을 읽는 다음 손님</b>을 위한 것입니다. '감사합니다' 한 줄은 효과가 없습니다. 2~3줄로 우리 강점이 한 가지는 들어가야 합니다.",
+    care: "답글은 리뷰 쓴 손님보다 <b>그 답글을 읽는 다음 손님</b>을 위한 것입니다. '감사합니다' 한 줄은 효과가 없습니다. 그리고 <b>세 리뷰에 같은 답글을 붙이지 마세요</b> - 손님은 복붙 답글을 바로 알아봅니다.",
   },
   news: {
     when: "소식이 한 달 넘게 안 올라갔을 때. 월 1회 이상이면 충분합니다.",
@@ -3179,6 +3345,8 @@ $("btn-intro-again")?.addEventListener("click", ()=>{
   buildWriter(getInfo());
   showToast("표현을 바꿔 다시 만들었습니다");
 });
+
+$("rp-make")?.addEventListener("click", ()=>{ try{ makePastedReply(); }catch(e){ alert(e.message); } });
 
 $("btn-ai-check")?.addEventListener("click", ()=>{
   const t = ($("ai-paste")?.value || "").trim();
@@ -3681,7 +3849,7 @@ document.addEventListener("click", e=>{
 /* 짧은 문구는 한 줄씩 따로 복사한다 - 칸이 다 다르니 통째로 복사할 일이 없다 */
 document.addEventListener("click", e=>{
   const b = e.target.closest("[data-cp]"); if(!b) return;
-  const text = (window.__snips || [])[Number(b.dataset.cp)] || "";
+  const text = (window.__cp || [])[Number(b.dataset.cp)] || "";
   navigator.clipboard.writeText(text).then(showToast, ()=>{
     const ta=document.createElement("textarea"); ta.value=text;
     document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); showToast();
