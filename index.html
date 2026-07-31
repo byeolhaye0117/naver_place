@@ -3100,6 +3100,7 @@ function snapshot(){
   o.chk  = [...document.querySelectorAll("[data-item]:checked")].map(e=>e.dataset.item);
   o.work = readWork();          // 개선 기록도 함께 옮긴다
   o.calib = CALIB;              // 보정 기준도 기기 사이에 따라다녀야 한다
+  o.placeId = window.__placeId || null;   // 어느 가게 값인지 — 가게가 바뀌면 비워야 한다
   o.at   = new Date().toISOString();
   return o;
 }
@@ -3111,6 +3112,7 @@ function restore(o){
   document.querySelectorAll("[data-item]").forEach(e => e.checked = (o.chk||[]).includes(e.dataset.item));
   if(Array.isArray(o.work)) writeWork(o.work);
   if(o.calib && o.calib.bars) CALIB = o.calib;
+  if(o.placeId) window.__placeId = o.placeId;
   $("i-intro").dispatchEvent(new Event("input"));
 }
 
@@ -3209,6 +3211,27 @@ async function listSaves(){
 function placeKey(){
   const m = String($("s-url")?.value || "").match(/(\d{5,})/);
   return m ? m[1] : ($("i-name")?.value || "").trim();
+}
+
+/* 다른 가게를 넣었을 때 이전 가게 값을 비운다.
+   자동 채우기는 이미 채워진 칸을 덮지 않는다 — 손으로 고친 값을 지키려는 규칙이다.
+   가게가 바뀌면 그 규칙이 거짓 정보를 만들기 때문에 여기서 한 번 비운다. */
+function resetPlaceFields(){
+  ["i-name","i-area","i-price","i-intro","i-repkw","i-kw1","i-kw2","i-kw3"]
+    .forEach(id => { const e = $(id); if(e) e.value = ""; });
+  const t = $("i-type"); if(t) t.selectedIndex = 0;
+  document.querySelectorAll("[data-fac]").forEach(e => e.checked = false);
+  document.querySelectorAll("[data-item]").forEach(e => e.checked = false);
+  CALIB = null;
+  ALSO_PICK = null;
+  ["__lastRank","__lastComp","__judge","__place","__introCands","__kfRows"]
+    .forEach(k => { window[k] = null; });
+  const w = $("writer"); if(w) w.dataset.ready = "";
+  ["result","writer"].forEach(id => { const e = $(id); if(e) e.style.display = "none"; });
+  const sel = $("w-persona"); if(sel) sel.innerHTML = "";
+  try{ showTopline(false); }catch{}
+  try{ openManual(); }catch{}
+  $("i-intro")?.dispatchEvent(new Event("input"));
 }
 
 async function addSave(){
@@ -3767,6 +3790,18 @@ $("s-collect")?.addEventListener("click", async ()=>{
 
     // 입력란을 최대한 채운다. 이미 손으로 넣은 값은 덮어쓰지 않는다.
     const d = res.data, dv = res.derived || {};
+
+    /* 다만 가게가 바뀌었으면 얘기가 다르다. 덮지 않는 규칙 때문에 지역·소개글·
+       대표키워드가 앞 가게 것으로 남고 리뷰 수만 바뀌어, 어느 쪽도 맞지 않는
+       화면이 된다. 지우기 전에 저장 내역에 넣어 두므로 잃는 것은 없다. */
+    const prevId = window.__placeId || null;
+    if(prevId && String(prevId) !== String(res.placeId)){
+      try{ if($("i-name").value.trim()) await addSave(); }catch{}
+      resetPlaceFields();
+      showToast("다른 가게입니다 - 이전 내용을 저장 내역에 넣고 새로 채웁니다");
+    }
+    window.__placeId = res.placeId;
+
     // 소개글 8단 구성에 쓸 재료 (리뷰 본문·지하철·버스·이벤트·결제)
     window.__place = { data: d, derived: dv, material: res.material || null };
     const filled = [];
