@@ -681,6 +681,43 @@ function findDatedList(node, minLen = 3, depth = 0, best = null) {
 
 /* 날짜가 없어도 "몇 장이나 실려 있는지"는 셀 수 있다.
    네이버가 준 imageCount 가 무엇을 센 값인지 확실하지 않아, 비교 대상으로 쓴다. */
+/* 사진 수 — 이름마다 값이 달라 오래 헷갈렸던 자리다.
+
+   사진 탭에서 "가장 큰 배열"을 사진으로 보고 세던 때가 있었는데, 실측해 보니
+   그 배열이 메뉴 목록이었다. 그래서 19장으로 나왔다. 사진이 아니라 메뉴가 19개였다.
+
+   네이버가 실제로 주는 것은 이렇다.
+     images.totalImages          업체가 직접 올린 사진   <- 우리가 셀 것
+     topPhotos.total             상단 큰 사진 자리에 도는 전체 (업체+동영상+손님 사진 섞임)
+     photoTabInfo.clipTotal      동영상 개수
+     visitorReviewMediasTotal    손님이 리뷰에 올린 사진·영상 (수천 장)
+     imageCount                  1 로 고정 - 대표사진 한 장을 센 값으로 보인다
+
+   점수에 쓰는 것은 업체 사진뿐이다. 손님 사진은 사장님이 늘릴 수 있는 값이 아니고,
+   그걸 섞어 세면 "사진 충분함"으로 보여 정작 채워야 할 자리를 놓친다. */
+function photoCounts(jsons) {
+  const out = { own: null, top: null, clips: null, visitor: null };
+  const walk = (n, d = 0) => {
+    if (!n || typeof n !== 'object' || d > 8) return;
+    if (!Array.isArray(n)) {
+      if (n.__typename === 'PlaceDetailImages') {
+        const v = Number(n.totalImages);
+        if (isFinite(v)) out.own = Math.max(out.own ?? 0, v);
+        else if (Array.isArray(n.images)) out.own = Math.max(out.own ?? 0, n.images.length);
+      }
+      if (n.__typename === 'PlaceDetailTopPhotos' && isFinite(Number(n.total)))
+        out.top = Math.max(out.top ?? 0, Number(n.total));
+      if (n.__typename === 'PhotoTabInfo' && isFinite(Number(n.clipTotal)))
+        out.clips = Math.max(out.clips ?? 0, Number(n.clipTotal));
+      if (isFinite(Number(n.visitorReviewMediasTotal)))
+        out.visitor = Math.max(out.visitor ?? 0, Number(n.visitorReviewMediasTotal));
+    }
+    for (const v of Object.values(n)) if (v && typeof v === 'object') walk(v, d + 1);
+  };
+  jsons.forEach(j => walk(j));
+  return out;
+}
+
 function biggestListLen(jsons) {
   let best = 0;
   const walk = (n, d = 0) => {
@@ -738,15 +775,30 @@ function judgeItems(data, present, userType, extra = {}) {
   const na = (id, why) => { J[id] = { ok: null, evidence: why, na: true }; };
 
   // ── 수치가 그대로 있는 항목 ──────────────────────────────
-  /* 실측에서 imageCount 는 1, totalImages 는 14, 사진 탭 목록은 19장이었다.
-     1 은 대표사진 같은 다른 것을 센 값으로 보여 가장 큰 값을 쓰고, 후보를 전부 보여준다. */
-  const photoKeys = CONCEPTS.imageCount.alts;
-  const photoCands = photoKeys.filter(k => isFinite(Number(data[k]))).map(k => `${k} ${data[k]}`);
-  const photo = photoKeys.map(k => Number(data[k])).filter(v => isFinite(v)).sort((a, b) => b - a)[0] ?? null;
+  /* 사장님이 올린 사진만 센다. 손님이 리뷰에 올린 사진(수천 장)을 섞으면
+     "사진 충분함"으로 보여, 정작 채워야 할 업체 사진 자리를 놓친다. */
+  const pi = extra.photoInfo || {};
+  /* 값이 있는지부터 본다. null 을 Number() 하면 0 이 되고 isFinite(0) 은 참이라,
+     그 0 이 그대로 "사진 0장"으로 화면까지 나간 적이 있다.
+     응답 모양이 가게마다 달라서 순서대로 물러선다. */
+  const photoChain = [
+    ['업체 사진 목록', pi.own],
+    ['totalImages', data.totalImages],
+    ['photoTotal', data.photoTotal], ['imageTotal', data.imageTotal],
+    ['totalImageCount', data.totalImageCount], ['photoCount', data.photoCount],
+    ['imageCount', data.imageCount],
+  ].filter(([, v]) => v != null && isFinite(Number(v)));
+  const photo = photoChain.length ? Number(photoChain[0][1]) : null;
+  const photoCands = photoChain.map(([k, v]) => `${k} ${v}`).join(', ');
+  const photoSide = [
+    pi.top     != null ? `상단 노출 ${pi.top}장(동영상·손님 사진 포함)` : '',
+    pi.clips   ? `동영상 ${pi.clips}개` : '',
+    pi.visitor != null ? `손님이 올린 사진·영상 ${Number(pi.visitor).toLocaleString('ko-KR')}개` : '',
+  ].filter(Boolean).join(', ');
   photo == null ? unknown('p2', '사진 수를 가져오지 못했습니다')
                 : put('p2', photo >= 30,
-                    `사진 ${photo}장 — 네이버가 준 값: ${photoCands.join(', ')}`
-                    + (extra.photoListN ? `, 사진 탭 목록 ${extra.photoListN}장` : ''));
+                    `업체 사진 ${photo}장 — 네이버가 준 값: ${photoCands}`
+                    + (photoSide ? ` · 참고: ${photoSide}` : ''));
 
   const rev = n(...CONCEPTS.visitorReviewCount.alts);
   rev == null ? unknown('p6', '리뷰 수를 가져오지 못했습니다')
@@ -993,9 +1045,8 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
     numbers,
     links,
     foundBy,
-    // 사진 수는 이름마다 값이 달라서 어느 것이 '관리자 화면 사진 수'인지 확실하지 않다.
-    // 판단 재료를 그대로 넘긴다.
-    photoListN: biggestListLen(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
+    // 업체 사진 / 상단 노출 / 동영상 / 손님 사진을 갈라서 넘긴다.
+    photoInfo: photoCounts(jsons),
     // 어떤 후보들이 있었는지 보여준다. 고른 것이 틀렸으면 사장님이 바꿀 수 있어야 한다.
     introCandidates: intros.slice(0, 4).map(c => ({ key: c.key, score: Math.round(c.score * 10) / 10,
                                                     len: c.text.length, text: c.text })),
@@ -1003,7 +1054,7 @@ async function collectPlace(idOrUrl, userType, opts = {}) {
       loose: looseCount, foundBy, links,
       reviews: listStats(jsons.filter((_, i) => /review/.test(sources[i]?.url || ''))) || listStats(jsons),
       photos: listStats(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
-      photoListN: biggestListLen(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
+      photoInfo: photoCounts(jsons),
     }),
     derived: deriveInputs(data, jsons),
     material: introMaterial(data, jsons),   // 소개글 8단 구성에 쓸 재료

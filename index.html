@@ -4207,7 +4207,7 @@ function renderStats(o){
   const jn = id => { const m = String(window.__judge?.[id]?.evidence || "").match(/[\d,]+(\.\d+)?/);
                      return m ? Number(m[0].replace(/,/g,"")) : null; };
   tiles.push(tile("방문자 리뷰", "review", "개", jn("p6")));
-  tiles.push(tile("사진", "photo", "장", jn("p2")));
+  tiles.push(tile("업체 사진", "photo", "장", jn("p2")));
   tiles.push(tile("소개글", "introLen", "자", (o.intro || "").trim().length));
 
   $("r-stats").innerHTML = tiles.map(t=>`<div class="stat">
@@ -4550,14 +4550,27 @@ $("s-collect")?.addEventListener("click", async ()=>{
           c.text.trim()===introTxt?" checked":""}>
           <span>${c.text.slice(0,70)}… <em style="font-style:normal;color:var(--muted)">(${c.len}자·${c.key})</em></span>
         </label>`).join("")}</div>` : ""}
+      ${/* 위 큰 숫자와 여기가 서로 다른 값을 보여주던 자리다.
+            "사진 탭에서 가장 큰 목록"을 사진으로 세다가 메뉴 19개를 사진 19장으로 읽었다.
+            이제 업체 사진만 세고, 나머지는 참고로 갈라 적는다. */""}
       ${cf("사진 수", (()=>{
-            const cands = [["totalImages", d.totalImages], ["imageCount", d.imageCount],
-                           ["photoTotal", d.photoTotal], ["사진 탭 목록", res.photoListN]]
-              .filter(([,v]) => v != null && v !== 0);
-            if(!cands.length) return "";
-            const use = Math.max(...cands.map(([,v])=>Number(v)||0));
-            return `${use}장 <span class="hint" style="font-weight:500">
-              (${cands.map(([k,v])=>`${k} ${v}`).join(" · ")}) — 관리자 화면 사진 수와 다르면 알려주세요</span>`;
+            const pi = res.photoInfo || {};
+            /* 판정과 같은 순서로 물러선다. 위 큰 숫자와 여기가 달라 보이면 안 된다. */
+            const chain = [["업체 사진 목록", pi.own], ["totalImages", d.totalImages],
+                           ["photoTotal", d.photoTotal], ["photoCount", d.photoCount],
+                           ["imageCount", d.imageCount]]
+              .filter(([,v]) => v != null && isFinite(Number(v)));
+            if(!chain.length) return "";
+            const own = Number(chain[0][1]);
+            const side = [
+              pi.top != null ? `상단 노출 ${pi.top}장 (동영상·손님 사진 포함)` : "",
+              pi.clips ? `동영상 ${pi.clips}개` : "",
+              pi.visitor != null ? `손님이 올린 사진·영상 ${Number(pi.visitor).toLocaleString("ko-KR")}개` : "",
+            ].filter(Boolean).join(" · ");
+            return `업체 사진 ${own}장 <span class="hint" style="font-weight:500">
+              사장님이 올리신 사진만 셉니다. 점수도 이 숫자로 매깁니다.
+              <br>네이버가 준 값 - ${chain.map(([k,v])=>`${k} ${v}`).join(" · ")}${
+              side ? `<br>참고 - ${side}` : ""}</span>`;
           })(), null, "사진 수를 못 가져왔습니다")}
       ${cf("리뷰", [
             pickNum(d,"visitorReviewCount","visitorReviewsTotal","visitorReviewTotal","totalReviewCount") != null
