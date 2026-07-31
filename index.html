@@ -343,6 +343,12 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .bar-row .sub{font-size:12px;color:var(--muted);margin-top:5px}
 
 /* 병목 */
+.split{margin-top:18px;border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--card2,transparent)}
+.split .sp-row{display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:5px 0;flex-wrap:wrap}
+.split .sp-row b{font-weight:700}
+.split .sp-row span{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.split .sp-note{margin:9px 0 0;font-size:12.5px;line-height:1.75;color:var(--muted);
+  border-top:1px solid var(--line);padding-top:9px}
 .bottleneck{margin-top:22px;background:var(--acc-bg);border:1px solid var(--acc-line);border-radius:12px;padding:18px}
 .bottleneck h4{font-size:14px;font-weight:800;color:var(--accent);margin-bottom:8px}
 .bottleneck p{font-size:14.5px;line-height:1.7}
@@ -934,6 +940,9 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
               </div>
             </div>
             <div class="bars" id="r-bars"></div>
+            <!-- 수집으로 오르는 점수와 체크로 오르는 점수를 갈라 보여준다.
+                 이걸 안 적어서 "수집을 눌러도 점수가 그대로"라는 신고가 있었다. -->
+            <div class="split" id="r-split"></div>
             <div class="bottleneck" id="r-bottleneck"></div>
           </div>
 
@@ -1902,6 +1911,28 @@ $("btn-run").addEventListener("click", ()=>{
       <div class="track"><div class="fill" style="width:${pct[k]}%;background:${P.color}"></div></div>
       <div class="sub">${SUB[k]}</div></div>`;
   }).join("");
+
+  /* 수집해서 오르는 점수와, 사장님이 체크해야 오르는 점수를 갈라 적는다.
+     자동 항목이 이미 만점이면 수집을 백 번 눌러도 총점은 그대로다.
+     그 사실을 안 적어 두면 "수집이 안 먹는다"로 읽힌다. */
+  (()=>{
+    const sum = (f, g) => ITEMS.filter(f).reduce((a,x)=>a+g(x), 0);
+    const aMax = sum(x=>x.auto, x=>x.w),  aGot = Math.round(sum(x=>x.auto, x=>scored[x.id]||0));
+    const mMax = sum(x=>!x.auto, x=>x.w), mGot = Math.round(sum(x=>!x.auto, x=>scored[x.id]||0));
+    const left = mMax - mGot;
+    const full = aGot >= aMax;
+    $("r-split").innerHTML = `
+      <div class="sp-row"><b>수집으로 채워지는 점수</b>
+        <span>${aGot} / ${aMax}점${full ? " — 이미 만점입니다" : ""}</span></div>
+      <div class="sp-row"><b>사장님이 체크해야 오르는 점수</b>
+        <span>${mGot} / ${mMax}점</span></div>
+      <p class="sp-note">${full
+        ? `네이버에서 가져올 수 있는 항목은 <b>이미 다 만점입니다.</b>
+           <b>수집을 다시 눌러도 총점은 움직이지 않습니다.</b>
+           남은 <b>${left}점</b>은 아래 <b>✅ 할 일</b>에서 이미 하고 계신 것에 체크하시면 바로 오릅니다.`
+        : `수집으로 오를 여지가 <b>${aMax-aGot}점</b> 남아 있습니다.
+           나머지 <b>${left}점</b>은 아래 <b>✅ 할 일</b>에서 체크해야 오릅니다.`}</p>`;
+  })();
 
   $("r-bottleneck").innerHTML = bottleneck(pct);
 

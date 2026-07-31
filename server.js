@@ -180,9 +180,18 @@ function tryJson(text) {
    반대로 이미 채워진 값은 덮지 않는다 (목록에 섞인 남의 가게 이름이 이기지 않게). */
 const isEmptyVal = v => v === undefined || v === null || v === '' || v === 0 || v === false;
 
+/* 아폴로는 인자를 받는 필드를 이름 뒤에 인자까지 붙여 저장한다.
+     description({"source":["shopWindow","jto"]})   ← 사장님이 쓴 소개글 1,947자
+     description                                     ← 네이버가 파는 서비스 광고 20자
+   이름만 그대로 비교하면 앞의 것을 못 알아보고, 엉뚱한 데 있는 같은 이름을 집어 온다.
+   실제로 소개글 자리에 "전화를 대신 받고 응대까지 해드려요!"가 들어왔다.
+   그래서 이름을 비교하기 전에 괄호 뒤를 잘라낸다. */
+const fieldName = k => { const i = String(k).indexOf('('); return i > 0 ? k.slice(0, i) : k; };
+
 function harvest(node, fields, out = {}, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 12) return out;
-  for (const [k, v] of Object.entries(node)) {
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
     if (fields.includes(k)) {
       const cur = out[k];
       const next = (v !== null && typeof v !== 'object') ? v
@@ -365,10 +374,16 @@ function collectIntros(nodes, out = [], depth = 0) {
   for (const nd of nodes) walkIntros(nd, out);
   return out;
 }
+/* 네이버가 자기 상품을 파는 자리. 여기 description 은 사장님 글이 아니라 광고 문구다.
+   ("전화를 대신 받고 응대까지 해드려요!" 가 소개글 자리에 들어온 적이 있다) */
+const AD_KEYS = /^(businessTools|houseBanners|banner|ads?|promotion|brandPromotion|gift|exp)$/i;
+
 function walkIntros(node, out, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 8 || out.length > 40) return;
   if (isReviewNode(node)) return;                                // 리뷰 노드는 통째로 건너뛴다
-  for (const [k, v] of Object.entries(node)) {
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
+    if (AD_KEYS.test(k)) continue;                               // 네이버 광고 문구는 소개글이 아니다
     if (typeof v === 'string' && INTRO_KEYS.includes(k) && v.trim().length >= 15)
       out.push({ key: k, text: v.trim(), score: introScore(v) });
     else if (v && typeof v === 'object') walkIntros(v, out, depth + 1);
@@ -391,7 +406,8 @@ function collectLinks(nodes, out = {}, depth = 0) {
 }
 function walkLinks(node, out, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 8) return;
-  for (const [k, v] of Object.entries(node)) {
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
     if (LINK_FIELDS.includes(k)) {
       const urls = typeof v === 'string' ? (/^https?:\/\//.test(v.trim()) ? [v.trim()] : []) : findUrls(v);
       if (urls.length) (out[k] ||= []).push(...urls);
@@ -453,7 +469,8 @@ function isReviewNode(nd) {
    businessHours 처럼 객체로 오는 필드는 "값이 있느냐"만 따로 확인한다. */
 function harvestPresence(node, fields, found = new Set(), depth = 0) {
   if (!node || typeof node !== 'object' || depth > 12) return found;
-  for (const [k, v] of Object.entries(node)) {
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
     if (fields.includes(k) && v != null) {
       const empty = (Array.isArray(v) && v.length === 0)
                  || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0)
@@ -470,7 +487,7 @@ function harvestPresence(node, fields, found = new Set(), depth = 0) {
 function harvestList(node, field, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 12) return null;
   for (const [k, v] of Object.entries(node)) {
-    if (k === field && Array.isArray(v) && v.length) return v;
+    if (fieldName(k) === field && Array.isArray(v) && v.length) return v;
     if (v && typeof v === 'object') {
       const hit = harvestList(v, field, depth + 1);
       if (hit) return hit;
