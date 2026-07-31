@@ -1278,7 +1278,12 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
           <input id="rp-closing" type="text" placeholder="예) 오늘도 좋은 하루 보내세요"></label>
         <div class="btn-row" style="margin-top:10px">
           <button class="btn" id="rp-make" type="button">이 리뷰에 맞춘 답글 만들기</button>
+          <button class="btn dark" id="rp-ai" type="button" data-aionly style="display:none">✨ AI에게 시키기</button>
         </div>
+        <p class="hint" data-aionly style="display:none;margin:6px 0 0">
+          AI가 직접 씁니다. 문장이 더 자연스럽고, 저희 사전에 없는 얘기도 답합니다.
+          <b data-ailelft></b></p>
+        <div id="rp-ai-out" style="display:none"></div>
         <div id="rp-out"></div>
 
         <h4 style="margin-top:18px">수집한 리뷰로 만든 답글</h4>
@@ -4727,6 +4732,8 @@ function apiUrl(pathAndQuery){
       <br><span class="hint">무료 서버는 코드를 새로 올릴 때 저장분이 지워질 수 있습니다.
       그때는 쓰던 기기에서 한 번 열기만 하면 그 기기의 사본이 다시 올라갑니다.</span>`;
     if(SERVER.ai) $("srv-badge").textContent = "서버 연결됨 · AI 프록시 사용 가능";
+    if(SERVER.aiStatus) paintAiLeft(SERVER.aiStatus);
+    try{ paintAiButtons(); }catch{}
     // 어느 판을 보고 있는지 화면에 남긴다. "안 바뀌었다"의 원인을 가리는 데 쓴다.
     if(SERVER.built) $("build").textContent = `화면 버전 ${SERVER.built} · 안 바뀌었으면 새로고침을 길게 눌러 캐시를 지우세요`;
     if(SERVER.lanUrl && /^(localhost|127\.0\.0\.1)$/.test(h)){
@@ -5439,12 +5446,57 @@ $("adm-toggle").addEventListener("click", ()=>{
   }
 });
 
-$("adm-run").addEventListener("click", async ()=>{
+/* ── AI 부르기 ──────────────────────────────────────────────
+   두 갈래다. 서버에 키가 있으면 서버가 대신 부르고(권장), 없으면
+   이 브라우저에 넣어 둔 키로 직접 부른다. 어느 쪽이든 부르는 자리는 하나로 둔다.
+
+   서버 쪽으로 갈 때는 모델과 길이를 보내지 않는다. 서버가 정한다 -
+   이 화면을 열 수 있는 사람이 제일 비싼 모델로 돌리지 못하게 하려는 것이다. */
+const AI_TIER_MODEL = { fast:"claude-haiku-4-5", good:"claude-opus-5" };
+
+async function callAI(prompt, tier = "fast"){
   const useProxy = Boolean(SERVER?.ai);
-  const key = $("adm-key").value.trim();
-  if(!useProxy && !key){ alert("API 키를 입력해 주세요."); return; }
+  const key = ($("adm-key")?.value || "").trim() || sessionStorage.getItem("ak") || "";
+  if(!useProxy && !key) throw new Error("AI 키가 없습니다. 무료 지시문 방식을 쓰시거나, 서버에 키를 넣어 주세요.");
   if(!useProxy) sessionStorage.setItem("ak", key);
 
+  const res = useProxy
+    ? await fetch(apiUrl("/api/ai"), { method:"POST",
+        headers:{ "content-type":"application/json" },
+        body: JSON.stringify({ tier, prompt }) })
+    : await fetch("https://api.anthropic.com/v1/messages", { method:"POST",
+        headers:{ "content-type":"application/json", "x-api-key":key,
+                  "anthropic-version":"2023-06-01",
+                  "anthropic-dangerous-direct-browser-access":"true" },
+        body: JSON.stringify({ model: AI_TIER_MODEL[tier] || AI_TIER_MODEL.fast,
+                               max_tokens: tier === "good" ? 4000 : 2000,
+                               messages:[{ role:"user", content: prompt }] }) });
+
+  const raw = await res.text();
+  let data = {}; try{ data = JSON.parse(raw); }catch{}
+  if(!res.ok){
+    if(res.status === 429 && data?.ai) paintAiLeft(data.ai);
+    throw new Error(data?.error?.message || `AI 오류 ${res.status}\n${raw.slice(0,200)}`);
+  }
+  if(data.stop_reason === "refusal") throw new Error("AI가 요청을 거절했습니다. 입력값을 확인해 주세요.");
+  const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
+  if(!text) throw new Error("빈 응답을 받았습니다.");
+  refreshAiLeft();
+  return text;
+}
+
+/* 오늘 몇 번 남았는지 화면에 적어 둔다. 모르는 사이에 다 쓰는 일이 없어야 한다. */
+function paintAiLeft(st){
+  document.querySelectorAll("[data-ailelft]").forEach(el=>{
+    el.textContent = st?.on ? `오늘 ${st.used}/${st.cap}회 사용` : "";
+  });
+}
+async function refreshAiLeft(){
+  if(!SERVER?.ai) return;
+  try{ paintAiLeft(await (await fetch(apiUrl("/api/ai-status"))).json()); }catch{}
+}
+
+$("adm-run").addEventListener("click", async ()=>{
   const o = getInfo();
   const btn = $("adm-run");
   btn.disabled = true; btn.textContent = "생성 중… (20초 정도)";
@@ -5474,45 +5526,69 @@ ${o.keywords.map((k,i)=>`${i+1}. "${k}"`).join("\n")}
 
 소개글 본문만 출력해라. 설명이나 머리말은 붙이지 마라.`;
 
-  const payload = {
-    model: CONFIG.aiModel,
-    max_tokens: 4000,
-    output_config:{ effort:"medium" },
-    messages:[{role:"user",content:prompt}]
-  };
 
   try{
-    const res = useProxy
-      ? await fetch(apiUrl("/api/ai"), {
-          method:"POST",
-          headers:{ "content-type":"application/json" },
-          body: JSON.stringify(payload)
-        })
-      : await fetch("https://api.anthropic.com/v1/messages",{
-          method:"POST",
-          headers:{
-            "content-type":"application/json",
-            "x-api-key":key,
-            "anthropic-version":"2023-06-01",
-            "anthropic-dangerous-direct-browser-access":"true"
-          },
-          body: JSON.stringify(payload)
-        });
-    if(!res.ok){ throw new Error(`API 오류 ${res.status}\n${(await res.text()).slice(0,300)}`); }
-    const data = await res.json();
-    if(data.stop_reason === "refusal") throw new Error("모델이 요청을 거절했습니다. 입력값을 확인해 주세요.");
-    const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
-    if(!text) throw new Error("빈 응답을 받았습니다.");
-    setBox("o-ai", text);
+    const text = await callAI(prompt, "good");
+    setBox("o-ai", naverSafe(text));
     $("c-ai").textContent = `${text.length}자`;
     $("adm-out").style.display = "block";
   }catch(e){
-    alert("생성 실패\n\n" + e.message +
-      "\n\n※ CORS 오류라면 브라우저 직접 호출이 차단된 것입니다. 중계 서버가 필요합니다.");
+    alert("생성 실패\n\n" + e.message);
   }finally{
     btn.disabled=false; btn.textContent="AI로 소개글 다시 쓰기";
   }
 });
+
+/* ── 답글을 AI 에게 시킨다 ─────────────────────────────────
+   문장 자연스러움은 우리 조립이 AI 를 못 이긴다. 키가 있으면 도구 안에서 바로
+   부르고, 없으면 지금까지처럼 지시문을 만들어 사장님이 쓰시는 AI 에 넘긴다.
+   어느 쪽이든 나온 글은 우리 일곱 가지 잣대로 검사한다 - 그건 우리만 한다. */
+document.addEventListener("click", async e=>{
+  const btn = e.target.closest("#rp-ai"); if(!btn) return;
+  const raw = ($("rp-paste")?.value || "").trim();
+  if(!raw){ alert("답글을 달 리뷰를 붙여넣어 주세요."); return; }
+  const o = getInfo();
+  const prompt = PROMPT_KIND.reply(promptFacts());
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "AI가 쓰는 중…";
+  try{
+    const text = await callAI(prompt, "fast");
+    const box = $("rp-ai-out"); if(!box) return;
+    /* AI 가 셋을 한 번에 주므로 줄 단위로 갈라 놓는다. 못 가르면 통째로 보여준다. */
+    const parts = text.split(/\n{2,}/).map(x=>naverSafe(x).trim())
+      .filter(x => x.length > 40 && !/^\[|^#|^답글 ?\d*[:：]?$/.test(x));
+    const list = parts.length ? parts.slice(0, 3) : [naverSafe(text)];
+    box.style.display = "";
+    box.innerHTML = `<div class="rp-res">
+      <div class="rp-h">AI가 쓴 답글 <b>${list.length}개</b>
+        <span data-ailelft></span></div>
+      ${list.map(t=>{
+        const idx = cpPut(t);
+        return `<div class="rp-one"><p>${escH(t)}</p>
+          <div class="rp-foot"><i>${[...t].length}자</i>
+            <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div></div>`;
+      }).join("")}
+      ${(()=>{ const rows = replyAudit(list[0], raw, o);
+        const pass = rows.filter(r=>r.ok).length;
+        return `<div class="rp-audit"><div class="rp-audit-h">AI 답글 점검
+          <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
+          ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
+            r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
+      <p class="rp-tip">AI가 썼어도 <b>없는 시설이 적혀 있으면 반드시 지우세요.</b>
+        위 점검은 저희 잣대로 잰 것입니다.</p>
+    </div>`;
+    refreshAiLeft();
+  }catch(err){
+    alert("AI 답글 실패\n\n" + err.message +
+      "\n\n무료로 하시려면 아래 'AI 지시문 만들기'를 누르세요.");
+  }finally{ btn.disabled=false; btn.textContent=label; }
+});
+
+/* 키가 있을 때만 버튼을 보여준다. 없는데 보여주면 눌러도 안 되는 버튼이 된다. */
+function paintAiButtons(){
+  const on = Boolean(SERVER?.ai) || Boolean(sessionStorage.getItem("ak"));
+  document.querySelectorAll("[data-aionly]").forEach(el=>{ el.style.display = on ? "" : "none"; });
+  if(on) refreshAiLeft();
+}
 </script>
 </body>
 </html>

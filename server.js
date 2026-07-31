@@ -1517,9 +1517,69 @@ function appendHistory(rec) {
  * Claude API 프록시 — 키를 브라우저에 노출하지 않는다
  * ========================================================================== */
 
+/* ── AI 중계 ────────────────────────────────────────────────────────────────
+ *
+ * 예전에는 받은 요청을 그대로 Anthropic 에 흘려보냈다. 그러면 이 주소를 아는
+ * 사람이 model 과 max_tokens 를 마음대로 바꿔 보낼 수 있다. 제일 비싼 모델로
+ * 최대 길이를 계속 때리면 몇 분 만에 몇만 원이 나간다. 접속 키만으로는 못 막는다.
+ *
+ * 그래서 서버가 요청을 다시 짓는다. 클라이언트가 정할 수 있는 것은 "무슨 일인지"
+ * (tier) 와 "무엇을 쓸지"(prompt) 뿐이다. 모델과 길이는 여기서 정한다.
+ * 하루 호출 횟수도 여기서 센다 - 최악의 사고도 하루 한도 안에서 끝나야 한다.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* 일마다 모델을 나눈다. 답글에 제일 비싼 모델을 쓸 이유가 없다.
+   (2026-07 기준 100만 토큰당) haiku $1/$5 · opus $5/$25 - 다섯 배 차이다. */
+const AI_TIERS = {
+  fast: { model: 'claude-haiku-4-5', max: 2000 },   // 답글, 짧은 문구, 소식
+  good: { model: 'claude-opus-5',    max: 4000 },   // 소개글 - 길고 오래 쓰는 글
+};
+const AI_DAILY_CAP = Math.max(1, Number(process.env.AI_DAILY_CAP || 40));
+const AI_PROMPT_MAX = 20000;   // 글자. 이보다 긴 지시문은 우리가 만들 일이 없다
+const AI_USAGE = path.join(DATA_DIR, 'ai-usage.json');
+
+function today() { return new Date().toISOString().slice(0, 10); }
+
+function readAiUsage() {
+  try {
+    const v = JSON.parse(fs.readFileSync(AI_USAGE, 'utf8'));
+    if (v && v.date === today()) return v;
+  } catch { /* 없으면 오늘 처음 */ }
+  return { date: today(), calls: 0, inTokens: 0, outTokens: 0 };
+}
+function writeAiUsage(v) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(AI_USAGE, JSON.stringify(v)); }
+  catch { /* 디스크가 없어도 중계는 계속 돌아야 한다 */ }
+}
+function aiStatus() {
+  const u = readAiUsage();
+  return { on: Boolean(process.env.ANTHROPIC_API_KEY), used: u.calls,
+           cap: AI_DAILY_CAP, left: Math.max(0, AI_DAILY_CAP - u.calls) };
+}
+
 async function aiProxy(body) {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되어 있지 않습니다.');
+  if (!key) return { status: 503, text: JSON.stringify({
+    error: { message: 'AI 키가 설정되어 있지 않습니다. 무료 지시문 방식을 쓰세요.' } }) };
+
+  /* 클라이언트가 보낸 model / max_tokens 는 읽지 않는다. 여기서 정한다. */
+  const tier = AI_TIERS[body?.tier] || AI_TIERS.fast;
+  const prompt = String(body?.prompt ?? '').trim();
+  if (!prompt) return { status: 400, text: JSON.stringify({
+    error: { message: '보낼 내용이 비어 있습니다.' } }) };
+  if (prompt.length > AI_PROMPT_MAX) return { status: 400, text: JSON.stringify({
+    error: { message: `지시문이 너무 깁니다 (${prompt.length}자 / 최대 ${AI_PROMPT_MAX}자)` } }) };
+
+  const usage = readAiUsage();
+  if (usage.calls >= AI_DAILY_CAP) return { status: 429, text: JSON.stringify({
+    error: { message: `오늘 AI 사용 한도(${AI_DAILY_CAP}회)를 다 썼습니다. 내일 다시 쓰거나 무료 지시문 방식을 쓰세요.` },
+    ai: aiStatus() }) };
+
+  /* 세고 나서 부른다. 실패해도 센 것을 되돌리지 않는다 -
+     되돌리면 계속 실패하는 요청으로 한도를 무한히 우회할 수 있다. */
+  usage.calls += 1;
+  writeAiUsage(usage);
+
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -1527,9 +1587,26 @@ async function aiProxy(body) {
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: tier.model,
+      max_tokens: tier.max,
+      messages: [{ role: 'user', content: prompt }],
+    }),
   });
-  return { status: res.status, text: await res.text() };
+
+  const text = await res.text();
+  /* 얼마나 썼는지 남긴다. 화면에서 오늘 쓴 양을 보여주는 근거가 된다. */
+  try {
+    const j = JSON.parse(text);
+    if (j?.usage) {
+      const u2 = readAiUsage();
+      u2.inTokens  += Number(j.usage.input_tokens  || 0);
+      u2.outTokens += Number(j.usage.output_tokens || 0);
+      writeAiUsage(u2);
+    }
+  } catch { /* 응답이 JSON 이 아니어도 중계 결과는 그대로 넘긴다 */ }
+
+  return { status: res.status, text };
 }
 
 /* ============================================================================
@@ -1592,6 +1669,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true, version: 2, built,
         ai: Boolean(process.env.ANTHROPIC_API_KEY),
+        aiStatus: aiStatus(),   // 오늘 몇 번 썼는지 - 화면에 보여준다
         /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —
            키를 알려주면 키를 두는 의미가 없다. 이 PC 화면에서만 보인다. */
         lanUrl: (ip && isLocal(req)) ? `http://${ip}:${PORT}/#k=${KEY}` : null,
@@ -1720,10 +1798,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (u.pathname === '/api/ai' && req.method === 'POST') {
-      const out = await aiProxy(JSON.parse(await readBody(req)));
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); }
+      catch { return sendJson(res, 400, { error: { message: '요청을 읽지 못했습니다.' } }); }
+      const out = await aiProxy(body);
       res.writeHead(out.status, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(out.text);
     }
+    if (u.pathname === '/api/ai-status') return sendJson(res, 200, aiStatus());
 
     /* ---- 정적 파일 ---- */
     let rel = u.pathname === '/' ? '/index.html' : u.pathname;
