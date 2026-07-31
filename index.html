@@ -401,6 +401,12 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .audit-h em.todo{background:var(--track);color:var(--muted)}
 .audit-lead{padding:8px 13px;border-bottom:1px solid var(--line);
   font-size:11.5px;color:var(--muted);line-height:1.7}
+.fixrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.fixrow .pill{font-size:11.5px;padding:5px 10px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--acc-line);background:var(--acc-bg);color:var(--acc-fg);
+  font-weight:700;text-align:left;line-height:1.5;max-width:100%;overflow-wrap:anywhere}
+.fixrow .pill:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.fixrow .pill.go{background:none;border-color:var(--line);color:var(--muted);font-weight:600}
 .audit-row{display:flex;gap:9px;align-items:flex-start;padding:8px 13px;border-top:1px solid var(--line);font-size:12.5px}
 .audit-row:first-of-type{border-top:0}
 .audit-row i{font-style:normal;flex:none;width:15px;line-height:1.5}
@@ -2348,6 +2354,21 @@ function fillerText(o){
 let VARIANT = 0;
 const pickV = arr => arr[VARIANT % arr.length];
 
+/* 목표 키워드를 세 개 받아 놓고 글에는 두 개만 넣고 있었다. 3순위 키워드가
+   0회로 남아 점검표에서 우리 스스로 미달을 냈다. 사장님더러 직접 넣으라고 할 일이
+   아니다 - 받았으면 다 써야 한다.
+
+   맨 끝 한 줄로 모은다. 지금 네이버에 올려두신 소개글도 끝에 키워드 줄이 있고,
+   본문 중간에 억지로 끼워 넣는 것보다 이 편이 읽는 데 방해가 덜 된다.
+   이미 본문에 나온 키워드는 다시 적지 않는다 - 그게 반복이고 어뷰징으로 보인다. */
+function kwTail(o, body){
+  const hay = norm(body);
+  const miss = o.keywords.filter(k => k && !hay.includes(norm(k)));
+  if(!miss.length) return "";
+  return `${miss.join(", ")}${josa(miss[miss.length-1], "을")} 찾고 계셨다면 편하게 들러 보세요. `
+    + `궁금한 점은 전화나 톡톡으로 먼저 물어보셔도 됩니다.`;
+}
+
 function buildIntro(o){
   const A = o.area, N = o.name, S = SERVICE_WORD[o.type] || "헬스장";
   const K1 = o.keywords[0] || `${A} ${S}`;
@@ -2396,10 +2417,14 @@ function buildIntro(o){
 
   /* 1,200~1,800자 안에 들어가야 한다. 넘치면 인용 리뷰부터 줄인다 —
      리뷰는 많을수록 좋지만, 길이를 넘겨 잘리는 것보다는 낫다. */
-  const assemble = (q, a, fill) => naverSafe(
-    [step1, step2, head, blocks, alsoText(o, a), flow,
-     fill ? fillerText(o) : "", proofText(o, q), visitText(o), routeText(o), bizText(o)]
-      .filter(Boolean).join("\n\n"));
+  const assemble = (q, a, fill) => {
+    const body = naverSafe(
+      [step1, step2, head, blocks, alsoText(o, a), flow,
+       fill ? fillerText(o) : "", proofText(o, q), visitText(o), routeText(o), bizText(o)]
+        .filter(Boolean).join("\n\n"));
+    const tail = kwTail(o, body);
+    return tail ? body + "\n\n" + naverSafe(tail) : body;
+  };
   /* 넘치면 인용 리뷰부터, 그래도 넘치면 고민 개수를 줄인다.
      리뷰와 고민은 둘 다 값진데, 길이를 넘겨 잘리는 것보다는 낫다. */
   let text = assemble(3, 3, false);
@@ -2452,9 +2477,18 @@ function introAudit(text, o){
       note: kwHits.length
         ? kwHits.map(x=>`${x.k} ${x.n}회`).join(" · ") + (kwHits.some(x=>!x.n) ? " - 0회인 키워드는 소개글에 직접 넣어 주세요" : "")
         : "목표 키워드 미입력" },
+    /* 못 채운 줄에서 바로 고칠 수 있어야 한다. 진단 화면으로 돌아가 칸을 찾아
+       채우고 다시 오라고 하면, 그 왕복 때문에 결국 안 채우게 된다. */
     { t:"다른 곳과 다른 점이 한 줄로 있다",
       ok: Boolean(o.edge && text.includes(o.edge.replace(/[.]$/,""))),
-      note: o.edge ? o.edge.slice(0,40) : "시설만 나열하면 옆집과 구분이 안 됩니다 - 1단계에 한 줄 넣어 주세요" },
+      note: o.edge ? o.edge.slice(0,40) : "시설만 나열하면 옆집과 구분이 안 됩니다 - 아래에서 고르시거나 직접 쓰셔도 됩니다",
+      fix: o.edge ? "" : (()=>{ const c = edgeSuggestions(o);
+        return c.length
+          ? `<div class="fixrow">${c.map(t=>`<button type="button" class="pill" data-edgepick="${
+              t.replace(/"/g,"&quot;")}">${t}</button>`).join("")}
+             <button type="button" class="pill go" data-gofield="i-edge">직접 쓰기</button></div>`
+          : `<div class="fixrow"><button type="button" class="pill go" data-gofield="i-edge">1단계에서 직접 쓰기</button></div>`;
+      })() },
     { t:"여러 손님의 고민을 다룬다",
       ok: /\[혹시 이런 고민/.test(text),
       note: (()=>{ const k=alsoPersonas(o); return k.length
@@ -2928,8 +2962,26 @@ function renderAudit(text, o){
         : `열한 가지를 모두 채웠습니다. 그대로 붙여넣으셔도 됩니다.`}</div>`
     + rows.map(r=>`<div class="audit-row${r.ok?"":" no"}">
         <i>${r.ok?"✅":"○"}</i>
-        <div><b>${r.t}</b><span>${r.note||""}</span></div></div>`).join("");
+        <div><b>${r.t}</b><span>${r.note||""}</span>${r.ok ? "" : (r.fix||"")}</div></div>`).join("");
 }
+
+/* 점검표 안에서 바로 고친다 */
+document.addEventListener("click", e=>{
+  const pick = e.target.closest("[data-edgepick]");
+  if(pick){
+    $("i-edge").value = pick.dataset.edgepick;
+    save(); buildWriter(getInfo());
+    showToast("차별점을 넣고 글을 다시 만들었습니다");
+    return;
+  }
+  const go = e.target.closest("[data-gofield]");
+  if(go){
+    showView("diag");
+    const el = $(go.dataset.gofield);
+    try{ openManual(); }catch{}
+    requestAnimationFrame(()=>{ el?.scrollIntoView({behavior:"smooth", block:"center"}); el?.focus(); });
+  }
+});
 
 /* 지금 네이버에 등록돼 있는 소개글을 같은 잣대로 검사한다.
    여기서 걸린 문자는 "네이버가 이미 받아준 문자"라는 실측 증거다.
