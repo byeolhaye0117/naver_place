@@ -428,6 +428,10 @@ label.f > span i{font-style:normal;color:var(--accent)}
   background:var(--acc-bg);font-size:12.5px;line-height:1.75;color:var(--ink)}
 .rp-unknown b{color:var(--acc-fg)}
 .rp-unknown .btn{margin-top:8px}
+.rp-thin{padding:11px 13px;border-top:1px solid var(--line);
+  background:var(--warn-bg);font-size:12.5px;line-height:1.75;color:var(--ink)}
+.rp-thin b{color:var(--warn-fg)}
+.rp-thin p{margin:6px 0 0}
 .rp-ai{padding:10px 13px;border-top:1px dashed var(--line);background:var(--surface-2);
   font-size:12px;line-height:1.75;color:var(--muted)}
 .rp-ai b{color:var(--ink)}
@@ -2890,6 +2894,20 @@ function replyAudit(text, review, o){
     { t:"네이버 금지문자 0개", ok: charCheck(t, false).risky.length === 0 },
     { t:"키워드가 들어갔다", ok: K.some(k => norm(t).includes(norm(k))),
       note: K.length ? "" : "목표 키워드가 없습니다" },
+    /* 은코치와 붙었을 때 우리가 진 자리. 재는 방법은 두 가지를 겹쳐 본다 -
+       확인된 사실이 하나라도 들어갔는가, 그리고 빈말로만 채우지 않았는가. */
+    (()=>{
+      const F = replyFacts();
+      const hasFact = F.some(x => {
+        const w = String(x).replace(/[0-9,]+개|평점.*$/g, "").trim();
+        return w.length >= 2 && norm(t).includes(norm(w.split(/[ ·]/)[0]));
+      });
+      const filler = /(신뢰 덕분|최선을 다하|더 좋은 환경|보답하겠|함께하겠습니다)/.test(t);
+      return { t:"우리 가게에만 쓸 수 있는 말이 있다", ok: hasFact && !filler,
+        note: !F.length ? "쓸 수 있는 사실이 없습니다 - 수집을 눌러 주세요"
+            : filler ? "어느 헬스장에나 붙는 문장이 섞여 있습니다"
+            : hasFact ? "" : "확인된 사실이 하나도 안 들어갔습니다" };
+    })(),
   ];
 }
 
@@ -2950,6 +2968,20 @@ function renderRpKw(){
 
 /* 새로 달린 리뷰를 붙여넣으면 그 리뷰에 맞춰 만든다.
    수집한 리뷰는 과거 것이라, 오늘 달린 리뷰에는 이 칸이 필요하다. */
+/* 재료가 없으면 어떤 도구를 써도 "어느 헬스장에나 붙는 답글"밖에 안 나온다.
+   그 사실을 답글 밑에 적는다. 안 적으면 사장님은 도구가 원래 이 정도인 줄 아신다. */
+function thinFactNote(){
+  const F = replyFacts();
+  if(F.length >= 3) return "";
+  return `<div class="rp-thin">
+    <b>${F.length ? `쓸 수 있는 사실이 ${F.length}개뿐입니다` : "쓸 수 있는 사실이 없습니다"}</b>
+    <p>답글에 우리 가게만의 내용을 넣으려면 시설·리뷰 수 같은 <b>확인된 사실</b>이 필요합니다.
+      지금은 재료가 없어서 <b>어느 헬스장에나 붙는 답글</b>이 나옵니다. 둘 중 하나만 하시면 됩니다.</p>
+    <p>· 맨 위 검색줄에서 <b>수집</b> → <b>맞아요, 진단 시작</b> (리뷰 수·시설·오시는 길이 한 번에 들어옵니다)<br>
+      · 또는 <b>1 플레이스 정보</b>에서 <b>보유 시설</b>을 체크하고 <b>다른 곳과 다른 점</b>을 한 줄 적기</p>
+  </div>`;
+}
+
 function makePastedReply(){
   const box = $("rp-out"); if(!box) return;
   const raw = ($("rp-paste")?.value || "").trim();
@@ -2976,6 +3008,7 @@ function makePastedReply(){
       아래 답글은 무난하지만 <b>이 리뷰에 대한 답은 아닙니다.</b> 이런 리뷰는 AI에게 맡기세요.
       <button class="btn sm" type="button" id="rp-toai">이 리뷰로 AI 지시문 만들기</button>
     </div>` : ""}
+    ${thinFactNote()}
     ${uniq.map(x=>{
       const n = [...x.text].length;
       const idx = cpPut(x.text);
@@ -3910,6 +3943,33 @@ ${f}
 
 ${CHAR_RULE}`;
 
+/* 답글에 넣을 수 있는 "확인된 사실"만 따로 모은다.
+   은코치와 붙여 본 결과 우리가 진 자리가 정확히 여기였다. 재료는 이미 넘기고
+   있었는데 지시문이 "강점 한 가지를 넣으세요"라고만 해서, AI 가
+   "합리적인 가격을 유지할 수 있는 이유는 멤버분들의 신뢰 덕분입니다" 같은
+   어느 헬스장에나 붙는 문장을 썼다. 쓸 수 있는 사실을 눈앞에 목록으로 놓고
+   그 안에서만 고르게 한다. 목록이 비면 비었다고 말한다 - 지어내는 것보다 낫다. */
+function replyFacts(){
+  const o = getInfo();
+  const m = window.__place?.material || {};
+  const d = window.__place?.data || {};
+  const F = [];
+  (o.fac || []).forEach(x => F.push(x));
+  if(o.price) F.push(`1개월 이용권 ${o.price}`);
+  const rev = d.visitorReviewCount ?? d.visitorReviewsTotal;
+  const sc  = d.visitorReviewsScore ?? d.visitorReviewScore;
+  if(rev) F.push(`방문자 리뷰 ${Number(rev).toLocaleString("ko-KR")}개`
+                 + (sc ? ` · 평점 ${sc}점` : ""));
+  if(m.subway?.name) F.push(`${m.subway.name}`
+    + (m.subway.exit ? ` ${m.subway.exit}번 출구` : "")
+    + (m.subway.walkTime ? ` 도보 ${m.subway.walkTime}분` : ""));
+  (m.bus || []).slice(0,2).forEach(b =>
+    F.push(`${b.name} 정류장${b.walkTime ? ` 도보 ${b.walkTime}분` : ""}`));
+  (m.events || []).forEach(e => { const t = naverSafe(e).trim(); if(t) F.push(t); });
+  if(o.edge) F.push(o.edge);
+  return [...new Set(F.filter(x => String(x||"").trim()))];
+}
+
 const PROMPT_KIND = {
   intro: f => `네이버 스마트플레이스 "상세설명(소개글)"을 써 주세요.
 
@@ -3999,6 +4059,15 @@ ${f}
 [답글을 달아야 할 리뷰] (별점 ${star}개)
 ${rv}
 
+${(()=>{ const F = replyFacts();
+  return F.length
+  ? `[답글에 쓸 수 있는 사실] - 확인된 것만 적었습니다. 이 목록 밖은 지어내지 마세요.
+${F.map(x=>`- ${x}`).join("\n")}`
+  : `[답글에 쓸 수 있는 사실]
+- 없습니다. 시설도 리뷰 수도 확인되지 않았습니다.
+- 이럴 때는 사실을 지어내지 말고, 손님이 리뷰에 쓴 얘기만 받아서 짧게 쓰세요.
+- 우리 가게를 설명하는 문장은 넣지 마세요. 근거가 없는 자랑이 됩니다.`; })()}
+
 [이 답글이 누구를 위한 것인가]
 답글은 리뷰를 쓴 손님이 아니라, 그 답글을 읽는 다음 손님을 위한 것입니다.
 손님은 플레이스에서 리뷰를 훑다가 사장님 답글에서 멈춥니다. 그 사람이
@@ -4010,8 +4079,13 @@ ${rv}
 2. 손님 문장을 따옴표로 인용하지 마세요. 사람은 대화할 때 상대 말을 따옴표로 되돌려 주지 않습니다.
    대신 그 상황을 아는 사람처럼 자연스럽게 받으세요.
 3. 리뷰에 사람 이름(트레이너, 실장, 선생님)이 나오면 그 이름을 그대로 부르고, 전달하겠다고 하세요.
-4. 우리 강점 한 가지를 사실로만 넣으세요. 위 [가게 정보]에 없는 시설이나 혜택은 절대 지어내지 마세요.
+4. 아래 [답글에 쓸 수 있는 사실] 목록에서 하나 이상을 반드시 넣으세요. 그냥 나열하지 말고,
+   이 리뷰의 얘기와 이어지게 넣으세요. 목록 밖의 시설이나 혜택은 절대 지어내지 마세요.
    방문 후기에서 바로 드러나고 그게 더 큰 손해입니다.
+4-1. 아래 문장들은 쓰지 마세요. 어느 헬스장에나 그대로 붙는 말이라 읽는 사람이 아무것도 못 얻습니다.
+   - 회원분들의 신뢰 덕분입니다 / 늘 최선을 다하겠습니다 / 더 좋은 환경을 만들겠습니다
+   - 건강관리를 함께하겠습니다 / 앞으로도 보답하겠습니다 / 언제든지 문의해 주세요 (이 말만 있는 경우)
+   판별법은 하나입니다. 그 문장에서 우리 가게 이름을 빼고 다른 헬스장 이름을 넣어도 말이 되면 실패입니다.
 5. 다음 손님의 망설임 하나를 지우세요. 가격 / 오시는 길과 주차 / 혼자 와도 되는 분위기 /
    운동할 수 있는 시간대 / 처음이라 막막함 - 이 중 그 리뷰와 가장 자연스럽게 이어지는 하나만 고르세요.
 6. 마지막은 다음에 오실 이유나, 편하게 물어보시라는 말로 끝내세요.
@@ -5750,6 +5824,7 @@ document.addEventListener("click", async e=>{
           <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
           ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
             r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
+      ${thinFactNote()}
       <p class="rp-tip">AI가 썼어도 <b>없는 시설이 적혀 있으면 반드시 지우세요.</b>
         위 점검은 저희 잣대로 잰 것입니다.</p>
     </div>`;
