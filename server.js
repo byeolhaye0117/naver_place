@@ -1181,6 +1181,15 @@ function introMaterial(data, jsons) {
       .replace(/\s+/g, ' ').trim())
     .filter(n => n.length >= 3))].slice(0, 20);
 
+  /* 소식(피드)은 사장님이 직접 쓰신 글이다. 개업 연차나 이번 달 이벤트처럼
+     네이버 기본 필드에도, 메뉴에도 없는 사실이 여기 들어 있다.
+     "쌍용동 헬스장에서 28년째 같은 자리를 지키고 있는" 이 여기서만 나왔다. */
+  const feeds = grab('Feed')
+    .map(n => ({ title: String(n?.title || '').replace(/\s+/g, ' ').trim(),
+                 desc:  String(n?.desc  || '').replace(/\s+/g, ' ').trim().slice(0, 300) }))
+    .filter(x => x.title || x.desc)
+    .slice(0, 6);
+
   /* 결제·편의시설·찾아오는 길도 같은 이유로 base 노드에서 직접 읽는다.
      harvest 가 모은 data 에는 KEY_FIELDS 만 들어 있어 여기엔 없다. */
   const base = grab('PlaceDetailBase')[0] || {};
@@ -1197,6 +1206,7 @@ function introMaterial(data, jsons) {
     conveniences: strList(base.conveniences),
     events,
     menuNames,
+    feeds,
     reviews: reviews.slice(0, 20),
     blogs: blogs.slice(0, 5),
     /* 리뷰 문장에서 손님이 실제로 쓴 말을 센다. 프리셋 페르소나 대신
