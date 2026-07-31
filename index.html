@@ -429,6 +429,12 @@ table.kwf td .v{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:6
   border-radius:8px;padding:7px 10px}
 .kw-odd b{display:block;margin-top:2px}
 
+.ai-check{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
+.ai-check h4{font-size:14px;font-weight:800;margin:0 0 6px;display:flex;
+  align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.ai-check h4 .cnt{font-size:11.5px;color:var(--ok-fg);font-weight:700;
+  background:var(--ok-bg);border-radius:6px;padding:2px 8px}
+
 /* 개발자용 원본 값 — 접어 둔다 */
 .raw{margin-top:12px}
 .raw > summary{cursor:pointer;font-size:12.5px;font-weight:700;color:var(--muted);list-style:none;padding:3px 0}
@@ -1163,6 +1169,23 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
           <option value="fix">진단 결과로 개선 계획 짜기</option>
         </select>
         <div class="box" id="o-prompt"><button class="btn sm ghost copy" data-t="o-prompt">복사</button></div>
+
+        <!-- AI 가 써 준 글을 그대로 믿지 않는다. 붙여넣으면 우리 기준으로 검사한다.
+             어떤 AI 를 쓰셨든 상관없다 — 글자만 있으면 판정할 수 있다. -->
+        <div class="ai-check">
+          <h4>AI가 써 준 글 검사 <span class="cnt">붙여넣기만 하면 됩니다</span></h4>
+          <p class="hint" style="margin:0 0 8px">
+            AI가 만든 글을 네이버에 바로 붙여넣기 전에 여기서 한 번 거르세요.
+            8단 구성이 다 들어갔는지, 금지문자가 섞였는지, 글자수가 맞는지 판정합니다.</p>
+          <textarea id="ai-paste" class="xfer-code" rows="5" spellcheck="false"
+            style="font-family:inherit;font-size:14px"
+            placeholder="AI가 만들어 준 소개글을 여기에 붙여넣으세요."></textarea>
+          <div class="btn-row">
+            <button class="btn" id="btn-ai-check" type="button">검사하기</button>
+            <button class="btn ghost" id="btn-ai-clean" type="button">금지문자만 고쳐서 복사</button>
+          </div>
+          <div class="audit" id="ai-audit" style="display:none"></div>
+        </div>
       </div>
 
       <div class="note" data-tool="intro kw reply news prompt">
@@ -2527,6 +2550,42 @@ document.addEventListener("click", e=>{
   }
 });
 
+/* ============================================================
+   AI 가 써 준 글 검사
+
+   은코치는 자기 서버에서 후처리한다. 우리는 어떤 AI 로 썼든 검사한다 —
+   글자만 있으면 판정할 수 있기 때문이다. 우리가 만든 글에 쓰는 잣대를
+   그대로 들이댄다. 도구가 만든 글만 봐 주고 AI 글은 안 봐 줄 이유가 없다.
+   ============================================================ */
+$("btn-ai-check")?.addEventListener("click", ()=>{
+  const t = ($("ai-paste")?.value || "").trim();
+  const box = $("ai-audit");
+  if(!t){ alert("AI가 만들어 준 글을 붙여넣어 주세요."); return; }
+  box.style.display = "";
+  const rows = introAudit(t, getInfo());
+  const pass = rows.filter(r=>r.ok).length;
+  box.innerHTML =
+    `<div class="audit-h"><span>AI 글 점검</span>
+      <em class="${pass===rows.length?"pass":"fail"}">${pass} / ${rows.length}</em></div>`
+    + rows.map(r=>`<div class="audit-row${r.ok?"":" no"}">
+        <i>${r.ok?"✅":"⚠️"}</i>
+        <div><b>${r.t}</b><span>${r.note||""}</span></div></div>`).join("");
+  box.scrollIntoView({ behavior:"smooth", block:"nearest" });
+});
+
+/* 구성은 손댈 수 없어도 문자는 우리가 고칠 수 있다 */
+$("btn-ai-clean")?.addEventListener("click", async ()=>{
+  const el = $("ai-paste"); const t = (el?.value || "").trim();
+  if(!t){ alert("AI가 만들어 준 글을 붙여넣어 주세요."); return; }
+  const before = charCheck(t, false).risky.length;
+  const clean = naverSafe(t);
+  el.value = clean;
+  try{ await navigator.clipboard.writeText(clean); showToast(
+    before ? `금지문자 ${before}종을 고쳐서 복사했습니다` : "금지문자가 없어 그대로 복사했습니다");
+  }catch{ showToast(before ? `금지문자 ${before}종을 고쳤습니다 (직접 복사해 주세요)` : "금지문자가 없습니다"); }
+  $("btn-ai-check").click();
+});
+
 /* 대표키워드에 지역명이 안 들어간 것을 짚는다.
    등록된 키워드에 오타가 있으면 그 칸은 아무것도 못 잡는데, 관리자 화면에서는
    자기가 쓴 글이라 눈에 잘 안 띈다. 실제로 "쌍용동"이 "씽용동"으로 등록돼 있었다. */
@@ -2721,6 +2780,30 @@ function promptFacts(){
   L.push(`- 현재 소개글: ${o.intro ? `${o.intro.length}자 — "${o.intro.slice(0,200)}${o.intro.length>200?"…":""}"` : "없음"}`);
   if(o.repkw.length) L.push(`- 등록된 대표키워드: ${o.repkw.join(", ")}`);
 
+  /* 수집한 재료를 전부 넘긴다. AI 는 우리 가게를 모른다 —
+     리뷰 문장, 역·정류장, 진행 이벤트가 있어야 지어내지 않고 쓸 수 있다. */
+  const m = window.__place?.material || {};
+  const d = window.__place?.data || {};
+  const rev = d.visitorReviewCount ?? d.visitorReviewsTotal;
+  const sc  = d.visitorReviewsScore ?? d.visitorReviewScore;
+  if(rev) L.push(`- 방문자 리뷰 ${rev}개${sc ? ` · 평점 ${sc}점` : ""}`);
+  if(m.subway?.name){
+    L.push(`- 지하철: ${m.subway.name}${m.subway.exit ? ` ${m.subway.exit}번 출구` : ""}`
+      + (m.subway.walkTime ? ` 도보 ${m.subway.walkTime}분` : ""));
+  }
+  if((m.bus||[]).length){
+    L.push(`- 버스정류장: ${m.bus.slice(0,3).map(b=>`${b.name}${b.walkTime?` 도보 ${b.walkTime}분`:""}`).join(", ")}`);
+  }
+  if((m.events||[]).length) L.push(`- 진행 중인 이벤트: ${m.events.map(e=>naverSafe(e).trim()).filter(Boolean).join(" / ")}`);
+  if((m.payments||[]).length) L.push(`- 결제수단: ${m.payments.join(", ")}`);
+  if((m.voice||[]).length){
+    L.push(`- 손님이 리뷰에서 자주 쓰는 말: ${m.voice.slice(0,5).map(v=>`${v.label}(${v.n}회)`).join(", ")}`);
+  }
+  if((m.reviews||[]).length){
+    L.push(`- 실제 손님 리뷰 (그대로 인용해도 됩니다):`);
+    m.reviews.slice(0,3).forEach(r=>L.push(`  · ${String(r).replace(/\s+/g," ").slice(0,110)}`));
+  }
+
   // 진단에서 미달로 나온 것 — 무엇을 보완해야 하는지 AI 가 알아야 한다
   const miss = ITEMS.filter(x => !x.auto && !$("chk-"+x.id)?.checked).map(x => x.t);
   if(miss.length) L.push(`- 아직 안 된 항목: ${miss.slice(0,8).join(" / ")}`);
@@ -2735,18 +2818,46 @@ function promptFacts(){
   return L.join("\n");
 }
 
+/* 네이버 상세설명은 쓸 수 있는 문자가 제한된다. AI 가 화살표나 가운뎃점을
+   쓰면 사장님이 붙여넣기 할 때 막힌다. 그래서 지시문에 못박아 둔다. */
+const CHAR_RULE = `[반드시 지킬 문자 규칙]
+- 이모지, 화살표(→ ←), 가운뎃점(·), 엔대시(–), 큰따옴표("), 말줄임표(…), 낫표(「」) 금지
+- 목록은 하이픈(-)으로, 구분은 쉼표로, 소제목은 대괄호 [ ] 로
+- 마크다운(**, ##, |표|) 쓰지 마세요. 네이버 입력칸은 마크다운을 못 읽습니다`;
+
 const PROMPT_KIND = {
   intro: f => `네이버 스마트플레이스 "상세설명(소개글)"을 써 주세요.
 
 ${f}
 
-조건:
-- 500자 이상 800자 이하
-- 목표 키워드를 자연스럽게 3~5회 (억지로 반복하면 역효과입니다)
-- 첫 문장에 지역+업종이 들어가게
-- 보유 시설을 구체적으로 (없는 시설은 절대 쓰지 마세요 — 방문 후기에서 드러납니다)
-- 광고 문구 말고, 처음 오는 사람이 궁금해할 것부터 (운영시간, 주차, 샤워실, 초보 대응)
-- 과장·효과 보장 표현 금지`,
+[글의 목적]
+소개글까지 내려온 손님은 이미 마음이 어느 정도 기운 사람입니다.
+마지막 불안 한두 개가 안 지워지면 뒤로가기를 누릅니다.
+그래서 자랑하는 글이 아니라 불안을 하나씩 지우는 글이어야 합니다.
+
+[순서 - 이대로 써 주세요]
+1. 첫 줄 - 위에 적힌 "손님이 리뷰에서 자주 쓰는 말"을 근거로, 그 손님의 고민을 한 줄 질문으로
+2. 문제 공감 - 그 고민이 어떤 상황인지 두세 문장
+3. 심각성 - 이대로 두면 어떻게 되는지 두세 문장
+4. 해결책 - 손님이 망설이는 다섯 가지(비용, 오는 길, 씻고 가기, 처음이라는 부담, 시간) 중
+   위 정보로 답할 수 있는 것만 [대괄호 소제목]을 달아 한 칸씩
+5. 다른 고민 - 나머지 손님 유형 2~3명의 고민을 번호를 매겨 답하고,
+   각 답 끝에 실제 리뷰에서 나온 말을 근거로 붙이기
+6. 증명 - 위에 적힌 리뷰 수·평점과 실제 리뷰 문장을 그대로 인용
+7. 방문 유도 - 진행 중인 이벤트가 있으면 그것을, 없으면 편하게 보러 오시라고
+8. 찾아오는 길 - 위에 적힌 지하철·버스정류장·도보 시간을 그대로 (주소 한 줄로 끝내지 마세요)
+9. 영업정보 - 운영시간, 결제수단
+
+[조건]
+- 1,200자 이상 1,800자 이하 (공백 포함)
+- 목표 키워드를 자연스럽게 3~5회. 1순위는 첫 문단과 마지막 문단에 한 번씩
+- 위에 적힌 정보에 없는 시설이나 서비스는 절대 쓰지 마세요.
+  방문 첫날 들통나고 그게 리뷰로 남습니다
+- "최고의", "프리미엄", "명품" 같은 추상적 수식어로 시작하지 마세요
+- 오픈 연도나 자격증 나열로 시작하지 마세요. 손님은 "내가 가면 뭘 얻는지"가 궁금합니다
+- 과장이나 효과 보장 표현 금지
+
+${CHAR_RULE}`,
 
   kw: f => `네이버 스마트플레이스 "대표키워드" 5개를 정해 주세요.
 
@@ -2756,7 +2867,9 @@ ${f}
 - 손님이 실제로 검색창에 칠 법한 말로 (업계 용어 말고)
 - 지역+업종 조합을 최소 2개
 - 5개가 서로 겹치지 않게 (같은 검색어의 변형은 낭비입니다)
-- 각각 왜 그 키워드인지 한 줄 근거를 붙여 주세요`,
+- 각각 왜 그 키워드인지 한 줄 근거를 붙여 주세요
+
+${CHAR_RULE}`,
 
   reply: f => `네이버 플레이스 리뷰 답글 3종을 써 주세요.
 
@@ -2765,7 +2878,9 @@ ${f}
 - 칭찬 리뷰용 / 보통 리뷰용 / 불만 리뷰용 각 1개
 - 복붙 티가 안 나게, 문장 구조를 서로 다르게
 - 불만 답글은 변명하지 말고 무엇을 어떻게 바꾸겠다는 것만
-- 각 3~5문장, 목표 키워드를 억지로 넣지 마세요`,
+- 각 3~5문장, 목표 키워드를 억지로 넣지 마세요
+
+${CHAR_RULE}`,
 
   news: f => `네이버 플레이스 "소식"에 올릴 글감 4주치를 만들어 주세요.
 
@@ -2774,7 +2889,9 @@ ${f}
 - 주 1개씩 4개
 - 이벤트가 없어도 되는 소재로 (운동 팁, 시설 안내, 회원 후기 소개 등)
 - 각 제목 + 본문 3~4문장
-- 매주 같은 형식이 반복되지 않게`,
+- 매주 같은 형식이 반복되지 않게
+
+${CHAR_RULE}`,
 
   blog: f => `헬스장 네이버 블로그 홍보글 1편을 써 주세요.
 
