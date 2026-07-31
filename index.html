@@ -2415,7 +2415,20 @@ function buildIntro(o){
   return text;
 }
 
-/* ── 최종 점검 — 종이 체크리스트를 화면이 대신 판정한다 ──────── */
+/* ── 최종 점검 — 종이 체크리스트를 화면이 대신 판정한다 ────────
+   못 채운 줄에는 "무엇이 빠졌고 그래서 무엇을 하면 되는지"까지 적는다.
+   빠졌다는 말만 있으면 사장님은 그 줄을 보고 할 일을 못 정한다. */
+const STAGE_HEADS = [
+  { head:"[처음 오시면]",  label:"해결책",
+    fix:"목표 키워드와 시설을 채우고 다시 만들면 들어갑니다" },
+  { head:"[실제 후기]",    label:"증명",
+    fix:"맨 위 수집 버튼을 한 번 누르시면 리뷰를 가져와 넣습니다" },
+  { head:"[지금 오시면]",  label:"유도",
+    fix:"업체명과 지역을 채우면 들어갑니다" },
+  { head:"[찾아오는 길]",  label:"길 안내",
+    fix:"맨 위 수집 버튼을 한 번 누르시면 역·정류장을 가져와 넣습니다" },
+];
+
 function introAudit(text, o){
   const K = o.keywords.filter(Boolean);
   const nk = s => norm(s);
@@ -2429,8 +2442,11 @@ function introAudit(text, o){
   return [
     { t:"첫 줄이 손님의 고민으로 시작한다", ok: /(?:나요|시죠|가요)\s*$/m.test(text.split("\n")[0]),
       note: text.split("\n")[0].slice(0,26) },
-    { t:"5단계가 다 들어갔다", ok: ["[처음 오시면]","[실제 후기]","[지금 오시면]","[찾아오는 길]"].every(h=>text.includes(h)),
-      note:"공감 · 심각성 · 해결책 · 증명 · 유도" },
+    /* 무엇이 빠졌는지까지 적는다. "5단계가 다 안 들어갔다"만 보면 무엇을 해야 할지 모른다. */
+    { t:"5단계가 다 들어갔다", ok: STAGE_HEADS.every(h=>text.includes(h.head)),
+      note: (()=>{ const miss = STAGE_HEADS.filter(h=>!text.includes(h.head));
+        return miss.length ? `${miss.map(h=>h.label).join(", ")} 단계가 빠졌습니다 - ${miss[0].fix}`
+                           : "공감 · 심각성 · 해결책 · 증명 · 유도"; })() },
     { t:"거점키워드가 본문에 들어갔다",
       ok: kwHits.length>0 && kwHits[0].n >= 2 && kwHits.every(x=>x.n >= 1),
       note: kwHits.length
@@ -2445,9 +2461,11 @@ function introAudit(text, o){
         ? `첫 줄 ${PERSONAS[currentPersona(o)].label} + ${k.map(x=>PERSONAS[x].label).join(", ")}`
         : "한 명만 다루고 있습니다"; })() },
     { t:"실제 리뷰를 인용했다", ok: /^- /m.test(text),
-      note: (m.reviews||[]).length ? `수집한 리뷰 ${(m.reviews||[]).length}개 중 인용` : "리뷰 본문 수집 안 됨" },
+      note: (m.reviews||[]).length ? `수집한 리뷰 ${(m.reviews||[]).length}개 중 인용`
+        : "리뷰 본문이 없습니다 - 맨 위 수집 버튼을 한 번 누르시면 네이버에서 가져옵니다" },
     { t:"찾아오는 길에 랜드마크가 있다", ok: Boolean(m.subway?.name || (m.bus||[]).length),
-      note: (m.landmarks||[]).slice(0,3).join(", ") || "역·정류장 정보 없음" },
+      note: (m.landmarks||[]).slice(0,3).join(", ")
+        || "역·정류장 정보가 없습니다 - 맨 위 수집 버튼을 한 번 누르시면 네이버에서 가져옵니다" },
     { t:"방문 유도가 있다", ok: text.includes("[지금 오시면]"),
       note: (m.events||[]).length ? "메뉴의 이벤트를 인용" : "혜택 없이 방문 권유만" },
     { t:"글자수 1,200~1,800자", ok: text.length>=1200 && text.length<=1800,
