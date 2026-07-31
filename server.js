@@ -1170,6 +1170,17 @@ function introMaterial(data, jsons) {
   const events = [...new Set(menus.map(m => String(m?.name || '').trim())
     .filter(n => n && EVENT_HINT.test(n)))].slice(0, 5);
 
+  /* 메뉴 이름은 사장님이 직접 써 넣은 시설·프로그램 목록이다.
+       여성전용(우먼존) 24시이용권 / 스미스머신 파워렉 6대 / 유산소 머신 21대
+     답글과 소개글에 그대로 쓸 수 있는 사실이 여기 다 있는데,
+     지금까지 "메뉴 19개"라는 숫자만 쓰고 이름은 버렸다.
+     이모지는 네이버 입력칸에서 막히므로 여기서 떼고 넘긴다. */
+  const menuNames = [...new Set(menus
+    .map(m => String(m?.name || '')
+      .replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}]/gu, '')
+      .replace(/\s+/g, ' ').trim())
+    .filter(n => n.length >= 3))].slice(0, 20);
+
   /* 결제·편의시설·찾아오는 길도 같은 이유로 base 노드에서 직접 읽는다.
      harvest 가 모은 data 에는 KEY_FIELDS 만 들어 있어 여기엔 없다. */
   const base = grab('PlaceDetailBase')[0] || {};
@@ -1185,6 +1196,7 @@ function introMaterial(data, jsons) {
     payments: strList(base.paymentInfo),
     conveniences: strList(base.conveniences),
     events,
+    menuNames,
     reviews: reviews.slice(0, 20),
     blogs: blogs.slice(0, 5),
     /* 리뷰 문장에서 손님이 실제로 쓴 말을 센다. 프리셋 페르소나 대신
