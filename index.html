@@ -422,6 +422,10 @@ label.f > span i{font-style:normal;color:var(--accent)}
   background:var(--acc-bg);font-size:12.5px;line-height:1.75;color:var(--ink)}
 .rp-unknown b{color:var(--acc-fg)}
 .rp-unknown .btn{margin-top:8px}
+.rp-ai{padding:10px 13px;border-top:1px dashed var(--line);background:var(--surface-2);
+  font-size:12px;line-height:1.75;color:var(--muted)}
+.rp-ai b{color:var(--ink)}
+.rp-ai .btn{margin-top:8px}
 .rp-audit{padding:9px 13px;border-top:1px dashed var(--line);
   display:flex;flex-wrap:wrap;gap:5px 12px;font-size:11.5px}
 .rp-audit-h{width:100%;font-weight:800;font-size:12px;display:flex;gap:8px;align-items:center}
@@ -2643,44 +2647,55 @@ typo.length ? `\n\n[오타 확인] ${typo.join(", ")}\n  지역명 "${A}"이 안
 /* 리뷰가 무엇을 말하는지. hit 이 많이 걸린 주제가 그 리뷰의 주제다. */
 const REPLY_TOPIC = [
   { key:"price", label:"가격", hit:["가격","저렴","합리","가성비","비용","만원","부담"],
+    more:"등록하실 때 안 보이던 비용이 나중에 붙는 일은 없게 하겠습니다.",
     echo:"가격 부담 없이 다니신다니 다행입니다.",
     line:o=>o.price ? `가격은 앞으로도 올리지 않고 ${o.price} 기준을 지키겠습니다.`
                     : `가격은 앞으로도 부담스럽지 않게 유지하겠습니다.` },
   { key:"clean", label:"시설·청결", hit:["깨끗","청결","쾌적","넓","시설","기구","머신","신상"],
-    echo:"기구와 공간을 좋게 봐 주셔서 감사합니다.",
+    more:"기구가 고장 나면 표시를 붙여 두고 그날 안에 손봅니다.",
+    echo:"기구와 공간을 좋게 봐 주셨네요.",
     line:()=>`기구 점검과 청소는 매일 하고 있습니다. 눈에 걸리는 곳 있으면 바로 말씀해 주세요.` },
   { key:"kind",  label:"친절·상담", hit:["친절","상담","설명","알려주","가르쳐","응대","전화"],
+    more:"물어보시는 게 귀찮은 일이라고 생각하지 않습니다. 편하게 부르세요.",
     echo:"응대가 도움이 되셨다니 저희도 힘이 납니다.",
     line:()=>`처음 오시는 분께 기구 사용법과 동선을 알려드리는 건 저희가 당연히 할 일이라 생각합니다.` },
   { key:"alone", label:"혼자·조용", hit:["혼자","조용","눈치","시선","집중","한적","사람이 적"],
+    more:"말 걸리는 게 부담이시면 그냥 두겠습니다. 필요하실 때만 부르세요.",
     echo:"혼자 오셔서 편하게 하셨다니 다행입니다.",
     line:o=>o.fac.includes("여성 전용존")
       ? `혼자 오시는 분이 많아서 여성 전용존도 따로 두었습니다.`
       : `혼자 오셔서 조용히 하시는 분이 많습니다. 그 분위기는 계속 지키겠습니다.` },
   { key:"time",  label:"시간대", hit:["새벽","야간","밤","24시","아침","퇴근","교대","늦게","일찍"],
-    echo:"오시는 시간을 맞추기 어려우셨을 텐데 찾아와 주셔서 감사합니다.",
+    more:"한가한 시간대가 궁금하시면 데스크에 물어보세요. 알려드리겠습니다.",
+    echo:"오시는 시간 맞추기가 쉽지 않으셨을 텐데 꾸준히 오고 계시네요.",
     line:o=>o.fac.includes("24시간 운영")
       ? `24시간 열어 두니 근무 시간이 바뀌셔도 편한 때 오세요.`
       : `오시기 편한 시간대에 맞춰 이용해 주세요.` },
   { key:"pt",    label:"PT·자세", hit:["PT","피티","트레이너","선생님","코치","자세","교정","레슨"],
-    echo:"수업 이야기를 남겨 주셔서 감사합니다.",
+    more:"무게는 자세가 잡힌 뒤에 올려도 늦지 않습니다.",
+    echo:"수업 이야기까지 남겨 주셨네요.",
     line:()=>`자세는 계속 봐 드리겠습니다. 무게보다 자세가 먼저입니다.` },
   { key:"start", label:"처음·초보", hit:["처음","초보","입문","시작","등록","몰라","막막"],
+    more:"첫 2주는 몸을 만드는 기간이 아니라 오는 습관을 만드는 기간으로 보시면 됩니다.",
     echo:"처음 시작하시는 게 제일 어려운데 첫발을 떼셨습니다.",
     line:()=>`처음 두세 달이 제일 어렵습니다. 그 구간만 넘기시면 훨씬 수월해집니다.` },
   /* 아래 셋은 실제 리뷰에 자주 나오는데 우리가 못 알아듣던 주제다 */
   { key:"pain",  label:"통증·자세", hit:["어깨","허리","목","무릎","아프","통증","뻐근","자세가 무너","거북목","디스크"],
-    echo:"오래 앉아 계시면 어깨와 허리부터 옵니다. 그 얘기 남겨 주셔서 감사합니다.",
+    more:"통증이 있는 날은 무리하지 마시고 말씀해 주세요. 그날 할 수 있는 것으로 바꿔 드립니다.",
+    echo:"오래 앉아 계시면 어깨와 허리부터 옵니다.",
     line:()=>`아프신 부위가 있으시면 그 부위에 무리 가는 동작부터 빼고 잡아 드립니다. 참고 하시면 더 나빠집니다.` },
   { key:"diet",  label:"체중·다이어트", hit:["다이어트","체중","감량","살","벌크","체지방","인바디","몸무게"],
+    more:"체중은 하루하루 흔들립니다. 주 단위로 보시는 편이 마음이 편합니다.",
     echo:"목표를 정하고 오셨다니 절반은 하신 겁니다.",
     line:o=>o.fac.includes("인바디 측정")
       ? `인바디로 한 달에 한 번은 숫자를 확인하시는 편이 좋습니다. 체중보다 체지방이 중요합니다.`
       : `체중보다 몸이 달라지는 속도를 보셔야 합니다. 한 달 단위로 같이 확인해 드리겠습니다.` },
   { key:"with",  label:"동반·지인", hit:["친구","같이","동생","남편","아내","부부","지인","소개"],
+    more:"두 분 시간이 안 맞는 날은 혼자 오셔도 루틴을 맞춰 드리겠습니다.",
     echo:"같이 오시는 분이 있으면 훨씬 오래 가십니다.",
     line:()=>`같이 오시면 빠지는 날이 확 줄어듭니다. 두 분 다 편하게 오실 수 있게 챙기겠습니다.` },
   { key:"park",  label:"주차·위치", hit:["주차","가까","거리","위치","오기","찾아"],
+    more:"처음 오실 때 헷갈리시면 전화 주세요. 위치를 안내해 드리겠습니다.",
     echo:"오시는 길이 편하셨다니 다행입니다.",
     line:o=>o.fac.includes("주차 가능")
       ? `주차 공간은 계속 확보해 두겠습니다. 자리가 없으면 데스크로 말씀해 주세요.`
@@ -2715,15 +2730,23 @@ function replyTopics(review, used){
     .map(x => ({ x, n: x.hit.filter(w => t.toLowerCase().includes(w.toLowerCase())).length }))
     .filter(r => r.n > 0)
     .sort((a, b) => (used.has(a.x.key) - used.has(b.x.key)) || (b.n - a.n));
-  return scored.map(r => r.x);
+  return scored;
 }
 
-/* 손님이 쓴 말을 한 조각 되받는다. 무엇을 읽었는지 드러나야 한다. */
+/* 두 번째 주제를 아무거나 붙이면 답글이 이상해진다. 어깨가 아프다는 리뷰에
+   "여성 전용존을 따로 두었습니다"가 붙는 식이다. 단어 하나 스친 정도로는 안 붙인다. */
+const RP_STRONG = 2;
+
+/* 두 문장을 그냥 붙여 놓으면 목록처럼 읽힌다. 사이를 이어 준다. */
+const RP_JOIN = ["그리고 ", "또 ", "덧붙이자면 "];
+
+/* 손님 문장을 통째로 따서 "라고 해 주신 부분" 하고 되돌려 주던 때가 있었다.
+   읽었다는 걸 증명하려는 짓인데, 사람은 그렇게 말하지 않는다. 로봇 티만 난다.
+   사장님이 "구지 문장을 콕 집어서 할 필요는 모르겠다"고 하신 게 맞다.
+
+   대신 그 리뷰가 무슨 상황인지를 한 줄로 받는다. 인용 부호 없이,
+   그 얘기를 들은 사람이 자연스럽게 할 법한 말로. */
 function replyEcho(review, top){
-  const t = String(review || "").replace(/\s+/g, " ").trim();
-  const sent = t.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length >= 10);
-  const pick = sent.find(x => top && top.hit.some(w => x.toLowerCase().includes(w.toLowerCase())));
-  if(pick) return `"${pick.slice(0, 34)}${pick.length > 34 ? "..." : ""}"라고 해 주신 부분, 감사히 읽었습니다.`;
   return top?.echo || "";
 }
 
@@ -2747,21 +2770,38 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
   const kw   = opt.kw || "";
   const closing = (opt.closing || "").trim();
   const N = o.name, A = o.area, S = SERVICE_WORD[o.type] || "헬스장";
-  const tail = t => naverSafe([t, closing].filter(Boolean).join(" ").replace(/\s+/g, " ").trim());
+  /* 인사에서 한 번 한 감사를 바로 다음 문장에서 또 하면 성의 없어 보인다.
+     두 번째부터는 지운다. */
+  const dedupThanks = t => {
+    let seen = false;
+    return t.replace(/\s*[^.!?]*감사합니다\.\s*/g, m => {
+      if(!seen){ seen = true; return m; }
+      return " ";
+    });
+  };
+  const tail = t => naverSafe(dedupThanks([t, closing].filter(Boolean).join(" ")).replace(/\s+/g, " ").trim());
 
   if(star <= 2) return { topics:[], text: tail(RP_LOW(N, A, S)) };
 
-  const tops = replyTopics(review, used);
-  const t1 = tops[0], t2 = tops.find(x => x !== t1 && !used.has(x.key));
+  const scored = replyTopics(review, used);
+  const t1 = scored[0]?.x;
+  /* 확실히 걸린 것만 두 번째로 쓴다. 스치듯 걸린 단어로 없는 얘기를 붙이지 않는다. */
+  const s2 = scored.find(r => r.x !== t1 && !used.has(r.x.key) && r.n >= RP_STRONG);
+  const t2 = s2?.x;
   if(t1) used.add(t1.key);
   if(t2) used.add(t2.key);
 
-  if(star === 3) return { topics: tops.slice(0, 1),
+  if(star === 3) return { topics: t1 ? [t1] : [],
     text: tail(`${RP_MID(N)} ${t1 ? t1.line(o) : ""}`) };
 
   /* 길이는 문장 수로 조절한다. 짧게는 감사와 강점 하나, 길게는 근거를 더 붙인다. */
   const base = [RP_HELLO[i % RP_HELLO.length](N), replyEcho(review, t1)];
-  const mid  = [t1 ? t1.line(o) : "", len !== "short" && t2 ? t2.line(o) : ""];
+  /* 중간 길이인데 두 번째 주제가 확실하지 않으면, 없는 얘기를 끌어오는 대신
+     같은 주제를 한 걸음 더 이어 간다. 관련 없는 말을 붙이는 것보다 낫다. */
+  const second = (len === "short") ? ""
+    : t2 ? RP_JOIN[i % RP_JOIN.length] + t2.line(o)
+         : (t1?.more || "");
+  const mid  = [t1 ? t1.line(o) : "", second];
   const more = [len === "long" ? pickV(RP_MORE) : "", rpKwLine(kw, o)];
   const parts = len === "short"
     ? [...base, mid[0], RP_BYE[i % RP_BYE.length]]
@@ -2873,9 +2913,7 @@ function makePastedReply(){
       <span>${opt.star}점 · ${LEN_LABEL[opt.len]}${opt.kw ? ` · ${escH(opt.kw)} 심음` : ""}</span></div>
     ${unknown ? `<div class="rp-unknown">
       <b>이 리뷰는 저희가 아는 주제에 안 걸렸습니다.</b>
-      아래 답글은 무난하지만 <b>이 리뷰에 대한 답은 아닙니다.</b>
-      이런 리뷰는 AI에게 넘기시는 편이 낫습니다. 리뷰 본문과 우리 가게 정보를 담은
-      지시문을 만들어 드립니다. <b>돈은 들지 않습니다.</b>
+      아래 답글은 무난하지만 <b>이 리뷰에 대한 답은 아닙니다.</b> 이런 리뷰는 AI에게 맡기세요.
       <button class="btn sm" type="button" id="rp-toai">이 리뷰로 AI 지시문 만들기</button>
     </div>` : ""}
     ${uniq.map(x=>{
@@ -2893,12 +2931,21 @@ function makePastedReply(){
           r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
     <p class="rp-tip">셋 중 마음에 드는 것을 고르세요. 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
       ${opt.star <= 2 ? "<b>불만 리뷰는 하루 안에 다세요.</b> 다른 예비 회원이 그 답글을 보고 판단합니다." : ""}</p>
+    ${/* 문장 자연스러움은 사람이 쓴 것도 AI 가 쓴 것도 우리 조립보다 낫다.
+         감추지 말고, 더 잘 쓰고 싶으실 때 갈 길을 항상 열어 둔다. */""}
+    <div class="rp-ai">
+      <b>더 자연스러운 문장이 필요하시면</b> 위 답글은 정해둔 문장을 조합해 만든 것이라
+      바로 쓰긴 좋지만 사람이 쓴 맛은 덜합니다. 아래를 누르면 <b>이 리뷰와 우리 가게 정보,
+      길이·키워드·끝인사 조건까지 담은 지시문</b>을 만들어 드립니다.
+      쓰시는 AI 채팅에 붙여넣으세요. <b>돈은 들지 않습니다.</b>
+      <button class="btn sm ghost" type="button" id="rp-toai2">이 리뷰로 AI 지시문 만들기</button>
+    </div>
   </div>`;
 }
 
 /* 못 알아들은 리뷰는 AI 지시문 도구로 넘긴다 */
 document.addEventListener("click", e=>{
-  if(!e.target.closest("#rp-toai")) return;
+  if(!e.target.closest("#rp-toai") && !e.target.closest("#rp-toai2")) return;
   showTool("prompt");
   const sel = $("ai-kind"); if(sel){ sel.value = "reply"; }
   try{ renderPrompt(); }catch{}
