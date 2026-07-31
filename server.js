@@ -1521,7 +1521,11 @@ const server = http.createServer(async (req, res) => {
   try {
     /* ---- API ---- */
     // 외부 기기(휴대폰 등)는 접근 키가 있어야 API를 쓸 수 있다. 이 PC에서는 그냥 통과.
-    if (u.pathname.startsWith('/api/') && !isLocal(req)) {
+    /* 상태 점검만은 키 없이 연다. 렌더 같은 호스팅이 이 경로로 서버가 살아 있는지
+       확인하는데, 점검기는 키를 모른다. 401 을 받으면 서버가 죽은 줄 알고
+       트래픽을 끊는다 — 실제로 그렇게 페이지가 통째로 안 열렸다.
+       대신 이 응답에는 키도 내부 주소도 담지 않는다(위 lanUrl 참고). */
+    if (u.pathname.startsWith('/api/') && u.pathname !== '/api/health' && !isLocal(req)) {
       const given = q.get('k') || req.headers['x-access-key'];
       if (given !== KEY) {
         return sendJson(res, 401, { ok: false, error: '접근 키가 없거나 틀렸습니다. PC 화면에 표시된 주소로 다시 접속하세요.' });
