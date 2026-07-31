@@ -12,13 +12,13 @@
    바탕을 거의 무채색으로 두고, 색은 상태(좋다·부족하다·경고)에만 쓴다.
    숫자를 읽는 화면이라 색이 많으면 어디를 봐야 할지 흐려진다. */
 :root{
-  --navy:#1b1f26; --navy-2:#2a3038;
-  --ink:#191c22; --muted:#7b838e; --line:#eceef2;
-  --bg:#f6f7f9; --card:#fff;
-  --surface:#fff; --surface-2:#f8f9fb; --surface-3:#f5f6f9; --track:#eef0f4;
-  --accent:#ff5a2b; --accent-soft:#fff1ec;
-  --acc-bg:#fff8f5; --acc-line:#ffd6c8; --acc-fg:#c2410c;
-  --ok-bg:#eefaf2;  --ok-line:#bfe6cf;  --ok-fg:#0b7a3d;
+  --navy:#1B1E23; --navy-2:#2b3038;
+  --ink:#1B1E23; --muted:#626D7A; --line:#E8EAED;
+  --bg:#F4F6F8; --card:#fff;
+  --surface:#fff; --surface-2:#F7F8FA; --surface-3:#F4F6F8; --track:#E8EAED;
+  --accent:#C2410C; --accent-soft:#FFF3EC;
+  --acc-bg:#FFF3EC; --acc-line:#F6D9C8; --acc-fg:#A9341E;
+  --ok-bg:#EAF5F1;  --ok-line:#BFE0D4;  --ok-fg:#0B6B4F;
   --warn-bg:#fffaf0;--warn-line:#f5e2b8;--warn-fg:#8a6a12;
   --bad-bg:#fff5f5; --bad-line:#f6cfd0; --bad-fg:#b3282c;
   --info-bg:#eef4ff; --info-fg:#1d4ed8;
@@ -32,7 +32,8 @@
   --grade-c-bg:#fff6e5; --grade-c-fg:#a06b00;
   --grade-d-bg:#fff1ec; --grade-d-fg:#c2410c;
   --grade-e-bg:#fff5f5; --grade-e-fg:#b91c1c;
-  --radius:16px; --shadow:0 1px 2px rgba(18,24,33,.04);
+  --radius:14px; --shadow:0 1px 2px rgba(27,30,35,.04);
+  --gold:#B68A2E; --gold-text:#8A6519;
   --side-w:252px;
 }
 
@@ -91,7 +92,10 @@
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);
-  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Malgun Gothic",system-ui,sans-serif;
+  /* 외부 폰트를 불러오지 않는다 — 인터넷이 끊겨도 화면이 그대로여야 한다.
+     기기에 Pretendard 가 깔려 있으면 그것을, 없으면 시스템 한글 폰트를 쓴다. */
+  font-family:"Pretendard Variable","Pretendard",-apple-system,BlinkMacSystemFont,
+    "Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;
   line-height:1.65;-webkit-font-smoothing:antialiased}
 h1,h2,h3,h4{line-height:1.32;margin:0;letter-spacing:-.02em}
 p{margin:0}
@@ -99,33 +103,91 @@ button{font:inherit;cursor:pointer}
 input,select,textarea{font:inherit;color:inherit}
 .wrap{min-width:0}
 
-/* ── 껍데기 — 왼쪽 메뉴 + 상단 검색줄 + 본문 ────────────────────
-   진단 도구는 매일 같은 자리를 눌러 쓰는 화면이다. 소개 문구를 지우고
-   메뉴를 왼쪽에 고정해 두면, 들어오자마자 숫자부터 보인다. */
-.app{display:grid;grid-template-columns:var(--side-w) minmax(0,1fr);min-height:100dvh}
+/* ── 껍데기 — 위에 흰 바, 아래 가운데 정렬 본문 ────────────────
+   매일 같은 자리를 눌러 쓰는 화면이라, 소개 문구 없이 들어오면 숫자부터 보인다.
+   메뉴는 위에 한 줄로 두고, 좁은 화면에서만 서랍으로 접는다. */
+.app{min-height:100dvh;display:flex;flex-direction:column}
 
-.side{position:sticky;top:0;height:100dvh;overflow-y:auto;z-index:60;
-  background:var(--card);border-right:1px solid var(--line);
-  display:flex;flex-direction:column;padding:16px 13px}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 6px 6px}
-.brand i{width:32px;height:32px;border-radius:9px;background:var(--navy);color:#fff;flex:none;
-  display:grid;place-items:center;font-size:16px;font-style:normal}
-.brand b{font-size:15.5px;font-weight:800;letter-spacing:-.02em;min-width:0;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 상단 바 */
+.topbar{position:sticky;top:0;z-index:35;background:var(--card);border-bottom:1px solid var(--line)}
+.topwrap{max-width:1120px;margin:0 auto;padding:0 20px;
+  display:flex;align-items:center;gap:14px;min-height:60px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:9px;flex:none;text-decoration:none;color:inherit}
+.brand i{width:30px;height:30px;border-radius:9px;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font-size:15px;font-style:normal;flex:none}
+.brand b{font-size:16px;font-weight:800;letter-spacing:-.02em;white-space:nowrap}
 .side-x{display:none;margin-left:auto;background:none;border:0;color:var(--muted);font-size:17px;padding:2px 6px}
-.nav-lab{display:block;font-size:10.5px;font-weight:800;letter-spacing:.09em;color:var(--muted);
-  padding:16px 8px 6px}
-.nav-i{position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;
+
+/* 텍스트 메뉴 — 은코치처럼 오른쪽에 나란히 */
+.seg{display:flex;align-items:center;gap:2px;flex:none;margin-left:8px}
+.seg button{position:relative;border:0;background:none;border-radius:9px;padding:8px 13px;
+  font-size:14.5px;font-weight:600;color:var(--muted);transition:.13s;white-space:nowrap}
+.seg button:hover{color:var(--ink);background:var(--surface-2)}
+.seg button.on{color:var(--accent);font-weight:800}
+.seg .tab-dot{position:absolute;top:5px;right:5px;margin:0}
+.nav-set{display:flex;align-items:center;gap:2px;margin-left:auto;flex:none}
+.nav-set button{border:0;background:none;border-radius:9px;padding:8px 11px;
+  font-size:13.5px;font-weight:600;color:var(--muted);white-space:nowrap;transition:.13s}
+.nav-set button:hover{color:var(--ink);background:var(--surface-2)}
+.hamb{display:none;margin-left:auto;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:9px;width:36px;height:36px;place-items:center;font-size:15px;color:var(--ink);flex:none;padding:0}
+
+/* 주소 넣는 줄 — 상단 바 아래 폭 전체 */
+.searchbar{background:var(--card);border-bottom:1px solid var(--line)}
+.searchwrap{max-width:1120px;margin:0 auto;padding:11px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.crumb{display:none}
+.search{display:flex;align-items:center;gap:7px;flex:1 1 280px;min-width:0;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:5px 6px 5px 13px;
+  transition:border-color .15s,box-shadow .15s}
+.search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent);background:var(--card)}
+.search i{font-style:normal;font-size:13px;color:var(--muted);flex:none}
+.search input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:14px;padding:6px 0}
+.search .btn{flex:none;width:auto;padding:8px 15px;font-size:13.5px;border-radius:9px;font-weight:700}
+
+.main{min-width:0;display:flex;flex-direction:column;flex:1}
+.content{max-width:1120px;width:100%;margin:0 auto;padding:22px 20px 64px;min-width:0}
+
+/* 인사줄 */
+.hello{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.hello h1{font-size:clamp(21px,3.4vw,27px);font-weight:800;letter-spacing:-.03em}
+.hello p{margin-top:6px;font-size:14px;color:var(--muted)}
+.hello .hb{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+
+/* 시작 안내 */
+.blank{background:var(--card);border:1px dashed var(--line);border-radius:var(--radius);
+  padding:30px 22px;text-align:center}
+.blank b{display:block;font-size:17px;font-weight:800}
+.blank p{margin-top:8px;font-size:14px;color:var(--muted);line-height:1.75}
+.blank .btn{width:auto;margin-top:16px;padding:12px 22px}
+
+/* 결과 두 단 */
+.res-grid{display:grid;gap:16px;align-items:start}
+.res-grid > .col{min-width:0;display:grid;gap:16px;align-content:start}
+.res-grid > .col > .card{margin-top:0}
+@media (min-width:1080px){ .res-grid{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)} }
+
+.gonext,.need-diag{text-align:center}
+.gonext b,.need-diag b{display:block;font-size:17px;font-weight:800}
+.gonext p,.need-diag p{margin:8px 0 15px;color:var(--muted);font-size:14px;line-height:1.7}
+.gonext .btn,.need-diag .btn{width:auto;padding:12px 22px}
+
+/* 좁은 화면 — 메뉴를 서랍으로 */
+.side{position:fixed;left:0;top:0;width:280px;height:100dvh;z-index:60;overflow-y:auto;
+  background:var(--card);border-right:1px solid var(--line);padding:16px 13px;
+  display:flex;flex-direction:column;transform:translateX(-101%);visibility:hidden;
+  transition:transform .22s cubic-bezier(.2,.8,.2,1),visibility .22s;box-shadow:0 0 40px rgba(27,30,35,.16)}
+.side.open{transform:none;visibility:visible}
+.nav-lab{display:block;font-size:10.5px;font-weight:800;letter-spacing:.09em;color:var(--muted);padding:16px 8px 6px}
+.nav-i{position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:10px 11px;
   border-radius:10px;border:1px solid transparent;background:none;color:var(--muted);
-  font-size:14px;font-weight:600;text-align:left;transition:.13s}
+  font-size:14.5px;font-weight:600;text-align:left;transition:.13s}
 .nav-i i{font-style:normal;font-size:14.5px;flex:none;width:18px;text-align:center}
 .nav-i span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav-i:hover{background:var(--surface-2);color:var(--ink)}
-.nav-i.on{background:var(--surface-2);border-color:var(--line);color:var(--ink);font-weight:700;
-  box-shadow:0 1px 2px rgba(18,24,33,.05)}
+.nav-i.on{background:var(--accent-soft);border-color:var(--acc-line);color:var(--accent);font-weight:800}
 .nav-sub{display:grid;margin:3px 0 3px 22px;padding-left:11px;border-left:1px solid var(--line)}
-.nav-s{background:none;border:0;text-align:left;padding:6px 9px;border-radius:8px;
-  font-size:12.5px;font-weight:600;color:var(--muted);transition:.13s}
+.nav-s{background:none;border:0;text-align:left;padding:7px 9px;border-radius:8px;
+  font-size:13px;font-weight:600;color:var(--muted);transition:.13s}
 .nav-s:hover{color:var(--ink);background:var(--surface-2)}
 .nav-i .tab-dot,.seg .tab-dot{display:none;width:7px;height:7px;border-radius:50%;flex:none;
   background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
@@ -134,88 +196,37 @@ input,select,textarea{font:inherit;color:inherit}
 .side-foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
 .me{display:flex;align-items:center;gap:10px;padding:8px 6px;min-width:0}
 .me i{width:34px;height:34px;border-radius:10px;flex:none;font-style:normal;font-weight:800;font-size:14px;
-  background:var(--surface-2);border:1px solid var(--line);color:var(--ink);display:grid;place-items:center}
+  background:var(--accent-soft);border:1px solid var(--acc-line);color:var(--accent);display:grid;place-items:center}
 .me div{min-width:0}
 .me b{display:block;font-size:12.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .me span{display:block;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-.main{min-width:0;display:flex;flex-direction:column}
-.topbar{position:sticky;top:0;z-index:35;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-  padding:11px 22px;border-bottom:1px solid var(--line);
-  background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px)}
-.hamb{display:none;background:var(--card);border:1px solid var(--line);border-radius:9px;
-  width:34px;height:34px;place-items:center;font-size:15px;color:var(--ink);flex:none;padding:0}
-.crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);flex:none;min-width:0}
-.seg{display:none;gap:3px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px;flex:none}
-.seg button{position:relative;border:0;background:none;border-radius:8px;padding:6px 12px;
-  font-size:12.5px;font-weight:700;color:var(--muted)}
-.seg button.on{background:var(--surface-2);color:var(--ink);box-shadow:0 1px 2px rgba(18,24,33,.07)}
-.seg .tab-dot{position:absolute;top:4px;right:4px;margin:0}
-#mtab-tools{padding-right:17px}
-.crumb b{color:var(--ink);font-weight:700}
-.crumb .sl{opacity:.45}
-.search{margin-left:auto;display:flex;align-items:center;gap:7px;flex:1 1 260px;max-width:520px;min-width:0;
-  background:var(--card);border:1px solid var(--line);border-radius:11px;padding:5px 6px 5px 12px;
-  transition:border-color .15s,box-shadow .15s}
-.search:focus-within{border-color:var(--navy);box-shadow:0 0 0 3px color-mix(in srgb,var(--navy) 9%,transparent)}
-.search i{font-style:normal;font-size:13px;color:var(--muted);flex:none}
-.search input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:13.5px;padding:5px 0}
-.search .btn{flex:none;width:auto;padding:7px 13px;font-size:13px;border-radius:8px;font-weight:700}
-.content{padding:20px 22px 60px;max-width:1280px;width:100%;min-width:0}
-
-/* 인사줄 — 이름과 "지금 어디에 서 있나" 한 줄 */
-.hello{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:18px}
-.hello h1{font-size:clamp(20px,3.4vw,26px);font-weight:800}
-.hello p{margin-top:5px;font-size:13.5px;color:var(--muted)}
-.hello .hb{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
-
-/* 시작 안내 — 아직 진단 전일 때 숫자 자리에 놓는다 */
-.blank{background:var(--card);border:1px dashed var(--line);border-radius:var(--radius);
-  padding:26px 22px;text-align:center}
-.blank b{display:block;font-size:16px;font-weight:800}
-.blank p{margin-top:7px;font-size:13.5px;color:var(--muted);line-height:1.7}
-.blank .btn{width:auto;margin-top:14px;padding:11px 20px}
-
-/* 결과를 두 단으로 — 왼쪽은 숫자·분석, 오른쪽은 할 일 */
-.res-grid{display:grid;gap:16px;align-items:start}
-.res-grid > .col{min-width:0;display:grid;gap:16px;align-content:start}
-.res-grid > .col > .card{margin-top:0}
-@media (min-width:1180px){
-  .res-grid{grid-template-columns:minmax(0,1.45fr) minmax(0,1fr)}
-}
-
-.gonext,.need-diag{text-align:center}
-.gonext b,.need-diag b{display:block;font-size:16.5px;font-weight:800}
-.gonext p,.need-diag p{margin:7px 0 14px;color:var(--muted);font-size:13.5px;line-height:1.65}
-.gonext .btn,.need-diag .btn{width:auto;padding:12px 22px}
-
-.scrim{position:fixed;inset:0;background:rgba(12,16,22,.45);z-index:55;display:none}
+.scrim{position:fixed;inset:0;background:rgba(27,30,35,.42);z-index:55;display:none}
 .scrim.on{display:block}
-@media (max-width:1000px){
-  .app{grid-template-columns:minmax(0,1fr)}
-  .side{position:fixed;left:0;top:0;width:272px;transform:translateX(-101%);visibility:hidden;
-    transition:transform .22s cubic-bezier(.2,.8,.2,1),visibility .22s;
-    box-shadow:0 0 40px rgba(12,16,22,.18)}
-  .side.open{transform:none;visibility:visible}
-  .side-x{display:block}
+
+@media (max-width:860px){
+  /* 설정 링크는 서랍으로 접지만, 진단/채우기 전환은 접지 않는다.
+     폰으로 쓰는 화면이라 두 번 눌러 바꾸게 하면 안 된다. 한 줄로 내린다. */
+  .nav-set{display:none}
+  .seg{order:9;flex:1 0 100%;margin:0;justify-content:stretch;
+    border-top:1px solid var(--line);padding:3px 0}
+  .seg button{flex:1;text-align:center;padding:11px 8px;font-size:14px}
+  .seg .tab-dot{top:8px;right:auto;left:50%;margin-left:26px}
   .hamb{display:grid}
-  .topbar{padding:10px 14px}
-  .seg{display:flex}
-  .crumb{display:none}
-  .content{padding:16px 14px 60px}
-}
-@media (max-width:560px){
-  .crumb{font-size:12px}
-  .search{flex-basis:100%;margin-left:0;order:3;max-width:none}
+  .side-x{display:block}
+  .topwrap{padding:0 14px;min-height:56px}
+  .searchwrap{padding:10px 14px}
+  .content{padding:16px 14px 64px}
 }
 
 /* 카드 */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-  box-shadow:var(--shadow);padding:24px;margin-top:18px}
+  box-shadow:var(--shadow);padding:22px;margin-top:16px}
 /* 제목 줄은 배지·버튼과 한 줄에 놓이는데, 좁은 화면에서는 서로 짜부라져
    글자가 한 자씩 세로로 쪼개진다. 줄바꿈을 허용하고 곁들이는 것들은 안 줄어들게 한다. */
-.card > h2{font-size:19px;font-weight:800;display:flex;align-items:center;gap:9px;
-  flex-wrap:wrap;row-gap:7px}
+.card > h2{font-size:18.5px;font-weight:800;letter-spacing:-.02em;
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap;row-gap:7px;
+  padding-left:12px;border-left:4px solid var(--accent);line-height:1.35}
 /* 짧고 고정 크기인 것만 안 줄어들게 한다. 전부에 걸면 긴 문구가 화면을 밀어낸다. */
 .card > h2 > .step-no,
 .card > h2 > .ttl-note,
@@ -226,8 +237,10 @@ input,select,textarea{font:inherit;color:inherit}
 .card > h2 > .ic{font-size:19px;line-height:1;flex:none}
 .step-no{background:var(--navy);color:#fff;width:26px;height:26px;border-radius:8px;
   display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex:none}
-.card > p.desc{color:var(--muted);font-size:14px;margin-top:8px}
-.card > h2 + p.desc{margin-top:6px}
+.card > p.desc{color:var(--muted);font-size:14px;margin-top:9px;padding-left:16px}
+.card > h2 + p.desc{margin-top:7px}
+/* 결과 카드처럼 제목이 곧 내용인 곳은 막대를 옅게 */
+#result .card > h2,#kwfind > h2{border-left-color:var(--accent)}
 
 /* 폼 */
 .grid{display:grid;gap:14px;margin-top:18px}
@@ -272,9 +285,10 @@ label.f > span i{font-style:normal;color:var(--accent)}
 /* 주 버튼은 무채색 검정. 주황은 "부족한 곳" 표시에만 남겨 둔다 —
    버튼까지 주황이면 정작 봐야 할 경고가 묻힌다. */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;
-  padding:14px 20px;border:0;border-radius:11px;background:var(--navy);color:#fff;
-  font-size:15.5px;font-weight:700;transition:filter .15s,transform .05s}
+  padding:14px 20px;border:0;border-radius:11px;background:var(--accent);color:#fff;
+  font-size:15.5px;font-weight:700;letter-spacing:-.01em;transition:filter .15s,transform .05s}
 .btn.acc{background:var(--accent)}
+.btn.dark{background:var(--navy)}
 .btn:hover{filter:brightness(1.14)}
 .btn:active{transform:translateY(1px)}
 .btn:disabled{opacity:.55;cursor:default}
@@ -409,6 +423,23 @@ table.kwf td .v{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:6
 .v.later{background:var(--track);color:var(--muted)}
 .kwf-note{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.75}
 .kwf-use{margin-top:12px}
+
+/* 페이지 섹션 제목 — 주황 세로 막대 + 부제 */
+.sec-h{margin:26px 0 12px;padding-left:12px;border-left:4px solid var(--accent)}
+.sec-h b{display:block;font-size:17px;font-weight:800;letter-spacing:-.02em}
+.sec-h span{display:block;font-size:13px;color:var(--muted);margin-top:3px}
+
+/* 도구 카드 격자 — 어떤 도구가 있는지 한눈에, 누르면 그 칸으로 */
+.tools-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media(min-width:820px){ .tools-grid{grid-template-columns:repeat(3,minmax(0,1fr))} }
+.tcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:20px 14px;text-align:center;cursor:pointer;transition:.15s;min-width:0}
+.tcard:hover{border-color:var(--acc-line);background:var(--accent-soft);transform:translateY(-1px)}
+.tcard i{display:block;font-style:normal;font-size:26px;line-height:1;margin-bottom:9px}
+.tcard b{display:block;font-size:14.5px;font-weight:800;letter-spacing:-.02em}
+.tcard span{display:block;font-size:12px;color:var(--muted);margin-top:5px;line-height:1.55}
+.tcard u{display:inline-block;text-decoration:none;font-size:11px;font-weight:700;margin-top:9px;
+  color:var(--ok-fg);background:var(--ok-bg);border-radius:6px;padding:2px 8px}
 
 /* 출력 박스 */
 .out{margin-top:16px}
@@ -660,7 +691,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
 <div class="app">
 
-  <!-- 왼쪽 고정 메뉴 -->
+  <!-- 좁은 화면용 서랍 메뉴 -->
   <aside class="side" id="side">
     <div class="brand"><i>💪</i><b>플레이스 진단</b>
       <button class="side-x" id="side-x" type="button" aria-label="메뉴 닫기">✕</button></div>
@@ -692,20 +723,34 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
   <main class="main">
 
-    <!-- 상단 — 어디에 있는지 + 플레이스 주소 넣는 칸 -->
+    <!-- 상단 — 로고와 메뉴 -->
     <header class="topbar">
-      <button class="hamb" id="hamb" type="button" aria-label="메뉴 열기">☰</button>
-      <div class="crumb"><span>메인</span><span class="sl">/</span><b id="crumb">대시보드</b></div>
-      <div class="seg" id="seg" role="tablist" aria-label="화면 전환">
-        <button type="button" id="mtab-diag" class="on" role="tab" aria-selected="true">진단</button>
-        <button type="button" id="mtab-tools" role="tab" aria-selected="false">채우기<i class="tab-dot" id="mtab-dot"></i></button>
-      </div>
-      <div class="search">
-        <i>🔍</i>
-        <input id="s-url" type="text" placeholder="플레이스 주소 또는 ID 붙여넣기">
-        <button class="btn dark" id="s-collect" type="button">수집</button>
+      <div class="topwrap">
+        <a class="brand" href="#"><i>💪</i><b>플레이스 진단</b></a>
+        <nav class="seg" id="seg" role="tablist" aria-label="화면 전환">
+          <button type="button" id="mtab-diag" class="on" role="tab" aria-selected="true">진단</button>
+          <button type="button" id="mtab-tools" role="tab" aria-selected="false">채우기 도구<i class="tab-dot" id="mtab-dot"></i></button>
+        </nav>
+        <div class="nav-set">
+          <button type="button" data-go="saves-card">저장 내역</button>
+          <button type="button" data-go="manual-wrap">입력값</button>
+          <button type="button" data-go="xfer">기기 이어쓰기</button>
+        </div>
+        <button class="hamb" id="hamb" type="button" aria-label="메뉴 열기">☰</button>
       </div>
     </header>
+
+    <!-- 플레이스 주소 넣는 줄 -->
+    <div class="searchbar">
+      <div class="searchwrap">
+        <div class="crumb"><b id="crumb">대시보드</b></div>
+        <div class="search">
+          <i>🔍</i>
+          <input id="s-url" type="text" placeholder="플레이스 주소 또는 ID 붙여넣기">
+          <button class="btn dark" id="s-collect" type="button">수집</button>
+        </div>
+      </div>
+    </div>
 
     <div class="content">
 
@@ -995,6 +1040,23 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <b>먼저 진단을 한 번 돌려주세요.</b>
     <p>업체명·지역·키워드·시설을 진단에서 읽어와 문장에 넣습니다. 진단 없이 만들면 빈칸투성이 문장이 나옵니다.</p>
     <button class="btn ghost" type="button" id="btn-godiag">🔍 진단으로 →</button>
+  </div>
+
+  <div class="sec-h"><b>무엇을 채울까요</b>
+    <span>진단에서 알아낸 값으로 만듭니다. 누르면 그 칸으로 갑니다.</span></div>
+  <div class="tools-grid">
+    <div class="tcard" data-go="kwfind"><i>🎯</i><b>키워드 발굴</b>
+      <span>무엇을 노릴지 정합니다</span><u>실제 내 순위</u></div>
+    <div class="tcard" data-go="o-intro"><i>📝</i><b>소개글</b>
+      <span>손님 불안을 지우는 8단 구성</span><u>리뷰 자동 인용</u></div>
+    <div class="tcard" data-go="o-kw"><i>🔑</i><b>대표키워드 5개</b>
+      <span>스마트플레이스 5칸을 채웁니다</span></div>
+    <div class="tcard" data-go="o-reply"><i>💬</i><b>리뷰 답글</b>
+      <span>실제 리뷰에 맞춘 답글</span><u>리뷰 자동 수집</u></div>
+    <div class="tcard" data-go="o-news"><i>📢</i><b>소식 글감</b>
+      <span>4주치 미리 잡아 둡니다</span></div>
+    <div class="tcard" data-go="ai-prompt"><i>🤖</i><b>AI 지시문</b>
+      <span>쓰시는 AI 채팅에 붙여넣기</span><u>API 키 불필요</u></div>
   </div>
 
   <!-- 키워드 발굴 — 무엇을 노릴지부터 정한다 -->
@@ -1293,10 +1355,14 @@ document.addEventListener("keydown", e=>{ if(e.key === "Escape") closeSide(); })
 document.addEventListener("click", e=>{
   const b = e.target.closest("[data-go]"); if(!b) return;
   const id = b.dataset.go;
-  if(VIEW !== "diag") showView("diag", {keepScroll:true});
+  const el = $(id);
+  /* 목적지가 어느 화면에 있는지 보고 옮긴다. 무조건 진단으로 보내면
+     도구 안에서 도구를 눌렀을 때 엉뚱한 데로 간다. */
+  const inTools = el ? Boolean(el.closest("#view-tools")) : false;
+  const want = inTools ? "tools" : "diag";
+  if(VIEW !== want) showView(want, {keepScroll:true});
   if(id === "manual-wrap"){ try{ openManual(); }catch{} }
   closeSide();
-  const el = $(id);
   if(!el) return;
   requestAnimationFrame(()=> el.scrollIntoView({ behavior:"smooth", block:"start" }));
 });
