@@ -418,6 +418,20 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .rp-foot .btn{margin-left:auto}
 .rp-tip{margin:0;padding:9px 13px;border-top:1px dashed var(--line);
   font-size:11.5px;color:var(--muted);line-height:1.7}
+.rp-unknown{padding:11px 13px;border-top:1px solid var(--line);
+  background:var(--acc-bg);font-size:12.5px;line-height:1.75;color:var(--ink)}
+.rp-unknown b{color:var(--acc-fg)}
+.rp-unknown .btn{margin-top:8px}
+.rp-audit{padding:9px 13px;border-top:1px dashed var(--line);
+  display:flex;flex-wrap:wrap;gap:5px 12px;font-size:11.5px}
+.rp-audit-h{width:100%;font-weight:800;font-size:12px;display:flex;gap:8px;align-items:center}
+.rp-audit-h em{font-style:normal;font-weight:800;font-size:11.5px;padding:1px 7px;border-radius:6px}
+.rp-audit-h em.pass{background:var(--ok-bg);color:var(--ok-fg)}
+.rp-audit-h em.todo{background:var(--track);color:var(--muted)}
+.rp-audit span.y{color:var(--muted)}
+.rp-audit span.n{color:var(--acc-fg);font-weight:700}
+.rp-audit span i{font-style:normal;color:var(--muted);font-weight:500}
+@media(max-width:700px){ .rp-row .f{width:100%} .rp-row .btn{width:100%} }
 
 .fixrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
 .fixrow .pill{font-size:11.5px;padding:5px 10px;border-radius:8px;cursor:pointer;
@@ -1247,6 +1261,18 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
               <option value="3">별 3개 (아쉬움)</option><option value="2">별 2개 (불만)</option>
               <option value="1">별 1개 (불만)</option>
             </select></label>
+          <label class="f"><span>답글 길이</span>
+            <select id="rp-len">
+              <option value="short">짧게 (2~3문장)</option>
+              <option value="medium" selected>중간 (4~5문장)</option>
+              <option value="long">길게 (6~7문장)</option>
+            </select></label>
+          <label class="f"><span>답글에 심을 키워드</span>
+            <select id="rp-kw"></select></label>
+        </div>
+        <label class="f" style="margin-top:10px"><span>답글 끝인사 <i>한 번만 적어두시면 모든 답글 끝에 붙습니다</i></span>
+          <input id="rp-closing" type="text" placeholder="예) 오늘도 좋은 하루 보내세요"></label>
+        <div class="btn-row" style="margin-top:10px">
           <button class="btn" id="rp-make" type="button">이 리뷰에 맞춘 답글 만들기</button>
         </div>
         <div id="rp-out"></div>
@@ -2701,9 +2727,29 @@ function replyEcho(review, top){
   return top?.echo || "";
 }
 
-function replyFor(review, o, i = 0, used = new Set(), star = 5){
+/* 답글에 키워드를 한 번 심는다. 답글도 플레이스 안 텍스트라 검색에 걸린다.
+   다만 억지로 박으면 읽는 사람이 먼저 알아본다. 다음 손님에게 하는 말 안에 넣는다. */
+function rpKwLine(kw, o){
+  if(!kw) return "";
+  return `${kw} 알아보시는 분들이 많이 오시는데, 한 번 들러 보시면 결정이 훨씬 쉬워집니다.`;
+}
+
+/* 길게 고르셨을 때 한 문장 더. 빈말이 아니라 다음에 오실 이유가 되는 말로 둔다. */
+const RP_MORE = [
+  `오래 다니시는 분들이 하시는 말씀이 대부분 비슷합니다. 처음 두세 달만 넘기면 그다음은 알아서 굴러간다는 것입니다.`,
+  `저희는 등록시키는 것보다 오래 다니시게 하는 쪽에 더 신경을 씁니다. 그게 결국 남는 장사라고 생각합니다.`,
+  `한동안 못 오시다가 다시 오시는 분도 많습니다. 흐름이 끊겼다고 부담 갖지 마시고 편하게 오세요.`,
+];
+
+function replyFor(review, o, i = 0, used = new Set(), opt = {}){
+  const star = Number(opt.star ?? 5);
+  const len  = opt.len || "medium";
+  const kw   = opt.kw || "";
+  const closing = (opt.closing || "").trim();
   const N = o.name, A = o.area, S = SERVICE_WORD[o.type] || "헬스장";
-  if(star <= 2) return { topics:[], text: naverSafe(RP_LOW(N, A, S)) };
+  const tail = t => naverSafe([t, closing].filter(Boolean).join(" ").replace(/\s+/g, " ").trim());
+
+  if(star <= 2) return { topics:[], text: tail(RP_LOW(N, A, S)) };
 
   const tops = replyTopics(review, used);
   const t1 = tops[0], t2 = tops.find(x => x !== t1 && !used.has(x.key));
@@ -2711,17 +2757,40 @@ function replyFor(review, o, i = 0, used = new Set(), star = 5){
   if(t2) used.add(t2.key);
 
   if(star === 3) return { topics: tops.slice(0, 1),
-    text: naverSafe(`${RP_MID(N)} ${t1 ? t1.line(o) : ""}`.replace(/\s+/g, " ").trim()) };
+    text: tail(`${RP_MID(N)} ${t1 ? t1.line(o) : ""}`) };
 
-  const parts = [
-    RP_HELLO[i % RP_HELLO.length](N),
-    replyEcho(review, t1),
-    t1 ? t1.line(o) : "",
-    t2 ? t2.line(o) : "",
-    RP_BYE[i % RP_BYE.length],
-  ];
+  /* 길이는 문장 수로 조절한다. 짧게는 감사와 강점 하나, 길게는 근거를 더 붙인다. */
+  const base = [RP_HELLO[i % RP_HELLO.length](N), replyEcho(review, t1)];
+  const mid  = [t1 ? t1.line(o) : "", len !== "short" && t2 ? t2.line(o) : ""];
+  const more = [len === "long" ? pickV(RP_MORE) : "", rpKwLine(kw, o)];
+  const parts = len === "short"
+    ? [...base, mid[0], RP_BYE[i % RP_BYE.length]]
+    : [...base, ...mid, ...more, RP_BYE[i % RP_BYE.length]];
+
   return { topics: [t1, t2].filter(Boolean),
-           text: naverSafe(parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim()) };
+           text: tail(parts.filter(Boolean).join(" ")) };
+}
+
+/* 은코치는 "감사 + 매장 홍보 + 재방문" 세 가지가 들어가야 한다고 말한다.
+   말만 하고 판정은 안 해 준다. 우리는 만든 답글을 그 잣대로 실제로 재 준다. */
+function replyAudit(text, review, o){
+  const t = String(text);
+  const K = [...o.keywords, ...o.repkw].filter(Boolean);
+  const revWords = String(review || "").replace(/[^가-힣a-zA-Z0-9]/g, " ")
+    .split(/\s+/).filter(w => [...w].length >= 2);
+  const echoed = revWords.some(w => t.includes(w));
+  const n = [...t].length;
+  return [
+    { t:"감사가 들어갔다", ok: /감사|죄송/.test(t) },
+    { t:"우리 강점이 한 가지 들어갔다",
+      ok: REPLY_TOPIC.some(x => t.includes(x.line(o).slice(0, 12))) },
+    { t:"다시 오실 이유가 있다", ok: /다음에|또 뵙|오래|편하게 오|들러/.test(t) },
+    { t:"손님이 쓴 말을 되받았다", ok: echoed, note: echoed ? "" : "리뷰 내용이 안 들어갔습니다" },
+    { t:"길이가 적당하다 (80~400자)", ok: n >= 80 && n <= 400, note: `${n}자` },
+    { t:"네이버 금지문자 0개", ok: charCheck(t, false).risky.length === 0 },
+    { t:"키워드가 들어갔다", ok: K.some(k => norm(t).includes(norm(k))),
+      note: K.length ? "" : "목표 키워드가 없습니다" },
+  ];
 }
 
 function buildReplies(o){
@@ -2731,7 +2800,7 @@ function buildReplies(o){
   if(revs.length){
     const used = new Set();
     const made = revs.map((r, i)=>{
-      const { text, topics } = replyFor(r, o, i, used, 5);
+      const { text, topics } = replyFor(r, o, i, used, { star:5, closing: rpClosing() });
       const q = String(r).replace(/\s+/g, " ");
       return `[${i+1}] 실제 리뷰 - ${q.length > 46 ? q.slice(0, 44) + "..." : q}\n`
         + `읽어낸 주제: ${topics.map(t=>t.label).join(", ") || "일반"}\n`
@@ -2740,10 +2809,10 @@ function buildReplies(o){
     return `${made}
 
 [별 3개가 달렸을 때]
-${replyFor("", o, 0, new Set(), 3).text}
+${replyFor("", o, 0, new Set(), { star:3, closing: rpClosing() }).text}
 
 [별 1~2개가 달렸을 때]
-${replyFor("", o, 0, new Set(), 2).text}
+${replyFor("", o, 0, new Set(), { star:2, closing: rpClosing() }).text}
 
 * 세 답글은 서로 다른 주제로 만들었습니다. 같은 문장이 반복되면 손님이 바로 알아봅니다.
 * 그대로 쓰지 마시고 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
@@ -2756,14 +2825,27 @@ ${replyFor("", o, 0, new Set(), 2).text}
 안녕하세요, ${N}입니다. 운동 잘하고 계신다니 저희도 기분이 좋습니다. 말씀해 주신 ${fac} 부분은 앞으로도 신경 써서 관리하겠습니다. 필요한 기구가 있으면 언제든 편하게 말씀해 주세요. 다음에 뵙겠습니다.
 
 [별 3개]
-${replyFor("", o, 0, new Set(), 3).text}
+${replyFor("", o, 0, new Set(), { star:3, closing: rpClosing() }).text}
 
 [별 1~2개]
-${replyFor("", o, 0, new Set(), 2).text}
+${replyFor("", o, 0, new Set(), { star:2, closing: rpClosing() }).text}
 
 * 자동 수집을 하시면 실제 리뷰에 맞춘 답글로 바뀝니다.
 * 위 붙여넣기 칸에 새 리뷰를 넣으시면 그 리뷰에 맞춰 만들어 드립니다.
 * '감사합니다' 한 줄은 효과가 없습니다. 손님이 읽느라 머무는 시간이 점수라서, 2~3줄로 시설이나 프로그램을 언급해야 의미가 있습니다.`;
+}
+
+const rpClosing = () => ($("rp-closing")?.value || "").trim();
+
+/* 답글에 심을 키워드 목록 — 목표 키워드와 등록된 대표키워드에서 고른다 */
+function renderRpKw(){
+  const sel = $("rp-kw"); if(!sel) return;
+  const o = getInfo();
+  const list = [...new Set([...o.keywords, ...o.repkw].filter(Boolean))].slice(0, 8);
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">안 넣기</option>`
+    + list.map(k=>`<option value="${escH(k)}">${escH(k)}</option>`).join("");
+  if(cur && list.includes(cur)) sel.value = cur;
 }
 
 /* 새로 달린 리뷰를 붙여넣으면 그 리뷰에 맞춰 만든다.
@@ -2772,26 +2854,57 @@ function makePastedReply(){
   const box = $("rp-out"); if(!box) return;
   const raw = ($("rp-paste")?.value || "").trim();
   if(!raw){ alert("답글을 달 리뷰를 붙여넣어 주세요."); return; }
-  const star = Number($("rp-star")?.value || 5);
+  const opt = { star: Number($("rp-star")?.value || 5), len: $("rp-len")?.value || "medium",
+                kw: $("rp-kw")?.value || "", closing: rpClosing() };
   const o = getInfo();
   const used = new Set();
-  const outs = [0, 1, 2].map(i => replyFor(raw, o, i, i === 0 ? used : new Set(), star));
+  const outs = [0, 1, 2].map(i => replyFor(raw, o, i, i === 0 ? used : new Set(), opt));
   const uniq = [...new Map(outs.map(x => [x.text, x])).values()];
 
+  /* 우리 사전에 없는 얘기면 그렇다고 말한다. 이게 은코치에는 없는 자리다 —
+     AI 는 무엇이든 그럴듯하게 써 주기 때문에, 못 알아들었다는 사실 자체가 안 보인다.
+     못 알아들었으면 숨기지 말고 AI 로 넘길 길을 준다. */
+  const unknown = opt.star > 3 && uniq[0].topics.length === 0;
+
+  const LEN_LABEL = { short:"짧게", medium:"중간", long:"길게" };
   box.innerHTML = `<div class="rp-res">
-    <div class="rp-h">읽어낸 주제 <b>${uniq[0].topics.map(t=>t.label).join(", ") || (star<=2 ? "불만 응대" : "일반")}</b>
-      <span>${star}점 기준</span></div>
-    ${uniq.map((x,i)=>{
+    <div class="rp-h">읽어낸 주제 <b>${uniq[0].topics.map(t=>t.label).join(", ")
+      || (opt.star <= 2 ? "불만 응대" : opt.star === 3 ? "아쉬움 응대" : "못 알아들었습니다")}</b>
+      <span>${opt.star}점 · ${LEN_LABEL[opt.len]}${opt.kw ? ` · ${escH(opt.kw)} 심음` : ""}</span></div>
+    ${unknown ? `<div class="rp-unknown">
+      <b>이 리뷰는 저희가 아는 주제에 안 걸렸습니다.</b>
+      아래 답글은 무난하지만 <b>이 리뷰에 대한 답은 아닙니다.</b>
+      이런 리뷰는 AI에게 넘기시는 편이 낫습니다. 리뷰 본문과 우리 가게 정보를 담은
+      지시문을 만들어 드립니다. <b>돈은 들지 않습니다.</b>
+      <button class="btn sm" type="button" id="rp-toai">이 리뷰로 AI 지시문 만들기</button>
+    </div>` : ""}
+    ${uniq.map(x=>{
       const n = [...x.text].length;
       const idx = cpPut(x.text);
       return `<div class="rp-one"><p>${escH(x.text)}</p>
         <div class="rp-foot"><i>${n}자</i>
           <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div></div>`;
     }).join("")}
+    ${(()=>{ const rows = replyAudit(uniq[0].text, raw, o);
+      const pass = rows.filter(r=>r.ok).length;
+      return `<div class="rp-audit"><div class="rp-audit-h">첫 번째 답글 점검
+        <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
+        ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
+          r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
     <p class="rp-tip">셋 중 마음에 드는 것을 고르세요. 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
-      ${star <= 2 ? "<b>불만 리뷰는 하루 안에 다세요.</b> 다른 예비 회원이 그 답글을 보고 판단합니다." : ""}</p>
+      ${opt.star <= 2 ? "<b>불만 리뷰는 하루 안에 다세요.</b> 다른 예비 회원이 그 답글을 보고 판단합니다." : ""}</p>
   </div>`;
 }
+
+/* 못 알아들은 리뷰는 AI 지시문 도구로 넘긴다 */
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#rp-toai")) return;
+  showTool("prompt");
+  const sel = $("ai-kind"); if(sel){ sel.value = "reply"; }
+  try{ renderPrompt(); }catch{}
+  requestAnimationFrame(()=> $("ai-prompt")?.scrollIntoView({ behavior:"smooth", block:"start" }));
+  showToast("리뷰 본문을 담아 지시문을 만들었습니다");
+});
 
 /* 소식 글감 - 견본 네 줄을 주는 게 아니라, 수집한 재료로 채운다.
    제목은 40자 제한이 있어서 몇 자인지 같이 적어 준다.
@@ -3062,6 +3175,7 @@ function buildWriter(o){
   renderCharWarn();
   setBox("o-kw", buildKeywords(o));
   setBox("o-reply", naverSafe(buildReplies(o)));
+  renderRpKw();
   if($("rp-out")?.innerHTML.trim() && $("rp-paste")?.value.trim()){ try{ makePastedReply(); }catch{} }
   setBox("o-news", naverSafe(buildNews(o)));
   renderSnips(o);
@@ -3236,10 +3350,11 @@ const TOOL_HOW = {
   reply: {
     when: "새 리뷰가 달렸을 때. 특히 별점이 낮은 리뷰는 하루 안에 다세요.",
     steps: [
-      "<b>새로 달린 리뷰를 그대로 붙여넣고</b> 별점을 고른 뒤 만들기를 누르세요. 리뷰가 무슨 얘기인지 읽어서 거기에 답합니다.",
-      "세 가지 중 하나를 고르고 <b>손님 이름이나 그날 상황을 한 줄</b> 얹으세요.",
+      "<b>답글 끝인사</b>를 한 번만 적어 두세요. 앞으로 모든 답글이 그 인사로 끝납니다.",
+      "<b>새로 달린 리뷰를 그대로 붙여넣고</b> 별점과 길이를 고르세요. 리뷰가 무슨 얘기인지 읽어서 거기에 답합니다.",
+      "세 가지 중 하나를 고르고 <b>점검 결과</b>를 보세요. 감사·강점·재방문 세 가지가 다 들어갔는지 세어 드립니다.",
       "복사해서 <b>스마트플레이스 - 리뷰 - 답글</b>에 붙여넣으세요.",
-      "아래 <b>수집한 리뷰로 만든 답글</b>은 아직 답글을 안 단 과거 리뷰용입니다.",
+      "<b>못 알아들었다고 나오면</b> 그 자리의 버튼으로 AI 지시문을 만들어 쓰시는 AI에 넘기세요.",
     ],
     care: "답글은 리뷰 쓴 손님보다 <b>그 답글을 읽는 다음 손님</b>을 위한 것입니다. '감사합니다' 한 줄은 효과가 없습니다. 그리고 <b>세 리뷰에 같은 답글을 붙이지 마세요</b> - 손님은 복붙 답글을 바로 알아봅니다.",
   },
@@ -3347,6 +3462,17 @@ $("btn-intro-again")?.addEventListener("click", ()=>{
 });
 
 $("rp-make")?.addEventListener("click", ()=>{ try{ makePastedReply(); }catch(e){ alert(e.message); } });
+
+/* 별점·길이·키워드·끝인사를 바꾸면 바로 다시 만든다. 버튼을 또 누르게 하지 않는다. */
+["rp-star","rp-len","rp-kw"].forEach(id => $(id)?.addEventListener("change", ()=>{
+  if($("rp-paste")?.value.trim()) { try{ makePastedReply(); }catch{} }
+}));
+let rpTimer;
+$("rp-closing")?.addEventListener("input", ()=>{
+  save();
+  clearTimeout(rpTimer);
+  rpTimer = setTimeout(()=>{ try{ buildWriter(getInfo()); }catch{} }, 500);
+});
 
 $("btn-ai-check")?.addEventListener("click", ()=>{
   const t = ($("ai-paste")?.value || "").trim();
@@ -3664,6 +3790,19 @@ const CHAR_RULE = `[반드시 지킬 문자 규칙]
 - 목록은 하이픈(-)으로, 구분은 쉼표로, 소제목은 대괄호 [ ] 로
 - 마크다운(**, ##, |표|) 쓰지 마세요. 네이버 입력칸은 마크다운을 못 읽습니다`;
 
+/* 붙여넣은 리뷰가 없을 때 쓰는 일반 답글 지시문 */
+const PROMPT_REPLY_GENERIC = f => `네이버 플레이스 리뷰 답글 3종을 써 주세요.
+
+${f}
+
+- 칭찬 리뷰용 / 보통 리뷰용 / 불만 리뷰용 각 1개
+- 복붙 티가 안 나게, 문장 구조를 서로 다르게
+- 불만 답글은 변명하지 말고 무엇을 어떻게 바꾸겠다는 것만
+- 각 3~5문장, 목표 키워드를 억지로 넣지 마세요
+- 답글은 리뷰 쓴 손님보다 그 답글을 읽는 다음 손님을 위한 것입니다
+
+${CHAR_RULE}`;
+
 const PROMPT_KIND = {
   intro: f => `네이버 스마트플레이스 "상세설명(소개글)"을 써 주세요.
 
@@ -3710,16 +3849,40 @@ ${f}
 
 ${CHAR_RULE}`,
 
-  reply: f => `네이버 플레이스 리뷰 답글 3종을 써 주세요.
+  reply: f => {
+    /* 답글 도구에 붙여넣은 리뷰가 있으면 그 리뷰에 대한 지시문을 만든다.
+       우리 사전이 못 알아들은 리뷰를 여기로 넘기면, 사장님이 쓰시는 AI 가
+       은코치와 같은 일을 한다. 돈은 들지 않는다. */
+    const rv = ($("rp-paste")?.value || "").trim();
+    if(!rv) return PROMPT_REPLY_GENERIC(f);
+    const star = $("rp-star")?.value || "5";
+    const len = { short:"3~4줄", medium:"4~6줄", long:"6~8줄" }[$("rp-len")?.value || "medium"];
+    const kw = $("rp-kw")?.value || "";
+    const cl = ($("rp-closing")?.value || "").trim();
+    return `네이버 플레이스에 달린 아래 리뷰에 사장님이 달 답글을 써 주세요.
 
 ${f}
 
-- 칭찬 리뷰용 / 보통 리뷰용 / 불만 리뷰용 각 1개
-- 복붙 티가 안 나게, 문장 구조를 서로 다르게
-- 불만 답글은 변명하지 말고 무엇을 어떻게 바꾸겠다는 것만
-- 각 3~5문장, 목표 키워드를 억지로 넣지 마세요
+[답글을 달아야 할 리뷰] (별점 ${star}개)
+${rv}
 
-${CHAR_RULE}`,
+[답글 조건]
+- 길이: ${len}
+- ${kw ? `"${kw}" 라는 표현을 한 번 자연스럽게 넣어 주세요` : "억지 키워드는 넣지 마세요"}
+- ${cl ? `마지막은 반드시 "${cl}" 로 끝내 주세요` : "마지막은 다음에 또 오시라는 인사로 끝내 주세요"}
+- 감사 + 우리 매장 강점 한 가지 + 다시 오실 이유, 이 셋이 다 들어가야 합니다
+- 손님이 리뷰에 쓴 말을 한 조각 되받아 주세요. 무엇을 읽었는지 드러나야 합니다
+- ${Number(star) <= 2 ? "불만 리뷰입니다. 변명하지 말고 사과부터, 그다음 무엇을 어떻게 고치겠다는 말로." : "과장하지 말고 사실만."}
+- 위에 적힌 시설과 가격만 쓰세요. 없는 것을 지어내면 방문 후기에서 바로 드러납니다
+
+[왜 이렇게 쓰나]
+답글은 리뷰 쓴 손님보다 그 답글을 읽는 다음 손님을 위한 것입니다.
+그 사람이 "여기는 이런 곳이구나" 하고 알게 되는 자리입니다.
+
+서로 다른 답글 3개를 만들어 주세요. 같은 문장으로 시작하지 마세요.
+
+${CHAR_RULE}`;
+  },
 
   news: f => `네이버 플레이스 "소식"에 올릴 글감 4주치를 만들어 주세요.
 
@@ -4126,7 +4289,8 @@ $("p-run").addEventListener("click", async ()=>{
 const STORE_KEY = "gym-place-check/v1";
 /* 지난번 수집이 어느 칸에 무엇을 넣었는지. 손으로 고친 값과 가르는 기준이 된다. */
 let COLLECTED = {};
-const TEXT_IDS = ["i-name","i-area","i-type","i-price","i-kw1","i-kw2","i-kw3","i-intro","i-repkw","i-edge","s-url"];
+const TEXT_IDS = ["i-name","i-area","i-type","i-price","i-kw1","i-kw2","i-kw3","i-intro","i-repkw","i-edge","s-url",
+                 "rp-closing"];   // 답글 끝인사 - 한 번 적으면 계속 쓴다
 
 /* 수집한 재료(리뷰 본문·역·정류장·이벤트)를 새로고침하면 잃고 있었다.
    그러면 소개글에서 리뷰 인용과 찾아오는 길이 통째로 빠지고, 점검표에도
@@ -4274,8 +4438,9 @@ function placeKey(){
    자동 채우기는 이미 채워진 칸을 덮지 않는다 — 손으로 고친 값을 지키려는 규칙이다.
    가게가 바뀌면 그 규칙이 거짓 정보를 만들기 때문에 여기서 한 번 비운다. */
 function resetPlaceFields(){
-  ["i-name","i-area","i-price","i-intro","i-repkw","i-kw1","i-kw2","i-kw3","i-edge"]
+  ["i-name","i-area","i-price","i-intro","i-repkw","i-kw1","i-kw2","i-kw3","i-edge","rp-closing","rp-paste"]
     .forEach(id => { const e = $(id); if(e) e.value = ""; });
+  const ro = $("rp-out"); if(ro) ro.innerHTML = "";
   const t = $("i-type"); if(t) t.selectedIndex = 0;
   document.querySelectorAll("[data-fac]").forEach(e => e.checked = false);
   document.querySelectorAll("[data-item]").forEach(e => e.checked = false);
