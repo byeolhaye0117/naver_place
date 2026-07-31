@@ -398,12 +398,16 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .audit-h em{font-style:normal;font-weight:800;font-size:12px;padding:2px 8px;border-radius:6px}
 .audit-h em.pass{background:var(--ok-bg);color:var(--ok-fg)}
 .audit-h em.fail{background:var(--acc-bg);color:var(--acc-fg)}
+.audit-h em.todo{background:var(--track);color:var(--muted)}
+.audit-lead{padding:8px 13px;border-bottom:1px solid var(--line);
+  font-size:11.5px;color:var(--muted);line-height:1.7}
 .audit-row{display:flex;gap:9px;align-items:flex-start;padding:8px 13px;border-top:1px solid var(--line);font-size:12.5px}
 .audit-row:first-of-type{border-top:0}
 .audit-row i{font-style:normal;flex:none;width:15px;line-height:1.5}
 .audit-row b{font-weight:700;display:block}
 .audit-row span{display:block;color:var(--muted);font-size:11.5px;margin-top:1px;overflow-wrap:anywhere}
-.audit-row.no b{color:var(--acc-fg)}
+.audit-row.no b{color:var(--ink)}
+.audit-row.no i{color:var(--muted);font-weight:800}
 
 /* 키워드 발굴 */
 .kwf-row{display:grid;gap:12px;margin-top:16px}
@@ -2888,15 +2892,24 @@ document.addEventListener("change", e=>{
 
 /* 붙여넣기 직전 점검 — 책에서는 사장님이 종이에 체크하는 목록이다.
    사람이 세는 대신 글을 직접 읽어 판정한다. 틀린 항목은 무엇이 부족한지도 적는다. */
+/* 못 채운 줄을 ⚠️ 로 그리고 빨갛게 칠했더니 "제재당하는 건가" 하고 놀라시는 분이 있었다.
+   여기는 위험 경고가 아니라 아직 안 채운 칸의 목록이다. 하나도 안 채워도 제재는 없고
+   글이 조금 덜 좋을 뿐이다. 표시도 문구도 그렇게 바꾼다.
+   진짜 위험한 것(없는 시설 적기, 리뷰 구매, 업체명 스터핑)은 아래 주의 상자에 따로 있다. */
 function renderAudit(text, o){
   const box = $("intro-audit"); if(!box) return;
   const rows = introAudit(text, o);
   const pass = rows.filter(r=>r.ok).length;
+  const left = rows.length - pass;
   box.innerHTML =
     `<div class="audit-h"><span>붙여넣기 전 점검</span>
-      <em class="${pass===rows.length?"pass":"fail"}">${pass} / ${rows.length}</em></div>`
+      <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length} 채움</em></div>`
+    + `<div class="audit-lead">${left
+        ? `아직 안 채운 칸이 <b>${left}개</b> 있습니다. <b>제재와는 상관없습니다</b> -
+           채우면 글이 더 좋아지는 항목이고, 안 채워도 그대로 쓰실 수 있습니다.`
+        : `열한 가지를 모두 채웠습니다. 그대로 붙여넣으셔도 됩니다.`}</div>`
     + rows.map(r=>`<div class="audit-row${r.ok?"":" no"}">
-        <i>${r.ok?"✅":"⚠️"}</i>
+        <i>${r.ok?"✅":"○"}</i>
         <div><b>${r.t}</b><span>${r.note||""}</span></div></div>`).join("");
 }
 
@@ -3877,10 +3890,29 @@ const STORE_KEY = "gym-place-check/v1";
 let COLLECTED = {};
 const TEXT_IDS = ["i-name","i-area","i-type","i-price","i-kw1","i-kw2","i-kw3","i-intro","i-repkw","i-edge","s-url"];
 
+/* 수집한 재료(리뷰 본문·역·정류장·이벤트)를 새로고침하면 잃고 있었다.
+   그러면 소개글에서 리뷰 인용과 찾아오는 길이 통째로 빠지고, 점검표에도
+   "리뷰 본문 수집 안 됨 / 역·정류장 정보 없음"으로 남는다. 폰에서 열면
+   PC 에서 만든 것보다 나쁜 글이 나왔다는 뜻이다. 재료도 같이 저장한다.
+   리뷰는 열 개, 블로그는 다섯 개까지만 — 저장 공간을 다 쓰면 안 된다. */
+function trimPlace(pl){
+  if(!pl) return null;
+  const m = pl.material;
+  return {
+    data: pl.data || null,
+    derived: pl.derived || null,
+    material: m ? { ...m,
+      reviews: (m.reviews || []).slice(0, 10).map(r => String(r).slice(0, 220)),
+      blogs:   (m.blogs   || []).slice(0, 5),
+    } : null,
+  };
+}
+
 function snapshot(){
   const o = {};
   TEXT_IDS.forEach(id => { const el=$(id); if(el) o[id] = el.value; });
   o.collected = COLLECTED;      // 어느 칸이 수집값 그대로인지 — 다음 수집 때 갱신 판단에 쓴다
+  o.place = trimPlace(window.__place);   // 리뷰·역·정류장 재료도 함께 옮긴다
   o.fac  = [...document.querySelectorAll("[data-fac]:checked")].map(e=>e.value);
   o.chk  = [...document.querySelectorAll("[data-item]:checked")].map(e=>e.dataset.item);
   o.work = readWork();          // 개선 기록도 함께 옮긴다
@@ -3899,6 +3931,7 @@ function restore(o){
   if(o.calib && o.calib.bars) CALIB = o.calib;
   if(o.placeId) window.__placeId = o.placeId;
   if(o.collected && typeof o.collected === "object") COLLECTED = o.collected;
+  if(o.place && !window.__place) window.__place = o.place;
   $("i-intro").dispatchEvent(new Event("input"));
 }
 
