@@ -920,6 +920,12 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
             <input id="i-price" type="text" placeholder="예) 89,000원"></label>
         </div>
 
+        <label class="f" style="margin-top:14px"><span>다른 헬스장과 다른 점 한 줄 <i>*</i></span>
+          <input id="i-edge" type="text" placeholder="예) 순천향병원 3교대 근무자가 야간에 편하게 오는 곳">
+          <div class="hint">시설은 옆집에도 있습니다. <b>"왜 하필 여기냐"</b>에 답하는 한 줄이 있어야
+            소개글이 안내문이 아니라 설득이 됩니다. 비우면 아래 후보에서 고르셔도 됩니다.</div>
+          <div class="chips" id="edge-sug" style="margin-top:7px"></div></label>
+
         <div style="margin-top:16px">
           <span style="display:block;font-size:13px;font-weight:700">보유 시설 · 서비스</span>
           <div class="hint" style="margin:2px 0 4px">체크한 항목이 소개글·대표키워드 생성에 쓰입니다.</div>
@@ -1142,6 +1148,9 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <div class="hint" style="margin:2px 0 4px">체크한 손님의 고민이 본문에 번호로 들어갑니다. 손님은 한 종류가 아닙니다.</div>
         <div class="chips" id="w-also" style="margin-bottom:12px"></div>
         <div class="box" id="o-intro"><button class="btn sm ghost copy" data-t="o-intro">복사</button></div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn ghost sm" type="button" id="btn-intro-again">다른 표현으로 다시 만들기</button>
+        </div>
         <div class="audit" id="intro-audit"></div>
         <div class="cw" id="char-warn" style="display:none"></div></div>
       <div class="out" data-tool="kw"><h4>대표키워드 5개</h4>
@@ -1526,6 +1535,7 @@ function getInfo(){
     type : $("i-type").value,
     price: $("i-price").value.trim(),
     fac  : [...document.querySelectorAll("[data-fac]:checked")].map(e=>e.value),
+    edge : $("i-edge") ? $("i-edge").value.trim() : "",
     intro: $("i-intro").value,
     keywords: ["i-kw1","i-kw2","i-kw3"].map(id=>$(id).value.trim()).filter(Boolean),
     repkw: $("i-repkw").value.split(",").map(s=>s.trim()).filter(Boolean)
@@ -1954,10 +1964,10 @@ const PERSONAS = {
   rookie:{ label:"헬스가 처음인 초보",
     hook:"기구 앞에서 뻘쭘하셨나요",
     pain:"기구를 어떻게 쓰는지 몰라서 결국 러닝머신만 30분 뛰다 나옵니다. 그러니 몸이 바뀔 리가 없습니다.",
-    q:"기구를 어떻게 쓰는지 몰라 망설여지시나요?",
+    q:"처음이라 따라갈 수 있을지 망설여지시나요?",
     a:o=>o.fac.includes("PT 상담 무료")
-      ? `처음 오시는 분께는 기구 사용법과 동선을 직접 알려드립니다. 상담은 등록과 상관없이 무료입니다.`
-      : `처음 오시는 분께는 기구 사용법과 동선을 직접 알려드립니다. 물어보시는 걸 귀찮아하지 않습니다.`,
+      ? `처음 오시는 분께는 ${tr(o).guide}. 상담은 등록과 상관없이 무료입니다.`
+      : `처음 오시는 분께는 ${tr(o).guide}. 물어보시는 걸 귀찮아하지 않습니다.`,
     need:o=>o.fac.includes("PT 상담 무료")||o.fac.includes("인바디 측정") },
 
   base: { label:"운동을 다시 시작하려는 분",
@@ -2045,6 +2055,47 @@ function alsoText(o, max){
   return `[혹시 이런 고민 때문에 망설이고 계신가요]\n` + items.join("\n\n");
 }
 
+/* 차별점 후보 — 빈칸을 앞에 두면 아무도 못 쓴다.
+   손님이 리뷰에서 실제로 말한 것과, 남들이 잘 안 갖춘 시설에서 뽑는다.
+   고르는 건 사장님이지만, 시작점은 우리가 만들어 드린다. */
+const EDGE_FROM_FAC = {
+  "24시간 운영":"시간이 불규칙한 분도 끊기지 않고 다닐 수 있는 24시간 헬스장",
+  "여성 전용존":"여성 회원이 시선 부담 없이 혼자 운동할 수 있는 전용 공간",
+  "무인 출입":"새벽이든 밤이든 눈치 볼 사람 없이 들어올 수 있는 곳",
+  "PT 상담 무료":"등록과 상관없이 첫 상담과 인바디를 무료로 받아볼 수 있는 곳",
+  "사우나":"운동 끝나고 사우나까지 하고 갈 수 있는 곳",
+  "GX 프로그램":"혼자 하기 어려운 분이 그룹 수업에 섞여 시작할 수 있는 곳",
+};
+const EDGE_FROM_VOICE = {
+  "가격":"같은 시설을 훨씬 낮은 금액으로 다닐 수 있는 곳",
+  "혼자 조용히":"혼자 조용히 집중하고 싶은 사람이 편하게 오는 곳",
+  "처음 시작":"기구가 처음인 사람이 눈치 안 보고 배우면서 시작하는 곳",
+  "친절·상담":"물어보는 걸 귀찮아하지 않는 사람이 상주하는 곳",
+  "시설·청결":"매일 점검하고 닦는 것이 눈에 보이는 곳",
+};
+function edgeSuggestions(o){
+  const out = [];
+  const voice = window.__place?.material?.voice || [];
+  voice.slice(0, 3).forEach(v => { if(EDGE_FROM_VOICE[v.label]) out.push(EDGE_FROM_VOICE[v.label]); });
+  (o.fac || []).forEach(f => { if(EDGE_FROM_FAC[f]) out.push(EDGE_FROM_FAC[f]); });
+  /* 사장님이 찾아오는 길에 적어 둔 첫 줄이 대개 제일 정확한 차별점이다 */
+  const road = String(window.__place?.material?.road || "").split("\n").map(x=>x.trim()).filter(Boolean)[0];
+  if(road && road.length >= 10 && road.length <= 60) out.unshift(naverSafe(road).replace(/[?]$/,""));
+  return [...new Set(out)].slice(0, 5);
+}
+function renderEdgeSuggestions(){
+  const box = $("edge-sug"); if(!box) return;
+  const list = edgeSuggestions(getInfo());
+  box.innerHTML = list.length
+    ? list.map(t=>`<label class="chip"><input type="radio" name="edge-pick" value="${t.replace(/"/g,"&quot;")}"><span>${t}</span></label>`).join("")
+    : "";
+}
+document.addEventListener("change", e=>{
+  if(e.target.name !== "edge-pick") return;
+  const el = $("i-edge"); if(!el) return;
+  el.value = e.target.value; save(); buildWriter(getInfo());
+});
+
 /* 3단계 — 망설임 5가지. 체크된 시설이 없으면 그 칸은 통째로 뺀다.
    없는 시설을 적으면 방문 첫날 들통나고, 그게 리뷰로 남는다. */
 const OBJECTION = [
@@ -2055,8 +2106,24 @@ const OBJECTION = [
   { key:"time",  head:"운동 시간", need:o => o.fac.includes("24시간 운영") || o.fac.includes("무인 출입") },
 ];
 
+/* 업종마다 손님이 쓰는 말이 다르다. 필라테스에 "기구 눈치"는 안 맞고,
+   크로스핏에 "혼자 조용히"는 더 안 맞는다. 업종별로 말을 갈아 끼운다. */
+const TRADE = {
+  "헬스장":  { act:"운동", first:"기구를 어떻게 쓰는지 몰라 눈치 보이는 것",
+              guide:"기구 사용법과 동선을 직접 알려드립니다", routine:"기본 루틴" },
+  "PT 전문": { act:"수업", first:"내 몸에 맞는 운동인지 모르겠는 것",
+              guide:"첫 수업에서 자세부터 잡아 드립니다", routine:"맞춤 프로그램" },
+  "헬스+PT": { act:"운동", first:"기구를 어떻게 쓰는지 몰라 눈치 보이는 것",
+              guide:"기구 사용법과 동선을 직접 알려드립니다", routine:"기본 루틴" },
+  "필라테스":{ act:"수업", first:"몸이 뻣뻣해서 따라갈 수 있을까 하는 것",
+              guide:"동작을 하나씩 나눠서 알려드립니다", routine:"기초 동작 순서" },
+  "크로스핏":{ act:"운동", first:"체력이 안 돼서 못 따라갈까 하는 것",
+              guide:"강도를 몸 상태에 맞춰 낮춰 드립니다", routine:"입문 스케일" },
+};
+const tr = o => TRADE[o.type] || TRADE["헬스장"];
+
 function objectionText(key, o){
-  const A = o.area, has = f => o.fac.includes(f);
+  const A = o.area, has = f => o.fac.includes(f), T = tr(o);
   if(key === "cost"){
     const price = o.price
       ? `1개월 이용권은 ${o.price}이고, 3개월과 6개월은 기간에 따라 조건이 달라집니다. 등록 전에 금액을 알고 오시는 편이 서로 편하다고 생각해 미리 적어 둡니다.`
@@ -2086,8 +2153,8 @@ function objectionText(key, o){
       has("여성 전용존") ? "여성 전용존이 따로 있어 시선이 부담되는 분도 편하게 운동하실 수 있습니다." : "",
       has("GX 프로그램") ? "혼자 하기 어려우시면 GX 프로그램에 같이 들어오셔도 됩니다." : "",
     ].filter(Boolean).join(" ");
-    return `기구를 어떻게 쓰는지 몰라 눈치 보이는 것이 제일 큰 부담이라는 걸 압니다. `
-      + `처음 오시는 분께는 기구 사용법과 동선을 직접 알려드립니다. 물어보시는 걸 귀찮아하지 않습니다. ${soft}`;
+    return `${T.first}이 제일 큰 부담이라는 걸 압니다. `
+      + `처음 오시는 분께는 ${T.guide}. 물어보시는 걸 귀찮아하지 않습니다. ${soft}`;
   }
   if(key === "time"){
     return has("24시간 운영")
@@ -2147,7 +2214,11 @@ function visitText(o){
   return `[지금 오시면]\n`
     + (ev ? `현재 ${ev} 진행 중입니다. 조건은 방문하시면 바로 안내드립니다.\n` : "")
     + `${both} 등록을 고민 중이시라면, 결정하기 전에 한 번 보러 오시는 걸 권합니다. `
-    + `예약 없이 오셔도 되고 시설만 둘러보고 가셔도 괜찮습니다. `
+    + pickV([
+      `예약 없이 오셔도 되고 시설만 둘러보고 가셔도 괜찮습니다. `,
+      `구경만 하고 가셔도 됩니다. 등록을 권하지 않습니다. `,
+      `시간 되실 때 편하게 들러 보세요. 그날 등록 안 하셔도 됩니다. `,
+    ])
     + `${how} 방문 시간을 미리 맞춰 드립니다. 직접 보시고 아니다 싶으면 안 하셔도 됩니다.`;
 }
 
@@ -2188,6 +2259,28 @@ function bizText(o){
   return L.length ? `[영업정보]\n` + L.join("\n") : "";
 }
 
+/* 재료가 적은 가게는 칸이 통째로 빠져 1,200자를 못 채운다. 분량을 채우려고
+   빈말을 넣으면 안 되므로, 업종에 상관없이 사실인 것 - 어떻게 다니면 되는지,
+   무엇을 기대하면 되는지 - 를 적는다. 넘칠 때는 아예 넣지 않는다. */
+function fillerText(o){
+  const T = tr(o), A = o.area;
+  return `[다니시게 되면]\n`
+    + `처음 두 달이 제일 어렵습니다. 그 구간만 넘기면 ${T.act}이 일과가 되고, 그때부터는 몸이 바뀝니다. `
+    + `그래서 저희는 첫 두 달에 오시는 횟수를 제일 신경 씁니다. `
+    + `한 번에 오래 하시는 것보다 짧게라도 자주 오시는 편이 낫습니다. `
+    + `오시다 흐름이 끊기면 다시 시작하는 게 훨씬 힘드니, 안 오신 날이 길어지면 편하게 말씀해 주세요. `
+    + `${A}에서 오래 하실 곳을 찾고 계시다면 그 점을 먼저 봐 주시면 좋겠습니다.\n\n`
+    + `무엇을 목표로 하시는지에 따라 방법이 달라집니다. `
+    + `체중을 줄이는 것과 근력을 올리는 것은 순서가 다르고, 같은 기간을 다녀도 결과가 달라집니다. `
+    + `그래서 첫 상담에서 목표부터 여쭙습니다. 목표가 아직 뚜렷하지 않아도 괜찮습니다. `
+    + `일단 몸을 움직이는 습관을 만들고, 방향은 다니시면서 같이 잡아 나가면 됩니다.`;
+}
+
+/* 같은 글만 나오면 말투가 안 맞을 때 손으로 고치는 수밖에 없다.
+   뜻이 같은 다른 표현을 몇 벌 두고 돌린다. 사실이 바뀌지는 않는다. */
+let VARIANT = 0;
+const pickV = arr => arr[VARIANT % arr.length];
+
 function buildIntro(o){
   const A = o.area, N = o.name, S = SERVICE_WORD[o.type] || "헬스장";
   const K1 = o.keywords[0] || `${A} ${S}`;
@@ -2198,12 +2291,21 @@ function buildIntro(o){
   const step1 = `${P.hook}\n\n${P.pain} ${K1}${josa(K1,"을")} 찾아보셨다면 이미 몇 군데 비교해 보셨을 겁니다.`;
 
   /* 2 — 미루면 어떻게 되는가 */
-  const step2 = `그렇게 한 달이 지나고 두 달이 지납니다. 운동은 미룬 만큼 되돌리는 데 더 오래 걸립니다. `
-    + `체력이 떨어지는 속도보다 회복하는 속도가 느리기 때문입니다. `
-    + `그래서 완벽한 곳을 찾는 것보다, 오늘 갈 수 있는 곳을 정하는 편이 낫습니다.`;
+  const step2 = pickV([
+    `그렇게 한 달이 지나고 두 달이 지납니다. 운동은 미룬 만큼 되돌리는 데 더 오래 걸립니다. `
+      + `체력이 떨어지는 속도보다 회복하는 속도가 느리기 때문입니다. `
+      + `그래서 완벽한 곳을 찾는 것보다, 오늘 갈 수 있는 곳을 정하는 편이 낫습니다.`,
+    `그러는 사이 계절이 한 번 바뀝니다. 미룬 기간만큼 다시 올리는 데 더 걸리는 게 몸입니다. `
+      + `빠지는 건 금방인데 되돌리는 건 그보다 느립니다. `
+      + `그래서 어디가 제일 좋은지 고르는 것보다, 오늘 갈 수 있는 곳을 정하는 게 먼저입니다.`,
+    `한 달 미루면 한 달치가 아니라 그 이상이 밀립니다. 체력은 떨어질 때보다 올릴 때가 더 더디기 때문입니다. `
+      + `완벽한 곳을 찾다가 시작을 못 하는 것이 제일 손해입니다. `
+      + `일단 오늘 갈 수 있는 곳부터 정하시는 걸 권합니다.`,
+  ]);
 
   /* 3 — 해결책 + 망설임 지우기 */
   const head = `${N}${josa(N,"은")} ${A}에서 ${o.type} 중심으로 운영합니다. `
+    + (o.edge ? `${o.edge.replace(/[.]$/,"")}. ` : "")
     + `망설이게 되는 것들을 먼저 적어 두겠습니다. 읽어보시고 판단해 주세요.`;
   const skip = coveredByAlso(o);
   const blocks = OBJECTION.filter(x => x.need(o) && !skip.has(x.key))
@@ -2215,21 +2317,33 @@ function buildIntro(o){
         : `첫날에는 지금 몸 상태와 생활 패턴을 먼저 듣습니다. `)
     + ((o.type === "PT 전문" || o.type === "헬스+PT")
         ? `${K2 ? K2 + " 문의도 많은데, " : ""}PT는 무조건 힘든 운동을 시키는 방식이 아니라 지금 상태에서 꾸준히 할 수 있는 강도부터 시작합니다. 자세가 잡히기 전에는 무게를 올리지 않습니다. `
-        : `혼자 운동하시는 분도 방향을 잡으실 수 있게 기본 루틴을 안내해 드립니다. `)
-    + `첫 2주는 몸을 만드는 기간이 아니라 오는 습관을 만드는 기간입니다. `
-    + `일주일에 두세 번이라도 빠지지 않고 오시는 것이 한 번에 두 시간 하는 것보다 낫습니다.`;
+        : `혼자 ${tr(o).act}하시는 분도 방향을 잡으실 수 있게 ${tr(o).routine}을 안내해 드립니다. `)
+    + pickV([
+      `첫 2주는 몸을 만드는 기간이 아니라 오는 습관을 만드는 기간입니다. `
+        + `일주일에 두세 번이라도 빠지지 않고 오시는 것이 한 번에 두 시간 하는 것보다 낫습니다.`,
+      `처음 2주는 성과를 보는 기간이 아니라 오는 길에 익숙해지는 기간으로 잡으시면 됩니다. `
+        + `짧게라도 자주 오시는 쪽이 몰아서 하시는 것보다 오래갑니다.`,
+      `첫 2주 목표는 몸이 아니라 출석입니다. `
+        + `주 2~3회를 빠지지 않고 채우시면 그다음은 훨씬 수월해집니다.`,
+    ]);
 
   /* 1,200~1,800자 안에 들어가야 한다. 넘치면 인용 리뷰부터 줄인다 —
      리뷰는 많을수록 좋지만, 길이를 넘겨 잘리는 것보다는 낫다. */
-  const assemble = (q, a) => naverSafe(
-    [step1, step2, head, blocks, alsoText(o, a), flow, proofText(o, q), visitText(o), routeText(o), bizText(o)]
+  const assemble = (q, a, fill) => naverSafe(
+    [step1, step2, head, blocks, alsoText(o, a), flow,
+     fill ? fillerText(o) : "", proofText(o, q), visitText(o), routeText(o), bizText(o)]
       .filter(Boolean).join("\n\n"));
   /* 넘치면 인용 리뷰부터, 그래도 넘치면 고민 개수를 줄인다.
      리뷰와 고민은 둘 다 값진데, 길이를 넘겨 잘리는 것보다는 낫다. */
-  let text = assemble(3, 3);
+  let text = assemble(3, 3, false);
   for(const [q, a] of [[2,3],[1,3],[1,2],[0,2],[0,1]]){
     if(text.length <= 1800) break;
-    text = assemble(q, a);
+    text = assemble(q, a, false);
+  }
+  /* 모자라면 - 재료가 적은 가게다 - 빈말 대신 사실인 문단을 하나 더 붙인다 */
+  if(text.length < 1200){
+    const more = assemble(3, 3, true);
+    if(more.length <= 1800) text = more;
   }
   return text;
 }
@@ -2255,6 +2369,9 @@ function introAudit(text, o){
       note: kwHits.length
         ? kwHits.map(x=>`${x.k} ${x.n}회`).join(" · ") + (kwHits.some(x=>!x.n) ? " - 0회인 키워드는 소개글에 직접 넣어 주세요" : "")
         : "목표 키워드 미입력" },
+    { t:"다른 곳과 다른 점이 한 줄로 있다",
+      ok: Boolean(o.edge && text.includes(o.edge.replace(/[.]$/,""))),
+      note: o.edge ? o.edge.slice(0,40) : "시설만 나열하면 옆집과 구분이 안 됩니다 - 1단계에 한 줄 넣어 주세요" },
     { t:"여러 손님의 고민을 다룬다",
       ok: /\[혹시 이런 고민/.test(text),
       note: (()=>{ const k=alsoPersonas(o); return k.length
@@ -2399,6 +2516,7 @@ function buildWriter(o){
       fit === "ok" ? "권장 범위" : fit === "short" ? "1,200자 미만" : "1,800자 초과"}</b>`
     + ` · 금지문자 ${bad.length ? `<b class="len-long">${bad.length}종</b>` : "없음"}`;
   renderPersonaPicker(o);
+  renderEdgeSuggestions();
   renderAudit(intro, o);
   renderCharWarn();
   setBox("o-kw", buildKeywords(o));
@@ -2537,7 +2655,9 @@ function showTool(name){
 document.addEventListener("click", e=>{
   const c = e.target.closest("[data-tcard]");
   if(c){
-    showTool(c.dataset.tcard === TOOL ? null : c.dataset.tcard);
+    /* 이미 열려 있는 카드를 눌렀다고 닫지 않는다. 그 칸으로 가려던 것인데
+       화면이 사라지면 당황한다. 목록으로는 "도구 목록" 버튼으로 돌아간다. */
+    showTool(c.dataset.tcard);
     if(TOOL){
       const el = (TOOL === "kwfind") ? $("kwfind") : ($("writer").style.display === "none" ? $("need-diag") : $("writer"));
       requestAnimationFrame(()=> el?.scrollIntoView({ behavior:"smooth", block:"start" }));
@@ -2557,6 +2677,12 @@ document.addEventListener("click", e=>{
    글자만 있으면 판정할 수 있기 때문이다. 우리가 만든 글에 쓰는 잣대를
    그대로 들이댄다. 도구가 만든 글만 봐 주고 AI 글은 안 봐 줄 이유가 없다.
    ============================================================ */
+$("btn-intro-again")?.addEventListener("click", ()=>{
+  VARIANT++;
+  buildWriter(getInfo());
+  showToast("표현을 바꿔 다시 만들었습니다");
+});
+
 $("btn-ai-check")?.addEventListener("click", ()=>{
   const t = ($("ai-paste")?.value || "").trim();
   const box = $("ai-audit");
@@ -2777,6 +2903,7 @@ function promptFacts(){
   if(o.price) L.push(`- 1개월 이용권: ${o.price}`);
   L.push(`- 목표 키워드: ${o.keywords.join(", ") || "(없음)"}`);
   L.push(`- 보유 시설: ${o.fac.join(", ") || "(체크 안 함)"}`);
+  if(o.edge) L.push(`- 다른 곳과 다른 점 (사장님이 직접 적음): ${o.edge}`);
   L.push(`- 현재 소개글: ${o.intro ? `${o.intro.length}자 — "${o.intro.slice(0,200)}${o.intro.length>200?"…":""}"` : "없음"}`);
   if(o.repkw.length) L.push(`- 등록된 대표키워드: ${o.repkw.join(", ")}`);
 
@@ -3254,7 +3381,7 @@ $("p-run").addEventListener("click", async ()=>{
    서버 없이 동작해야 하므로 저장은 localStorage, 이동은 텍스트 코드다.
    ============================================================ */
 const STORE_KEY = "gym-place-check/v1";
-const TEXT_IDS = ["i-name","i-area","i-type","i-price","i-kw1","i-kw2","i-kw3","i-intro","i-repkw","s-url"];
+const TEXT_IDS = ["i-name","i-area","i-type","i-price","i-kw1","i-kw2","i-kw3","i-intro","i-repkw","i-edge","s-url"];
 
 function snapshot(){
   const o = {};
@@ -3380,7 +3507,7 @@ function placeKey(){
    자동 채우기는 이미 채워진 칸을 덮지 않는다 — 손으로 고친 값을 지키려는 규칙이다.
    가게가 바뀌면 그 규칙이 거짓 정보를 만들기 때문에 여기서 한 번 비운다. */
 function resetPlaceFields(){
-  ["i-name","i-area","i-price","i-intro","i-repkw","i-kw1","i-kw2","i-kw3"]
+  ["i-name","i-area","i-price","i-intro","i-repkw","i-kw1","i-kw2","i-kw3","i-edge"]
     .forEach(id => { const e = $(id); if(e) e.value = ""; });
   const t = $("i-type"); if(t) t.selectedIndex = 0;
   document.querySelectorAll("[data-fac]").forEach(e => e.checked = false);
@@ -3495,10 +3622,19 @@ const enc = o => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.strin
 const dec = s => JSON.parse(new TextDecoder().decode(
   Uint8Array.from(atob(s.trim().replace(/^GYM1:/,"")), c=>c.charCodeAt(0))));
 
+/* 입력을 고치면 이미 만들어 둔 문장도 따라 바뀌어야 한다.
+   안 그러면 차별점을 적어 넣고도 소개글에는 반영이 안 돼 "안 된다"가 된다.
+   글자마다 다시 만들면 무거우니 잠깐 멈춘 뒤에 한 번만 만든다. */
+const WRITER_INPUTS = ["i-edge","i-name","i-area","i-price","i-kw1","i-kw2","i-kw3","i-repkw","i-intro"];
+let reWriteTimer;
 document.addEventListener("input", e=>{
   if(!e.target.closest("main")) return;
   save();
   if(e.target.id === "i-name" || e.target.id === "i-area") paintWho();
+  if(WRITER_INPUTS.includes(e.target.id) && $("writer")?.dataset.ready === "1"){
+    clearTimeout(reWriteTimer);
+    reWriteTimer = setTimeout(()=>{ try{ buildWriter(getInfo()); renderPrompt(); }catch{} }, 500);
+  }
 });
 document.addEventListener("change", e=>{ if(e.target.closest("main")) save(); });
 
