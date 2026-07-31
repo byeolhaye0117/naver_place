@@ -1531,9 +1531,12 @@ function appendHistory(rec) {
 /* 일마다 모델을 나눈다. 답글에 제일 비싼 모델을 쓸 이유가 없다.
    (2026-07 기준 100만 토큰당) haiku $1/$5 · opus $5/$25 - 다섯 배 차이다. */
 const AI_TIERS = {
-  fast: { model: 'claude-haiku-4-5', max: 2000 },   // 답글, 짧은 문구, 소식
-  good: { model: 'claude-opus-5',    max: 4000 },   // 소개글 - 길고 오래 쓰는 글
+  // price 는 100만 토큰당 달러 (2026-07 기준). 오늘 얼마 썼는지 세는 데만 쓴다.
+  fast: { model: 'claude-haiku-4-5', max: 2000, price: { in: 1, out: 5  } },
+  good: { model: 'claude-opus-5',    max: 4000, price: { in: 5, out: 25 } },
 };
+/* 환율은 그때그때 다르다. 화면에 "약"이라고 적고, 필요하면 환경변수로 바꾼다. */
+const USD_KRW = Math.max(1, Number(process.env.USD_KRW || 1450));
 const AI_DAILY_CAP = Math.max(1, Number(process.env.AI_DAILY_CAP || 40));
 const AI_PROMPT_MAX = 20000;   // 글자. 이보다 긴 지시문은 우리가 만들 일이 없다
 const AI_USAGE = path.join(DATA_DIR, 'ai-usage.json');
@@ -1545,7 +1548,7 @@ function readAiUsage() {
     const v = JSON.parse(fs.readFileSync(AI_USAGE, 'utf8'));
     if (v && v.date === today()) return v;
   } catch { /* 없으면 오늘 처음 */ }
-  return { date: today(), calls: 0, inTokens: 0, outTokens: 0 };
+  return { date: today(), calls: 0, inTokens: 0, outTokens: 0, usd: 0 };
 }
 function writeAiUsage(v) {
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(AI_USAGE, JSON.stringify(v)); }
@@ -1554,7 +1557,10 @@ function writeAiUsage(v) {
 function aiStatus() {
   const u = readAiUsage();
   return { on: Boolean(process.env.ANTHROPIC_API_KEY), used: u.calls,
-           cap: AI_DAILY_CAP, left: Math.max(0, AI_DAILY_CAP - u.calls) };
+           cap: AI_DAILY_CAP, left: Math.max(0, AI_DAILY_CAP - u.calls),
+           /* 횟수만 세면 비싼 모델을 골랐을 때 얼마나 나가는지 알 수 없다.
+              같은 10회라도 모델에 따라 다섯 배 차이다. 금액도 같이 센다. */
+           krw: Math.round((u.usd || 0) * USD_KRW) };
 }
 
 async function aiProxy(body) {
@@ -1599,9 +1605,11 @@ async function aiProxy(body) {
   try {
     const j = JSON.parse(text);
     if (j?.usage) {
+      const inT = Number(j.usage.input_tokens || 0), outT = Number(j.usage.output_tokens || 0);
       const u2 = readAiUsage();
-      u2.inTokens  += Number(j.usage.input_tokens  || 0);
-      u2.outTokens += Number(j.usage.output_tokens || 0);
+      u2.inTokens  += inT;
+      u2.outTokens += outT;
+      u2.usd = (u2.usd || 0) + (inT * tier.price.in + outT * tier.price.out) / 1e6;
       writeAiUsage(u2);
     }
   } catch { /* 응답이 JSON 이 아니어도 중계 결과는 그대로 넘긴다 */ }

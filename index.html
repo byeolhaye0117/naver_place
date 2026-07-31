@@ -1273,6 +1273,11 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
             </select></label>
           <label class="f"><span>답글에 심을 키워드</span>
             <select id="rp-kw"></select></label>
+          <label class="f" data-aionly style="display:none"><span>AI 모델</span>
+            <select id="rp-model">
+              <option value="fast">기본 - 빠르고 쌈 (약 10원)</option>
+              <option value="good">좋은 것 - 미묘한 리뷰에 (약 50원)</option>
+            </select></label>
         </div>
         <label class="f" style="margin-top:10px"><span>답글 끝인사 <i>한 번만 적어두시면 모든 답글 끝에 붙습니다</i></span>
           <input id="rp-closing" type="text" placeholder="예) 오늘도 좋은 하루 보내세요"></label>
@@ -1282,7 +1287,10 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         </div>
         <p class="hint" data-aionly style="display:none;margin:6px 0 0">
           AI가 직접 씁니다. 문장이 더 자연스럽고, 저희 사전에 없는 얘기도 답합니다.
-          <b data-ailelft></b></p>
+          <b data-ailelft></b>
+          <br><b>불만 리뷰(1~2점)나 비꼬는 리뷰는 "좋은 것"을 쓰세요.</b>
+          말의 결을 읽어야 하는 자리라 값 차이가 값어치를 합니다. 칭찬 리뷰는 기본으로 충분합니다.
+          <br>금액은 제 추정입니다. 몇 번 써 보시고 콘솔 잔액으로 확인해 주세요.</p>
         <div id="rp-ai-out" style="display:none"></div>
         <div id="rp-out"></div>
 
@@ -5547,8 +5555,11 @@ async function callAI(prompt, tier = "fast"){
 
 /* 오늘 몇 번 남았는지 화면에 적어 둔다. 모르는 사이에 다 쓰는 일이 없어야 한다. */
 function paintAiLeft(st){
+  /* 횟수만 보여주면 비싼 모델을 골랐을 때 얼마나 나가는지 감이 안 온다. 금액도 같이 적는다. */
   document.querySelectorAll("[data-ailelft]").forEach(el=>{
-    el.textContent = st?.on ? `오늘 ${st.used}/${st.cap}회 사용` : "";
+    el.textContent = st?.on
+      ? `오늘 ${st.used}/${st.cap}회 · 약 ${(st.krw ?? 0).toLocaleString("ko-KR")}원`
+      : "";
   });
 }
 async function refreshAiLeft(){
@@ -5611,7 +5622,8 @@ document.addEventListener("click", async e=>{
   const prompt = PROMPT_KIND.reply(promptFacts());
   btn.disabled = true; const label = btn.textContent; btn.textContent = "AI가 쓰는 중…";
   try{
-    const text = await callAI(prompt, "fast");
+    const tier = $("rp-model")?.value || "fast";
+    const text = await callAI(prompt, tier);
     const box = $("rp-ai-out"); if(!box) return;
     /* 지시문에서 "--- 로만 구분하라"고 못박았으므로 그걸로 가른다.
        그래도 다르게 오면 빈 줄로 한 번 더 시도하고, 끝내 못 가르면 통째로 보여준다.
@@ -5626,6 +5638,8 @@ document.addEventListener("click", async e=>{
     box.style.display = "";
     box.innerHTML = `<div class="rp-res">
       <div class="rp-h">AI가 쓴 답글 <b>${list.length}개</b>
+        <em style="font-style:normal;font-weight:600;color:var(--muted)">${
+          tier === "good" ? "좋은 것 (약 50원)" : "기본 (약 10원)"}</em>
         <span data-ailelft></span></div>
       ${list.map(t=>{
         const idx = cpPut(t);
