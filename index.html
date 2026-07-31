@@ -2507,6 +2507,19 @@ document.addEventListener("click", e=>{
   }
 });
 
+/* 수집값으로 덮어쓰기 — 화면에 남은 옛 가게 값을 한 번에 정리한다 */
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#btn-force-fill")) return;
+  const list = window.__skipped || [];
+  list.forEach(x=>{ const el = $(x.id); if(el){ el.value = x.val; } });
+  $("i-intro")?.dispatchEvent(new Event("input"));
+  window.__skipped = [];
+  e.target.closest(".jb")?.remove();
+  save();
+  showToast(`${list.length}곳을 수집한 값으로 바꿨습니다`);
+  try{ paintWho(); }catch{}
+});
+
 /* 마지막에 보던 도구를 기억한다 — 새로고침하면 그 자리에서 이어진다 */
 try{ TOOL = localStorage.getItem(TOOL_KEY) || null; }catch{}
 showTool(TOOL);
@@ -3795,7 +3808,12 @@ $("s-collect")?.addEventListener("click", async ()=>{
        대표키워드가 앞 가게 것으로 남고 리뷰 수만 바뀌어, 어느 쪽도 맞지 않는
        화면이 된다. 지우기 전에 저장 내역에 넣어 두므로 잃는 것은 없다. */
     const prevId = window.__placeId || null;
-    if(prevId && String(prevId) !== String(res.placeId)){
+    /* 가게 번호만 믿으면 안 된다. 번호를 기억하기 전에 저장된 내용에는 번호가 없어서
+       "바뀌었다"를 판단할 기준이 없고, 그 상태로 새 번호만 저장되면 다시 수집해도
+       영영 안 바뀐다. 그래서 업체명이 서로 딴판이면 그것도 바뀐 것으로 본다. */
+    const curName = norm($("i-name").value), newName = norm(d.name || "");
+    const nameDiff = Boolean(curName && newName && !curName.includes(newName) && !newName.includes(curName));
+    if((prevId && String(prevId) !== String(res.placeId)) || nameDiff){
       try{ if($("i-name").value.trim()) await addSave(); }catch{}
       resetPlaceFields();
       showToast("다른 가게입니다 - 이전 내용을 저장 내역에 넣고 새로 채웁니다");
@@ -3804,10 +3822,17 @@ $("s-collect")?.addEventListener("click", async ()=>{
 
     // 소개글 8단 구성에 쓸 재료 (리뷰 본문·지하철·버스·이벤트·결제)
     window.__place = { data: d, derived: dv, material: res.material || null };
-    const filled = [];
+    const filled = [], skipped = [];
     const put = (id, val, label) => {
       const el = $(id);
-      if(!el || !val || el.value.trim()) return;
+      if(!el || !val) return;
+      const cur = el.value.trim();
+      if(cur){
+        /* 이미 값이 있으면 덮지 않는다. 다만 수집값과 다르면 그 사실은 알려야 한다 —
+           모르고 지나가면 옛 값으로 채점된다. */
+        if(norm(cur) !== norm(String(val))) skipped.push({ id, val, label });
+        return;
+      }
       el.value = val; filled.push(label);
       if(id === "i-intro") el.dispatchEvent(new Event("input"));
     };
@@ -3923,8 +3948,21 @@ $("s-collect")?.addEventListener("click", async ()=>{
     </div>`;
     window.__introCands = cands;
 
+    /* 수집값과 화면값이 다른 칸을 그냥 두면 옛 값으로 채점된다.
+       무엇이 다른지 보여주고, 한 번에 덮어쓸 수 있게 한다. */
+    window.__skipped = skipped;
+    const skipHtml = skipped.length ? `<div class="jb no">
+      <b>화면 값과 다른 항목 ${skipped.length}곳</b>
+      <ul>${skipped.map(x=>`<li>${x.label} - 화면 <b>${
+        String($(x.id).value).slice(0,28) || "(빈칸)"}</b> / 수집 <b>${String(x.val).slice(0,28)}</b></li>`).join("")}</ul>
+      <p>이미 값이 있는 칸은 덮어쓰지 않습니다. 손으로 고치신 값을 지키기 위해서입니다.
+        지금 값이 이 가게 것이 아니라면 아래를 누르세요.</p>
+      <button class="btn sm" type="button" id="btn-force-fill">수집한 값으로 덮어쓰기</button>
+    </div>` : "";
+
     $("s-out").innerHTML = confirmHtml + `<div class="srv-res">
       <h5>수집 완료 — ${res.fields}개 항목 (플레이스 ID ${res.placeId})</h5>
+      ${skipHtml}
       <dl class="kv-grid">${rows}</dl>
       ${filled.length ? `<div class="jb fill"><b>입력란 ${filled.length}곳 자동 입력</b>
         <ul><li>${filled.join(" · ")}</li></ul>
