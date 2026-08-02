@@ -1602,26 +1602,40 @@ function aiStatus() {
            krw: Math.round((u.usd || 0) * USD_KRW) };
 }
 
-async function aiProxy(body) {
+/* 한도·모델 판정은 한 군데서만 한다. 스트리밍이든 아니든 같은 잣대라야
+   한쪽으로 한도를 우회할 수 없다. 클라이언트가 보낸 model / max_tokens 는 읽지 않는다. */
+function aiGuard(body) {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return { status: 503, text: JSON.stringify({
-    error: { message: 'AI 키가 설정되어 있지 않습니다. 무료 지시문 방식을 쓰세요.' } }) };
-
-  /* 클라이언트가 보낸 model / max_tokens 는 읽지 않는다. 여기서 정한다. */
+  if (!key) return { status: 503, message: 'AI 키가 설정되어 있지 않습니다. 무료 지시문 방식을 쓰세요.' };
   const tier = AI_TIERS[body?.tier] || AI_TIERS.fast;
   const prompt = String(body?.prompt ?? '').trim();
-  if (!prompt) return { status: 400, text: JSON.stringify({
-    error: { message: '보낼 내용이 비어 있습니다.' } }) };
-  if (prompt.length > AI_PROMPT_MAX) return { status: 400, text: JSON.stringify({
-    error: { message: `지시문이 너무 깁니다 (${prompt.length}자 / 최대 ${AI_PROMPT_MAX}자)` } }) };
+  if (!prompt) return { status: 400, message: '보낼 내용이 비어 있습니다.' };
+  if (prompt.length > AI_PROMPT_MAX)
+    return { status: 400, message: `지시문이 너무 깁니다 (${prompt.length}자 / 최대 ${AI_PROMPT_MAX}자)` };
+  if (readAiUsage().calls >= AI_DAILY_CAP)
+    return { status: 429, message: `오늘 AI 사용 한도(${AI_DAILY_CAP}회)를 다 썼습니다. 내일 다시 쓰거나 무료 지시문 방식을 쓰세요.` };
+  return { ok: true, key, tier, prompt };
+}
 
-  const usage = readAiUsage();
-  if (usage.calls >= AI_DAILY_CAP) return { status: 429, text: JSON.stringify({
-    error: { message: `오늘 AI 사용 한도(${AI_DAILY_CAP}회)를 다 썼습니다. 내일 다시 쓰거나 무료 지시문 방식을 쓰세요.` },
-    ai: aiStatus() }) };
+/* 쓴 만큼 적어 둔다. 화면에서 오늘 쓴 금액을 보여주는 근거가 된다. */
+function aiSpend(tier, inT, outT) {
+  if (!inT && !outT) return;
+  const u = readAiUsage();
+  u.inTokens  += inT;
+  u.outTokens += outT;
+  u.usd = (u.usd || 0) + (inT * tier.price.in + outT * tier.price.out) / 1e6;
+  writeAiUsage(u);
+}
+
+async function aiProxy(body) {
+  const g = aiGuard(body);
+  if (!g.ok) return { status: g.status,
+    text: JSON.stringify({ error: { message: g.message }, ai: aiStatus() }) };
+  const { key, tier, prompt } = g;
 
   /* 세고 나서 부른다. 실패해도 센 것을 되돌리지 않는다 -
      되돌리면 계속 실패하는 요청으로 한도를 무한히 우회할 수 있다. */
+  const usage = readAiUsage();
   usage.calls += 1;
   writeAiUsage(usage);
 
@@ -1640,20 +1654,140 @@ async function aiProxy(body) {
   });
 
   const text = await res.text();
-  /* 얼마나 썼는지 남긴다. 화면에서 오늘 쓴 양을 보여주는 근거가 된다. */
   try {
     const j = JSON.parse(text);
-    if (j?.usage) {
-      const inT = Number(j.usage.input_tokens || 0), outT = Number(j.usage.output_tokens || 0);
-      const u2 = readAiUsage();
-      u2.inTokens  += inT;
-      u2.outTokens += outT;
-      u2.usd = (u2.usd || 0) + (inT * tier.price.in + outT * tier.price.out) / 1e6;
-      writeAiUsage(u2);
-    }
+    if (j?.usage) aiSpend(tier, Number(j.usage.input_tokens || 0), Number(j.usage.output_tokens || 0));
   } catch { /* 응답이 JSON 이 아니어도 중계 결과는 그대로 넘긴다 */ }
 
   return { status: res.status, text };
+}
+
+/* ── 스트리밍 ────────────────────────────────────────────────
+   지금은 AI 가 다 쓸 때까지 5~10초 동안 화면이 조용하다. 사장님이 멈춘 줄 알고
+   버튼을 다시 누르면 한도만 두 번 깎인다. 글자가 나오는 대로 뿌린다.
+   ─────────────────────────────────────────────────────────── */
+async function aiStream(body, res) {
+  const g = aiGuard(body);
+  if (!g.ok) {
+    res.writeHead(g.status, { 'content-type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ error: { message: g.message }, ai: aiStatus() }));
+  }
+  const usage = readAiUsage();
+  usage.calls += 1;
+  writeAiUsage(usage);
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    'connection': 'keep-alive',
+    /* 중간 프록시가 모아서 한 번에 내보내면 스트리밍이 아니게 된다 */
+    'x-accel-buffering': 'no',
+  });
+  const send = (ev, data) => { try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch {} };
+
+  let up;
+  try {
+    up = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': g.key,
+                 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: g.tier.model, max_tokens: g.tier.max, stream: true,
+                             messages: [{ role: 'user', content: g.prompt }] }),
+    });
+  } catch (e) {
+    send('error', { message: `AI 서버에 연결하지 못했습니다. ${e.message}` });
+    return res.end();
+  }
+  if (!up.ok || !up.body) {
+    let msg = `AI 서버가 ${up.status} 를 돌려주었습니다.`;
+    try { const j = JSON.parse(await up.text()); if (j?.error?.message) msg = j.error.message; } catch {}
+    send('error', { message: msg });
+    return res.end();
+  }
+
+  const reader = up.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', inT = 0, outT = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      /* SSE 덩어리는 빈 줄로 끊긴다. 끝나지 않은 덩어리는 다음 회차로 넘긴다 -
+         반토막 난 JSON 을 파싱하면 글자가 통째로 사라진다. */
+      const chunks = buf.split('\n\n');
+      buf = chunks.pop();
+      for (const c of chunks) {
+        const line = c.split('\n').find(x => x.startsWith('data:'));
+        if (!line) continue;
+        let j; try { j = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (j.type === 'content_block_delta' && j.delta?.text) send('text', { t: j.delta.text });
+        else if (j.type === 'message_start') inT = Number(j.message?.usage?.input_tokens || 0);
+        else if (j.type === 'message_delta') outT = Number(j.usage?.output_tokens || outT);
+        else if (j.type === 'error') send('error', { message: j.error?.message || 'AI 오류' });
+      }
+    }
+  } catch (e) {
+    send('error', { message: `받는 중에 끊겼습니다. ${e.message}` });
+  }
+
+  aiSpend(g.tier, inT, outT);
+  send('done', { ai: aiStatus() });
+  res.end();
+}
+
+/* ============================================================================
+ * 블로그 후기 본문 가져오기
+ *
+ * 플레이스 페이지에 실린 블로그 후기는 앞부분만 온다. 사장님이 링크를 알고 있는
+ * 후기는 본문을 통째로 읽을 수 있고, 거기에는 기구 이름이나 동선처럼
+ * 네이버 기본 필드에 없는 사실이 적혀 있다.
+ * 네이버 블로그는 본문이 iframe 안에 있어서, 겉 주소를 그대로 읽으면 빈 껍데기만 온다.
+ * ========================================================================== */
+
+/* blog.naver.com/아이디/글번호  →  PostView (본문이 실제로 있는 주소) */
+function blogRealUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  let m = s.match(/blog\.naver\.com\/([\w-]+)\/(\d{5,})/);
+  if (m) return `https://blog.naver.com/PostView.naver?blogId=${m[1]}&logNo=${m[2]}`;
+  m = s.match(/blogId=([\w-]+)[\s\S]*?logNo=(\d{5,})/);
+  if (m) return `https://blog.naver.com/PostView.naver?blogId=${m[1]}&logNo=${m[2]}`;
+  if (/^https?:\/\//.test(s)) return s;      // 다른 블로그도 그냥 읽어 본다
+  return null;
+}
+
+const HTML_ENT = { '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
+
+/* 본문 영역만 남기고 태그를 걷어낸다. 스마트에디터(se-main-container)가 요즘 것,
+   postViewArea 가 옛날 것이다. 둘 다 없으면 body 를 통째로 훑는다. */
+function blogText(html) {
+  const h = String(html || '');
+  const pick = h.match(/<div[^>]*class="[^"]*se-main-container[^"]*"[\s\S]*?<\/div>\s*(?:<\/div>)*/i)
+            || h.match(/<div[^>]*id="postViewArea"[\s\S]*?<\/div>/i)
+            || h.match(/<body[\s\S]*<\/body>/i);
+  let t = pick ? pick[0] : h;
+  t = t.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, ' ')
+       .replace(/<br\s*\/?>/gi, '\n')
+       .replace(/<\/(p|div|h[1-6]|li)>/gi, '\n')
+       .replace(/<[^>]+>/g, ' ');
+  t = t.replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;/g, m => HTML_ENT[m] || ' ')
+       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+  return t.split('\n').map(x => x.replace(/[ \t ]+/g, ' ').trim())
+          .filter(Boolean).join('\n').slice(0, 4000);
+}
+
+async function fetchBlog(rawUrl) {
+  const url = blogRealUrl(rawUrl);
+  if (!url) return { ok: false, error: '블로그 주소를 알아보지 못했습니다. blog.naver.com 으로 시작하는 주소를 넣어 주세요.' };
+  let r;
+  try { r = await get(url); }
+  catch (e) { return { ok: false, error: `블로그를 열지 못했습니다. ${e.message}` }; }
+  if (!r || r.status >= 400) return { ok: false, error: `블로그가 ${r?.status} 를 돌려주었습니다. 비공개 글이거나 주소가 틀렸을 수 있습니다.` };
+  const text = blogText(r.text);
+  if (text.length < 80) return { ok: false, error: '본문을 찾지 못했습니다. 비공개 글이거나 본문이 사진뿐일 수 있습니다.', url };
+  const title = (r.text.match(/<meta property="og:title" content="([^"]*)"/i) || [])[1] || '';
+  return { ok: true, url, title: title.trim().slice(0, 120), text, chars: text.length };
 }
 
 /* ============================================================================
@@ -1852,7 +1986,19 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(out.status, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(out.text);
     }
+    if (u.pathname === '/api/ai-stream' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); }
+      catch { return sendJson(res, 400, { error: { message: '요청을 읽지 못했습니다.' } }); }
+      return aiStream(body, res);
+    }
     if (u.pathname === '/api/ai-status') return sendJson(res, 200, aiStatus());
+
+    if (u.pathname === '/api/blog') {
+      const target = u.searchParams.get('url');
+      if (!target) return sendJson(res, 400, { ok: false, error: 'url 파라미터가 필요합니다.' });
+      return sendJson(res, 200, await fetchBlog(target));
+    }
 
     /* ---- 정적 파일 ---- */
     let rel = u.pathname === '/' ? '/index.html' : u.pathname;
