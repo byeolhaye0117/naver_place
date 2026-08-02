@@ -2991,13 +2991,36 @@ function rpFactPool(said){
     .filter(t => !said.includes(t.split(/[ (]/)[0]));
 }
 
+/* 메뉴판에 적힌 글자를 그대로 문장에 넣으면 문장이 아니라 간판이 된다.
+   "완초자 (초보자) PT 무료까지" 처럼 읽힌다. 문장에 넣을 만하게 다듬는다. */
+function tidyFact(t){
+  return String(t)
+    .replace(/\s+\(/g, "(")               // 완초자 (초보자) → 완초자(초보자)
+    .replace(/([가-힣])(\d)/g, "$1 $2")   // 웨이트머신100종 → 웨이트머신 100종
+    .replace(/\s{2,}/g, " ").trim();
+}
+
+/* 마지막 문장의 어미. 앞 문장과 같은 어미로 이으면 조립한 티가 난다. */
+function lastEnd(text){
+  const s = String(text || "").trim().split(/(?<=[.!?])\s+/).filter(Boolean).pop() || "";
+  return s.replace(/[.!?]+$/, "").slice(-3);
+}
+
 function rpFactLine(i, said, topicKey){
   const pool = rpFactPool(said);
   if(!pool.length) return "";
   const fit = TOPIC_FACT[topicKey];
   const near = fit ? pool.filter(t => fit.test(t)) : [];
   const list = near.length ? near : pool;
-  return RP_FACT_FRAME[i % RP_FACT_FRAME.length](list[i % list.length]);
+  const t = tidyFact(list[i % list.length]);
+  /* 바로 앞 문장과 어미가 겹치지 않는 틀을 고른다.
+     "…나눠 두었습니다. …갖춰 두었습니다." 가 이어지면 읽는 사람이 바로 안다. */
+  const prev = lastEnd(said);
+  for(let k = 0; k < RP_FACT_FRAME.length; k++){
+    const cand = RP_FACT_FRAME[(i + k) % RP_FACT_FRAME.length](t);
+    if(!prev || lastEnd(cand) !== prev) return cand;
+  }
+  return RP_FACT_FRAME[i % RP_FACT_FRAME.length](t);
 }
 
 function replyFor(review, o, i = 0, used = new Set(), opt = {}){
@@ -3149,6 +3172,19 @@ function replyAudit(text, review, o, star = 5){
     { t:"손님이 쓴 말을 되받았다", ok: echoed, note: echoed ? "" : "리뷰 내용이 안 들어갔습니다" },
     { t:"길이가 적당하다 (80~400자)", ok: n >= 80 && n <= 400, note: `${n}자` },
     { t:"네이버 금지문자 0개", ok: charCheck(t, false).risky.length === 0 },
+    /* 같은 어미가 이어지면 조립한 티가 난다. 사람은 문장마다 맺음을 바꾼다.
+       "…두었습니다. …두었습니다. …있습니다." 가 실제로 나왔다. */
+    (()=>{
+      const ends = t.trim().split(/(?<=[.!?])\s+/).filter(Boolean)
+        .map(x => x.replace(/[.!?]+$/, "").slice(-3));
+      let run = 1, worst = 1, which = "";
+      for(let k = 1; k < ends.length; k++){
+        run = ends[k] === ends[k-1] ? run + 1 : 1;
+        if(run > worst){ worst = run; which = ends[k]; }
+      }
+      return { t:"같은 말투가 이어지지 않는다", ok: worst < 3,
+        note: worst < 3 ? "" : `"…${which}"가 ${worst}번 이어집니다 - 한 문장은 다르게 맺으세요` };
+    })(),
     { t:"키워드가 들어갔다", ok: K.some(k => norm(t).includes(norm(k))),
       note: K.length ? "" : "목표 키워드가 없습니다" },
     { t:"지킬 수 있을지 모르는 약속이 없다", ok: vow.length === 0,
@@ -4427,6 +4463,15 @@ ${seed ? (kw
 - 존댓말, 담백하게. 사장님이 직접 쓴 것처럼. 상담원 말투나 홍보 문구 말투는 피하세요.
 - 과장 금지: 최고, 1위, 최저가, 역대급, 무조건, 확실한 감량, 부작용 없음
 - 효과 보장이나 의료적 효능을 암시하는 표현 금지
+
+[읽는 맛 - 여기서 조립한 티가 납니다]
+- 문장 길이를 섞으세요. 긴 문장만 이으면 읽다가 놓칩니다. 짧은 문장 하나가 들어가면
+  읽는 속도가 달라지고 그 문장이 눈에 남습니다.
+- 같은 어미를 세 문장 이어서 쓰지 마세요. "…했습니다. …입니다. …습니다."가 이어지면
+  사람이 쓴 글로 안 읽힙니다. 한 문장은 다르게 맺으세요.
+- 사실을 나열하지 마세요. 앞 문장과 이어지게 놓으세요. 시설 이름을 그냥 붙이면
+  문장이 아니라 안내판이 됩니다.
+- 손님 리뷰에 있는 말을 한 번은 그대로 쓰세요. 다만 따옴표는 붙이지 마세요.
 
 ${byStar}
 
