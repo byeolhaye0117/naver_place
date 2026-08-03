@@ -445,6 +445,15 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .rp-audit span.y{color:var(--muted)}
 .rp-audit span.n{color:var(--acc-fg);font-weight:700}
 .rp-audit span i{font-style:normal;color:var(--muted);font-weight:500}
+/* 답글마다 점수를 따로 붙인다. 사장님은 셋 중 하나를 골라 실제로 다시는데,
+   첫 번째만 점검하면 나머지 둘은 멀쩡해 보인 채로 올라간다. */
+.rp-score{font-style:normal;font-weight:800;font-size:11px;padding:1px 7px;border-radius:6px}
+.rp-score.pass{background:var(--ok-bg);color:var(--ok-fg)}
+.rp-score.todo{background:var(--warn-bg);color:var(--warn-fg)}
+.rp-bad{margin-top:7px;padding-top:7px;border-top:1px dashed var(--line);
+  display:flex;flex-direction:column;gap:4px;font-size:11.5px}
+.rp-bad span{color:var(--acc-fg);font-weight:700}
+.rp-bad span i{font-style:normal;color:var(--muted);font-weight:500}
 @media(max-width:700px){ .rp-row .f{width:100%} .rp-row .btn{width:100%} }
 
 .fixrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
@@ -3342,7 +3351,7 @@ function replyAudit(text, review, o, star = 5){
       const rv = norm(String(review || ""));
       const made = said.filter(w => { const n = norm(w);
         return !F.some(x => x.includes(n)) && !rv.includes(n); });
-      return { t:"없는 행사를 지어내지 않았다", ok: made.length === 0,
+      return { t:"지어낸 숫자·행사가 없다", ok: made.length === 0,
         note: made.length ? `"${made.join('", "')}" - 재료에 없습니다. 빼거나 실제 값으로 고치세요` : "" };
     })(),
     /* 성별 단서가 없는 리뷰에 여성전용을 권하면 남성 회원일 때 답글이 통째로 어긋난다.
@@ -6601,15 +6610,24 @@ document.addEventListener("click", async e=>{
         <em style="font-style:normal;font-weight:600;color:var(--muted)">${
           tier === "good" ? "좋은 것 (약 50원)" : "기본 (약 10원)"}</em>
         <span data-ailelft></span></div>
-      ${list.map(t=>{
+      ${(()=>{ const star = Number($("rp-star")?.value || 5);
+        return list.map(t=>{
         const idx = cpPut(t);
+        /* 셋 다 잰다. 사장님은 이 중 하나를 골라 실제로 다시는데,
+           첫 번째만 점검하면 나머지 둘은 멀쩡해 보인 채로 올라간다. */
+        const rows = replyAudit(t, raw, o, star);
+        const bad = rows.filter(r => !r.ok);
         return `<div class="rp-one"><p>${escH(t)}</p>
           <div class="rp-foot"><i>${[...t].length}자</i>
-            <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div></div>`;
-      }).join("")}
+            <em class="rp-score ${bad.length ? "todo" : "pass"}">${rows.length - bad.length} / ${rows.length}</em>
+            <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div>
+          ${bad.length ? `<div class="rp-bad">${bad.map(r =>
+            `<span>○ ${r.t}${r.note ? ` <i>${r.note}</i>` : ""}</span>`).join("")}</div>` : ""}
+          </div>`;
+      }).join(""); })()}
       ${(()=>{ const rows = replyAudit(list[0], raw, o, Number($("rp-star")?.value || 5));
         const pass = rows.filter(r=>r.ok).length;
-        return `<div class="rp-audit"><div class="rp-audit-h">AI 답글 점검
+        return `<div class="rp-audit"><div class="rp-audit-h">첫 번째 답글 - 전체 항목
           <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
           ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
             r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
