@@ -1165,6 +1165,18 @@ function introMaterial(data, jsons) {
   }
   for (const n of grab('FsasReview')) push(blogs, n.contents || n.body || n.description, 120, 3000);
 
+  /* 블로그 후기의 주소가 여기 그대로 들어 있다. 손으로 붙여넣으실 필요가 없다.
+     본문까지 지금 받아 오면 수집이 그만큼 느려지므로, 주소만 넘기고
+     본문은 화면에서 버튼을 누를 때 받는다. */
+  const blogLinks = grab('FsasReview')
+    .map(n => ({ url: String(n?.url || '').trim(),
+                 title: String(n?.id || '').split('_').slice(3).join('_').trim()
+                        || String(n?.name || '').trim(),
+                 author: String(n?.name || n?.authorName || '').trim() }))
+    .filter(x => /^https?:\/\/\S*blog\.naver\.com/.test(x.url))
+    .filter((x, i, a) => a.findIndex(y => y.url === x.url) === i)
+    .slice(0, 8);
+
   /* 메뉴는 아폴로 캐시에서 Menu 노드로 흩어져 저장된다. 배열 이름으로 찾으면 안 잡힌다. */
   const menus = grab('Menu');
   const events = [...new Set(menus.map(m => String(m?.name || '').trim())
@@ -1207,6 +1219,7 @@ function introMaterial(data, jsons) {
     events,
     menuNames,
     feeds,
+    blogLinks,
     reviews: reviews.slice(0, 20),
     blogs: blogs.slice(0, 5),
     /* 리뷰 문장에서 손님이 실제로 쓴 말을 센다. 프리셋 페르소나 대신
