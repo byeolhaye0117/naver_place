@@ -1341,15 +1341,6 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <label class="f" style="margin-top:10px"><span>답글 끝인사 <i>한 번만 적어두시면 모든 답글 끝에 붙습니다</i></span>
           <input id="rp-closing" type="text" placeholder="예) 오늘도 좋은 하루 보내세요"></label>
 
-        <!-- 말투는 규칙으로 못 맞춘다. 사장님이 쓰신 답글 하나가 규칙 스무 개보다 낫다.
-             한 번 넣어 두면 AI 가 그 말투를 따라 쓴다. -->
-        <label class="f" style="margin-top:10px"><span>내 말투 예시 <i>*</i></span>
-          <textarea id="i-tone" rows="4" spellcheck="false"
-            placeholder="사장님이 평소 쓰시는 답글을 하나만 그대로 붙여넣으세요.&#10;여러 개면 --- 로 나눠 주세요.&#10;&#10;예) 후기 감사합니다~ 늘 열심히 하시는 모습 보기 좋습니다. 다음에 오시면 인사드릴게요!"></textarea>
-          <div class="hint"><b>이게 제일 확실한 방법입니다.</b> 규칙을 아무리 적어도 말투는 안 맞습니다.
-            사장님이 직접 쓰신 답글 <b>한 개</b>만 있으면 AI가 그 결을 따라 씁니다.
-            <br>내용은 안 베끼고 <b>말투와 길이만</b> 가져갑니다. 마음에 안 들면 이 칸만 고치시면 됩니다.</div>
-          <div class="hint" id="tone-n" style="font-weight:700"></div></label>
         <div class="btn-row" style="margin-top:10px">
           <button class="btn" id="rp-make" type="button">이 리뷰에 맞춘 답글 만들기</button>
           <button class="btn dark" id="rp-ai" type="button" data-aionly style="display:none">✨ AI에게 시키기</button>
@@ -4414,12 +4405,23 @@ function yearsFact(text){
   return m ? `${m[1]}년째 운영 중` : "";
 }
 
-/* 사장님이 직접 쓰신 답글. 규칙을 아무리 적어도 말투는 안 맞는다.
-   실제 글 하나가 규칙 스무 개보다 낫다. --- 로 여러 개를 나눠 넣을 수 있다. */
-function toneSamples(){
-  return ($("i-tone")?.value || "").split(/^\s*-{3,}\s*$/m)
-    .map(x => x.replace(/\s+/g, " ").trim())
-    .filter(x => x.length >= 15).slice(0, 3);
+/* 사장님이 실제로 쓰신 글. 말투는 규칙으로 못 맞춘다 - 실제 글이 기준이다.
+   화면에 칸을 두면 기기마다 넣어야 해서 번거롭다. 여기 박아 두면
+   어느 기기에서 열어도, 브라우저 데이터를 지워도 처음부터 그 말투로 나온다.
+   바꾸실 일이 생기면 이 목록만 고치면 된다. */
+const OWNER_TONE = [
+  /* 여기에 사장님이 실제로 다신 답글을 넣는다. 비어 있으면 도구가 만든 예시를 쓴다. */
+];
+
+/* 말투 기준을 지시문에 싣는다. 답글·소개글·소식 어디서든 같은 목소리가 나오게. */
+function toneBlock(what){
+  if(!OWNER_TONE.length) return "";
+  return `[말투는 이걸 따라 주세요 - 사장님이 직접 쓰신 ${what || "글"}입니다]
+${OWNER_TONE.map(x => `  ${x}`).join("\n\n")}
+
+이 글의 말투, 문장 길이, 존댓말의 결, 마무리 방식을 그대로 따라 주세요.
+내용은 베끼지 마세요 - 이번 건에 맞는 내용을 새로 쓰되 결만 같게 하시면 됩니다.
+아래 규칙과 부딪히면 이 말투가 이깁니다. 사장님 가게의 목소리가 우선입니다.`;
 }
 
 /* "우리만 아는 사실" 칸을 줄 단위로 읽는다. 빈 줄과 앞머리 기호는 버린다. */
@@ -4460,6 +4462,8 @@ ${f}
 - "최고의", "프리미엄", "명품" 같은 추상적 수식어로 시작하지 마세요
 - 오픈 연도나 자격증 나열로 시작하지 마세요. 손님은 "내가 가면 뭘 얻는지"가 궁금합니다
 - 과장이나 효과 보장 표현 금지
+
+${toneBlock("소개글")}
 
 ${CHAR_RULE}`,
 
@@ -4554,24 +4558,14 @@ ${F.map(x=>`- ${x}`).join("\n")}`
 시설 이름은 넣으세요. 다만 반드시 그분 이야기에 붙여서 넣으세요.
 따로 떼서 나열하는 순간 안내판이 되고, 그때부터 생색입니다.
 
-${(()=>{ const tone = toneSamples();
-  /* 말투는 규칙으로 못 맞춘다. 사장님이 쓰신 글이 있으면 그걸 기준으로 삼는다.
-     내가 만든 예시보다 무조건 우선한다 - 사장님 가게의 목소리가 맞다. */
-  return tone.length
-  ? `[말투는 이걸 따라 주세요 - 사장님이 직접 쓰신 답글입니다]
-${tone.map(x => `  ${x}`).join("\n\n")}
-
-이 글들의 말투, 문장 길이, 존댓말의 결, 마무리 방식을 그대로 따라 주세요.
-내용은 베끼지 마세요 - 이번 리뷰에 맞는 내용을 새로 쓰되 결만 같게 하시면 됩니다.
-아래 규칙과 부딪히면 이 말투가 이깁니다. 사장님 가게의 목소리가 우선입니다.`
-  : `[이런 답글을 원합니다 - 규칙을 스무 개 읽는 것보다 이걸 한 번 보는 게 빠릅니다]
+${OWNER_TONE.length ? toneBlock("답글") : `[이런 답글을 원합니다 - 규칙을 스무 개 읽는 것보다 이걸 한 번 보는 게 빠릅니다]
   6개월이나 끊어 주셔서 감사합니다. 꾸준히 오시는 게 제일 어려운데 그걸 해내고 계시네요.
   기구 기다리는 게 제일 맥 빠지는 일이라, 저녁 시간대는 늘 신경 쓰는 부분입니다.
   스미스머신도 6대라 요즘은 기다리시는 일이 거의 없으실 거예요.
   쓰시다 불편한 게 있으면 편하게 말씀해 주세요. 다음에 뵙겠습니다.
 왜 괜찮은가 - 고마움으로 열고, 그분이 잘하고 계신 것을 짚었습니다.
 "기구 기다리는 게 맥 빠지는 일"이라고 그분 마음을 먼저 알아준 다음에
-스미스머신 6대가 나옵니다. 순서가 반대였으면 자랑이 됐을 문장입니다.`; })()}
+스미스머신 6대가 나옵니다. 순서가 반대였으면 자랑이 됐을 문장입니다.`}
 
 [반드시 지킬 것]
 1. 이 리뷰에만 할 수 있는 말을 하세요. 어느 리뷰에 붙여도 말이 되는 문장이면 실패입니다.
@@ -4652,6 +4646,8 @@ ${f}
 - 각 제목 + 본문 3~4문장
 - 매주 같은 형식이 반복되지 않게
 
+${toneBlock("소식")}
+
 ${CHAR_RULE}`,
 
   copy: f => `네이버 플레이스에서 쓰는 짧은 문구를 칸별로 만들어 주세요.
@@ -4672,6 +4668,8 @@ ${f}
 - 제한을 넘기면 짧게 다시 쓰세요. 자르지 마세요. 잘린 문구는 없느니만 못합니다
 - 위에 적힌 시설과 가격만 쓰세요. 없는 혜택을 지어내면 방문 후기에서 바로 드러납니다
 - 과장 표현(역대급, 최저가, 1위)은 빼 주세요. 표시광고법 문제가 됩니다
+
+${toneBlock("문구")}
 
 ${CHAR_RULE}`,
 
@@ -5050,7 +5048,6 @@ const STORE_KEY = "gym-place-check/v1";
 let COLLECTED = {};
 const TEXT_IDS = ["i-name","i-area","i-type","i-price","i-kw1","i-kw2","i-kw3","i-intro","i-repkw","i-edge","s-url",
                  "i-facts",       // 사장님만 아는 사실 - 네이버에는 없어서 수집으로 못 가져온다
-                 "i-tone",        // 사장님 말투 예시 - 규칙으로는 말투가 안 맞는다
                  "rp-closing"];   // 답글 끝인사 - 한 번 적으면 계속 쓴다
 
 /* 수집한 재료(리뷰 본문·역·정류장·이벤트)를 새로고침하면 잃고 있었다.
@@ -5102,7 +5099,6 @@ function restore(o){
   if(o.place && !window.__place) window.__place = o.place;
   $("i-intro").dispatchEvent(new Event("input"));
   try{ paintFactsN(); }catch{}
-  try{ paintToneN(); }catch{}
   try{ paintBlogFound(); }catch{}
 }
 
@@ -5332,13 +5328,6 @@ let reWriteTimer;
 
 /* 몇 줄을 재료로 읽었는지 그 자리에서 보여준다. 적은 것이 실제로 쓰이는지
    확인할 방법이 없으면 사장님은 이 칸을 안 채우게 된다. */
-function paintToneN(){
-  const el = $("tone-n"); if(!el) return;
-  const n = toneSamples().length;
-  el.textContent = n ? `말투 예시 ${n}개를 읽었습니다 — AI가 이 결을 따라 씁니다` : "";
-  el.style.color = n ? "var(--ok-fg)" : "";
-}
-
 function paintFactsN(){
   const el = $("facts-n"); if(!el) return;
   const n = ownFacts().length;
@@ -5424,7 +5413,6 @@ document.addEventListener("input", e=>{
   save();
   if(e.target.id === "i-name" || e.target.id === "i-area") paintWho();
   if(e.target.id === "i-facts") paintFactsN();
-  if(e.target.id === "i-tone")  paintToneN();
   if(WRITER_INPUTS.includes(e.target.id) && $("writer")?.dataset.ready === "1"){
     clearTimeout(reWriteTimer);
     reWriteTimer = setTimeout(()=>{ try{ buildWriter(getInfo()); renderPrompt(); }catch{} }, 500);
@@ -5443,7 +5431,6 @@ document.addEventListener("change", e=>{ if(e.target.closest("main")) save(); })
   renderSaves();
   paintWho();
   paintFactsN();
-  try{ paintToneN(); }catch{}
   try{ paintBlogFound(); }catch{}
   /* 이미 채워진 상태로 다시 들어온 것이라면 입력 칸을 처음부터 감춘다.
      수집 직후에만 감추면, 새로고침할 때마다 1·2·3 이 되살아난다. */
