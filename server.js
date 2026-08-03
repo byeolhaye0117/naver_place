@@ -69,6 +69,39 @@ function accessKey() {
 }
 const KEY = accessKey();
 
+/* ---------------------------------------------------------------------------
+ * 접근 키를 브라우저에 한 번 더 심어 둔다.
+ *
+ * 지금까지 키는 화면 쪽 localStorage 한 군데에만 있었다. 그건 생각보다 잘 날아간다 -
+ * 카톡·인스타 안에서 링크로 열면 그 앱이 저장분을 따로 들고 있다가 지우고,
+ * 시크릿 창은 닫는 순간 사라지고, 휴대폰이 저장공간을 정리할 때도 지워진다.
+ * 그때마다 사장님이 렌더 대시보드에 들어가 키를 찾아 다시 넣어야 했다.
+ *
+ * 쿠키는 같은 상황에서 남는 일이 많다. 두 군데에 두면 한쪽이 지워져도 나머지가 버틴다.
+ * 통과할 때마다 다시 심어서 1년이 계속 밀린다 - 쓰는 동안은 잠기지 않는다.
+ * ------------------------------------------------------------------------- */
+const COOKIE_NAME = 'gpk';
+
+function cookieKey(req) {
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() !== COOKIE_NAME) continue;
+    try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return ''; }
+  }
+  return '';
+}
+
+function plantKey(req, res) {
+  /* Secure 는 https 로 들어온 요청에만 붙인다. 집 PC(http)에서도 써야 한다.
+     HttpOnly 라 화면 쪽 스크립트는 못 읽는다 - 읽을 일이 없다.
+     브라우저가 알아서 붙여 보내는 것이 이 쿠키가 하는 일의 전부다. */
+  const https = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  res.setHeader('Set-Cookie',
+    `${COOKIE_NAME}=${encodeURIComponent(KEY)}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax`
+    + (https ? '; Secure' : ''));
+}
+
 /* 렌더 같은 호스팅은 프록시가 컨테이너 안쪽 127.0.0.1 로 붙는다.
    그래서 socket 주소만 보면 인터넷에서 온 요청까지 "이 PC"로 보이고,
    접근 키 검사가 통째로 무력해진다 — 서버가 통째로 열린다.
@@ -1860,10 +1893,13 @@ const server = http.createServer(async (req, res) => {
        트래픽을 끊는다 — 실제로 그렇게 페이지가 통째로 안 열렸다.
        대신 이 응답에는 키도 내부 주소도 담지 않는다(위 lanUrl 참고). */
     if (u.pathname.startsWith('/api/') && u.pathname !== '/api/health' && !isLocal(req)) {
-      const given = q.get('k') || req.headers['x-access-key'];
+      const given = q.get('k') || req.headers['x-access-key'] || cookieKey(req);
       if (given !== KEY) {
         return sendJson(res, 401, { ok: false, error: '접근 키가 없거나 틀렸습니다. PC 화면에 표시된 주소로 다시 접속하세요.' });
       }
+      /* 통과했으면 이 기기에 1년짜리로 다시 심는다. 한 번 넣으면 그 뒤로는
+         브라우저가 알아서 들고 다니므로 배포를 몇 번 하든 다시 안 묻는다. */
+      plantKey(req, res);
     }
 
     if (u.pathname === '/api/health') {

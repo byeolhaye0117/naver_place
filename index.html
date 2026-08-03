@@ -5516,6 +5516,18 @@ async function keyWorks(){
   }catch{ return true; }   /* 물어보지도 못한 것을 키 탓으로 몰지 않는다 */
 }
 
+/* 저장해 둔 키가 없어도 열리는가 - 서버가 심어 둔 쿠키만으로.
+   키를 한 번 넣으면 서버가 1년짜리 쿠키를 심는다. localStorage 가 지워져도
+   (카톡 안에서 열기·시크릿 창·저장공간 정리) 쿠키가 남아 있으면 그냥 열린다.
+   keyWorks 와 달리 대답을 못 받은 경우는 "열린다"고 치지 않는다 -
+   저기는 이미 연결된 뒤라 관대해도 되지만, 여기는 이걸 믿고 키 칸을 감추기 때문이다. */
+async function cookieOpens(){
+  try{
+    const r = await fetch("/api/ai-status", { signal: AbortSignal.timeout(90000) });
+    return r.status !== 401;
+  }catch{ return false; }
+}
+
 /* 키를 받을 칸을 띄운다. stale = 저장된 키가 있는데 그게 안 통하는 경우 */
 function needKey(stale, keySource){
   const row = $("key-row"); if(!row) return;
@@ -5531,7 +5543,12 @@ function needKey(stale, keySource){
        <br>render.com → 이 서비스 → <b>Environment</b> → <b>Add Environment Variable</b>
        → 이름 <code>ACCESS_KEY</code>, 값은 사장님이 정하실 12자 이상 영문·숫자
        → <b>Save changes</b>. 그다음 그 값을 아래에 넣으세요.`
-    : (stale ? "키를 새로 바꾸셨다면, 바뀐 값을 넣어 주세요. 이 기기에는 예전 값이 남아 있습니다." : "");
+    : (stale
+       ? `이 기기에는 예전 값이 남아 있습니다. 바뀐 값을 한 번만 넣어 주세요.
+          <br><b>넣고 나면 이 기기에는 1년 동안 다시 안 묻습니다.</b>
+          배포를 몇 번 하든 그대로입니다.`
+       : `<b>한 번만 넣으시면 됩니다.</b> 넣고 나면 이 기기는 1년 동안 기억합니다 -
+          배포를 다시 해도, 서버가 잠들었다 깨어나도 다시 묻지 않습니다.`);
 }
 
 document.addEventListener("click", async e=>{
@@ -5571,8 +5588,11 @@ function apiUrl(pathAndQuery){
   let hasKey = false;
   try{ hasKey = Boolean(localStorage.getItem(KEY_STORE)); }catch{}
   const onWeb = location.protocol !== "file:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(h);
-  const servable = location.protocol !== "file:"
+  let servable = location.protocol !== "file:"
     && (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(h) || hasKey);
+  /* 저장해 둔 키가 없어도 서버가 심어 둔 쿠키가 남아 있으면 그냥 열린다.
+     한 번 넣은 키를 브라우저 두 군데에 두는 것이라, 한쪽이 지워져도 다시 안 묻는다. */
+  if(!servable && onWeb && await cookieOpens()) servable = true;
   /* 인터넷 주소로 들어왔는데 키가 없으면, 조용히 수동 모드로 떨어뜨리지 않는다.
      여기는 PC 화면이 없어서 키를 받을 데가 이 칸뿐이다. */
   if(!servable){
