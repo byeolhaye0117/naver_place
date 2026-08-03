@@ -3930,6 +3930,10 @@ function showTool(name){
       $("writer-desc").textContent  = TOOL_META[TOOL].d;
     }
   }
+  /* AI 버튼은 서버 연결이 확인된 뒤에 켜진다. 무료 서버는 자다 깨는 데 1분 가까이
+     걸려서, 그 사이에 도구를 먼저 여시면 버튼이 안 보이는 채로 남는다.
+     도구를 열 때마다 다시 칠한다. */
+  try{ paintAiButtons(); }catch{}
   renderHow(TOOL);
 }
 
