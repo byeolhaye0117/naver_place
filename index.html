@@ -2771,12 +2771,23 @@ const REPLY_TOPIC = [
     more:"물어보시는 게 귀찮은 일이라고 생각하지 않습니다. 편하게 부르세요.",
     echo:"응대가 도움이 되셨다니 저희도 힘이 납니다.",
     line:()=>`처음 오시는 분께 기구 사용법과 동선을 알려드리는 건 저희가 당연히 할 일이라 생각합니다.` },
+  /* 재등록은 손님이 줄 수 있는 제일 큰 칭찬이다. 그런데 주제 목록에 아예 없어서
+     "다이어트를 위해 재등록하게 되었습니다"를 읽고도 그 말을 못 했다.
+     맨 앞에 둔다 - 다른 주제와 같이 걸리면 이쪽을 먼저 받는 게 맞다. */
+  { key:"again", label:"재등록·재방문", hit:["재등록","다시 등록","또 등록","재결제","연장","다시 다니","돌아왔","재방문","오랜만에 다시"],
+    more:"그동안 어떻게 지내셨는지 편하게 말씀해 주세요. 그때에 맞춰 잡아 드리겠습니다.",
+    /* "…감사합니다."로 시작하면 인사말과 겹쳐서 지워지고, 남은 뒷문장이
+       "이게 저희한테는…"처럼 앞이 잘린 채로 나온다. 그래서 감사라는 말을 안 쓴다. */
+    echo:"다시 찾아 주신 것이 저희한테는 제일 큰 칭찬입니다.",
+    line:()=>`한 번 겪어 보시고 다시 오신 것이라 더 마음이 놓입니다.` },
   { key:"alone", label:"혼자·조용", hit:["혼자","조용","눈치","시선","집중","한적","사람이 적"],
     more:"말 걸리는 게 부담이시면 그냥 두겠습니다. 필요하실 때만 부르세요.",
     echo:"혼자 오셔서 편하게 하셨다니 다행입니다.",
-    line:o=>o.fac.includes("여성 전용존")
+    /* 여성 전용존은 리뷰에 여성이라는 단서가 있을 때만 말한다.
+       단서 없이 꺼내면 남성 회원께는 엉뚱한 답글이 된다. 실제로 그렇게 나왔다. */
+    line:(o, rv)=>(o.fac.includes("여성 전용존") && /여성|여자|아내|딸|엄마|와이프|남편이|여성분/.test(String(rv||"")))
       ? `혼자 오시는 분이 많아서 여성 전용존도 따로 두었습니다.`
-      : `혼자 오셔서 조용히 하시는 분이 많습니다.` },
+      : `혼자 조용히 하시는 분이 많아서 그 분위기는 신경 쓰고 있습니다.` },
   { key:"time",  label:"시간대", hit:["새벽","야간","밤","24시","아침","퇴근","교대","늦게","일찍"],
     more:"한가한 시간대가 궁금하시면 데스크에 물어보세요. 알려드리겠습니다.",
     echo:"오시는 시간 맞추기가 쉽지 않으셨을 텐데 꾸준히 오고 계시네요.",
@@ -2916,9 +2927,17 @@ const RP_MID = (n) => `안녕하세요, ${n}입니다. 시간 내어 후기 남�
 function replyTopics(review, used){
   const t = String(review || "");
   const scored = REPLY_TOPIC
-    .map(x => ({ x, n: x.hit.filter(w => t.toLowerCase().includes(w.toLowerCase())).length }))
+    .map(x => {
+      const got = x.hit.filter(w => t.toLowerCase().includes(w.toLowerCase()));
+      /* 몇 번 걸렸는지만 세면 "혼자"처럼 짧고 흔한 말이 이긴다. 실제로 다섯 가지가
+         들어 있는 리뷰에서 그 하나만 쓰고 나머지를 다 흘렸다.
+         긴 말이 걸린 쪽이 그 리뷰의 진짜 주제일 확률이 높다 - 길이도 같이 본다. */
+      const best = got.reduce((a, w) => Math.max(a, [...w].length), 0);
+      return { x, n: got.length, best, hits: got };
+    })
     .filter(r => r.n > 0)
-    .sort((a, b) => (used.has(a.x.key) - used.has(b.x.key)) || (b.n - a.n));
+    .sort((a, b) => (used.has(a.x.key) - used.has(b.x.key))
+                 || (b.n + b.best / 10) - (a.n + a.best / 10));
   return scored;
 }
 
@@ -2935,6 +2954,9 @@ const RP_JOIN = ["그리고 ", "또 ", "덧붙이자면 "];
 
    대신 그 리뷰가 무슨 상황인지를 한 줄로 받는다. 인용 부호 없이,
    그 얘기를 들은 사람이 자연스럽게 할 법한 말로. */
+/* 손님이 쓴 말은 주제 문장이 실어 나른다 - alone 이면 "혼자", diet 면 "체중"이
+   그 문장 안에 들어 있다. 통조림 한 줄을 억지로 덧붙이면
+   "재등록, 저희도 눈여겨보는 부분입니다" 같은 어색한 문장이 된다. 그건 안 한다. */
 function replyEcho(review, top){
   return top?.echo || "";
 }
@@ -2981,7 +3003,11 @@ const TOPIC_FACT = {
   park:  /24시|365일/,
 };
 
-function rpFactPool(said){
+function rpFactPool(said, review){
+  /* 여성 전용 공간은 리뷰에 여성이라는 단서가 있을 때만 꺼낸다.
+     주제 문장에서는 막아 놨는데 사실 목록으로 새어 나왔다.
+     남성 회원께 "여성전용 이용권도 있으니 써 보세요"는 엉뚱한 답글이다. */
+  const her = /여성|여자|아내|딸|엄마|와이프|남편이|여성분/.test(String(review || ""));
   return (window.__place?.material?.menuNames || [])
     .map(x => naverSafe(x).replace(/\s*(별도\s*구비|별도|보유|구비|완비|가동중)\s*$/g, "").trim())
     /* 숫자가 붙은 기구, 별도 공간처럼 눈에 그려지는 것만 쓴다. */
@@ -2989,6 +3015,7 @@ function rpFactPool(said){
     /* 이벤트 문구는 답글에 넣으면 광고가 되고, 공지는 자랑거리가 아니다.
        "에어컨9대/선풍기9대 가동중"이 가격 답글에 붙어 나왔다. */
     .filter(t => !/특가|이벤트|만원|할인|원$|에어컨|선풍기|공지/.test(t))
+    .filter(t => her || !/여성|우먼존/.test(t))
     /* 이미 말한 것을 또 말하지 않는다 */
     .filter(t => !said.includes(t.split(/[ (]/)[0]));
 }
@@ -3002,14 +3029,21 @@ function tidyFact(t){
     .replace(/\s{2,}/g, " ").trim();
 }
 
+/* 손님이 쓴 낱말이 답글에 들어 있는가. 점검표가 재는 것과 같은 잣대로 본다 -
+   여기서 미리 확인해야 "어떤 리뷰에 붙여도 되는 답글"이 나가지 않는다. */
+function hasReviewWord(text, review){
+  return String(review || "").replace(/[^가-힣a-zA-Z0-9]/g, " ").split(/\s+/)
+    .filter(w => [...w].length >= 2).some(w => String(text).includes(w));
+}
+
 /* 마지막 문장의 어미. 앞 문장과 같은 어미로 이으면 조립한 티가 난다. */
 function lastEnd(text){
   const s = String(text || "").trim().split(/(?<=[.!?])\s+/).filter(Boolean).pop() || "";
   return s.replace(/[.!?]+$/, "").slice(-3);
 }
 
-function rpFactLine(i, said, topicKey){
-  const pool = rpFactPool(said);
+function rpFactLine(i, said, topicKey, review){
+  const pool = rpFactPool(said, review);
   if(!pool.length) return "";
   const fit = TOPIC_FACT[topicKey];
   const near = fit ? pool.filter(t => fit.test(t)) : [];
@@ -3048,10 +3082,20 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
   }
 
   const scored = replyTopics(review, used);
-  const t1 = scored[0]?.x;
-  /* 확실히 걸린 것만 두 번째로 쓴다. 스치듯 걸린 단어로 없는 얘기를 붙이지 않는다. */
-  const s2 = scored.find(r => r.x !== t1 && !used.has(r.x.key) && r.n >= RP_STRONG);
-  const t2 = s2?.x;
+  /* 재등록은 손님이 줄 수 있는 제일 큰 칭찬이다. 다른 주제와 같이 걸렸으면 이걸 먼저 받는다. */
+  const again = scored.find(r => r.x.key === "again");
+  const s1 = again || scored[0];
+  const t1 = s1?.x;
+  /* 스치듯 걸린 단어로 없는 얘기를 붙이면 안 되지만, "다이어트"나 "24시"처럼
+     긴 말이 걸린 것은 한 번만 나와도 그 리뷰의 주제가 맞다.
+     예전에는 이걸 다 흘려서, 다섯 가지가 든 리뷰에 한 가지만 답했다. */
+  const strong = r => r.n >= RP_STRONG || (r.n >= 1 && r.best >= 3);
+  /* 이미 다녀 보고 다시 오신 분께 "처음 두세 달이 제일 어렵습니다"는 맞지 않는다. */
+  const backAgain = scored.some(r => r.x.key === "again");
+  const rest = scored.filter(r => r.x !== t1 && !used.has(r.x.key) && strong(r)
+                              && !(backAgain && r.x.key === "start"))
+                     .map(r => r.x);
+  const t2 = rest[0], t3 = rest[1];
   if(t1) used.add(t1.key);
   if(t2) used.add(t2.key);
 
@@ -3061,7 +3105,7 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
   if(star === 3){
     const bad = lowReply(review, N, i);
     const hasBad = bad.topics.length > 0;
-    const good = t1 ? t1.line(o) : "";
+    const good = t1 ? t1.line(o, review) : "";
     return { topics: [...bad.topics, ...(t1 ? [t1] : [])],
       text: tail(hasBad
         ? [RP_MID(N), `${bad.topics[0].own}은 저희가 더 챙기겠습니다.`,
@@ -3077,7 +3121,7 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
        3번  짧게, 사실 하나만 두고 끝낸다 (군더더기 없이) */
   const hello = RP_HELLO[i % RP_HELLO.length](N);
   const echo  = replyEcho(review, t1);
-  const line  = t1 ? t1.line(o) : "";
+  const line  = t1 ? t1.line(o, review) : "";
   const bye   = RP_BYE[i % RP_BYE.length];
   const key   = t1?.key;
   /* 여기까지 쓴 말을 넘겨서 같은 것을 두 번 말하지 않게 한다 */
@@ -3089,29 +3133,51 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
        아니면 우리 사실을 하나 둔다. 여기가 비면 어느 헬스장에나 붙는 글이 된다. */
     /* 재료가 없으면 사실 줄이 비고, 그러면 중간이 짧게와 같아진다.
        그때는 예전처럼 같은 주제를 한 걸음 더 이어 간다. */
-    const second = t2 ? RP_JOIN[0] + t2.line(o)
-                      : (rpFactLine(i, said0, key) || t1?.more || "");
-    parts = [hello, echo, line, second,
-             len === "long" ? pickV(RP_MORE) : "", bye];
+    /* 두 번째 주제는 2번 답글에 맡긴다. 여기서도 쓰면 1번과 2번이 반쯤 같은 글이 된다.
+       실제로 두 답글이 문장 여섯 개를 공유했다.
+       여기는 첫 주제를 한 걸음 더 잇고, 확인된 사실 한 줄을 둔다 -
+       주제 문장은 업종 일반론이라 그것만으로는 어느 헬스장에나 붙는다. */
+    /* 첫 주제가 재등록이면 그 문장에는 손님 낱말이 하나도 없다. 그때는
+       두 번째 주제를 써서 읽었다는 표시를 남긴다. */
+    const second = (!hasReviewWord([echo, line].join(" "), review) && t2)
+      ? RP_JOIN[0] + t2.line(o, review)
+      : (t1?.more || "");
+    const f1 = rpFactLine(i, [said0, second].join(" "), key, review);
+    /* 재료가 없으면 사실 줄이 비어서 길게가 중간과 같아진다. 그때는 한 문장을 더 붙인다. */
+    const f2 = len === "long"
+      ? (rpFactLine(i + 1, [said0, second, f1].join(" "), key, review) || pickV(RP_MORE))
+      : "";
+    parts = [hello, echo, line, second, f1, f2, bye];
   } else if(i % 3 === 1){
-    /* 2번 - 다음 손님 몫. 사실 한 줄과 한 걸음 더 나간 말을 얹는다.
-       검색어 문장도 여기 하나에만 둔다. 셋에 다 넣으면 광고로 읽힌다. */
-    parts = [hello, echo, line, rpFactLine(i, said0, key), t1?.more || "",
+    /* 2번 - 손님이 쓴 얘기를 최대한 다 받는다. 한 리뷰에 다이어트, 재등록, 혼자,
+       할인, 24시가 다 들어 있는데 하나만 답하면 읽은 티가 안 난다.
+       걸린 주제를 세 개까지 받고, 없으면 우리 사실로 채운다.
+       검색어 문장도 여기 하나에만 둔다 - 셋에 다 넣으면 광고로 읽힌다. */
+    const more2 = [t2 && (RP_JOIN[0] + t2.line(o, review)), t3 && t3.line(o, review)]
+      .filter(Boolean);
+    parts = [hello, echo, line, ...more2,
+             more2.length ? "" : rpFactLine(i, said0, key, review),
+             more2.length < 2 ? (t1?.more || "") : "",
              rpKwLine(kw, o), len === "long" ? pickV(RP_MORE) : "", bye];
   } else {
-    /* 3번 - 짧게. 일반론은 빼고 우리 사실 하나만 남긴다. */
-    const fact = rpFactLine(i, [hello, echo].join(" "), key);
-    parts = [hello, echo, fact || line, bye];
+    /* 3번 - 짧게. 다만 손님이 쓴 말과 우리 사실은 남긴다.
+       t1 이 재등록이면 그 문장에는 손님 낱말이 없다. 그때는 두 번째 주제를 쓴다 -
+       "혼자", "체중" 같은 말이 거기 들어 있어서 읽었다는 표시가 된다. */
+    const said = t2 ? t2.line(o, review) : line;
+    const fact = rpFactLine(i, [hello, echo, said].join(" "), key, review);
+    parts = [hello, echo, said, fact, bye];
   }
   /* 짧게를 고르셔도 알맹이는 남겨야 한다. 1번은 리뷰에 답하는 문장을,
      2·3번은 우리 사실 한 줄을 남긴다. 셋 다 같은 문장만 남으면 짧게가
      "복붙 세 개"가 된다. */
   if(len === "short"){
-    const one = (i % 3 === 0) ? line : (rpFactLine(i, [hello, echo].join(" "), key) || line);
+    const one = (i % 3 === 0) ? line : (rpFactLine(i, [hello, echo].join(" "), key, review) || line);
     parts = [hello, echo, one, bye];
   }
 
-  return { topics: [t1, t2].filter(Boolean),
+  /* 세 번째 주제까지 실제로 쓰므로 화면에도 그대로 적는다 -
+     "읽어낸 주제"가 답글 내용과 다르면 사장님이 못 믿는다. */
+  return { topics: [t1, t2, t3].filter(Boolean),
            text: tail(parts.filter(Boolean).join(" ")) };
 }
 
