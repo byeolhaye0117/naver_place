@@ -42,14 +42,26 @@ const SAVES    = path.join(DATA_DIR, 'saves.json');   // 저장 내역
  * /api/ai 를 통해 API 키가 쓰일 수 있다. 그래서 외부 기기 요청에만 키를 요구한다.
  * 키는 파일에 저장하므로 서버를 다시 켜도 휴대폰 북마크가 그대로 동작한다.
  * ========================================================================== */
+/* 키가 어디서 왔는지. 값은 절대 밖에 내보내지 않지만 출처는 알려 준다 -
+   이것 하나로 "배포할 때마다 로그아웃되는" 문제를 밖에서 가려낼 수 있다. */
+let KEY_SOURCE = 'env';
+
 function accessKey() {
   /* 인터넷에 올려 두고 쓸 때는 파일이 배포마다 사라진다.
      그래서 환경변수로 준 키를 최우선으로 쓴다 — 주소를 북마크해 두면 계속 통한다. */
   const env = String(process.env.ACCESS_KEY || '').trim();
   if (env) return env;
-  try { return fs.readFileSync(KEYFILE, 'utf8').trim(); }
+  try {
+    const k = fs.readFileSync(KEYFILE, 'utf8').trim();
+    KEY_SOURCE = 'file';
+    return k;
+  }
   catch {
+    /* 여기까지 왔다는 건 환경변수도 없고 저장된 키도 없다는 뜻이다.
+       무료 호스팅에서는 배포할 때마다 여기로 와서 키가 새로 생기고,
+       그러면 사장님 휴대폰에 저장된 키가 매번 무효가 된다. */
     const k = crypto.randomBytes(9).toString('base64url');
+    KEY_SOURCE = 'new';
     fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(KEYFILE, k);
     return k;
@@ -1862,6 +1874,8 @@ const server = http.createServer(async (req, res) => {
       try { built = fs.statSync(path.join(ROOT, 'index.html')).mtime.toISOString().slice(0, 16).replace('T', ' '); } catch {}
       return sendJson(res, 200, {
         ok: true, version: 2, built,
+        /* 값이 아니라 출처만. env 가 아니면 배포할 때마다 키가 바뀐다. */
+        keySource: KEY_SOURCE,
         ai: Boolean(process.env.ANTHROPIC_API_KEY),
         aiStatus: aiStatus(),   // 오늘 몇 번 썼는지 - 화면에 보여준다
         /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —

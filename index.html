@@ -5412,12 +5412,21 @@ async function keyWorks(){
 }
 
 /* 키를 받을 칸을 띄운다. stale = 저장된 키가 있는데 그게 안 통하는 경우 */
-function needKey(stale){
+function needKey(stale, keySource){
   const row = $("key-row"); if(!row) return;
   row.style.display = "block";
   $("key-title").textContent = stale ? "🔑 저장된 접근 키가 서버와 다릅니다" : "🔑 접근 키를 넣어 주세요";
-  $("key-msg").textContent = stale
-    ? "키를 새로 바꾸셨다면, 바뀐 값을 넣어 주세요. 이 기기에는 예전 값이 남아 있습니다." : "";
+  /* 환경변수에 키가 없으면 서버가 켜질 때마다 새 키를 만든다. 무료 요금제는
+     배포하거나 서버가 잠들었다 깨면 파일이 지워지므로, 그때마다 기기가 잠긴다.
+     값을 아무리 다시 넣어도 며칠 뒤 또 잠기니 원인을 짚어 줘야 한다. */
+  const drifts = keySource && keySource !== "env";
+  $("key-msg").innerHTML = drifts
+    ? `<b>이 서버는 켜질 때마다 접근 키가 바뀝니다.</b> 값을 넣어도 배포하거나
+       서버가 잠들었다 깨면 또 잠깁니다. 한 번만 이렇게 해 두시면 끝납니다.
+       <br>render.com → 이 서비스 → <b>Environment</b> → <b>Add Environment Variable</b>
+       → 이름 <code>ACCESS_KEY</code>, 값은 사장님이 정하실 12자 이상 영문·숫자
+       → <b>Save changes</b>. 그다음 그 값을 아래에 넣으세요.`
+    : (stale ? "키를 새로 바꾸셨다면, 바뀐 값을 넣어 주세요. 이 기기에는 예전 값이 남아 있습니다." : "");
 }
 
 document.addEventListener("click", async e=>{
@@ -5461,7 +5470,17 @@ function apiUrl(pathAndQuery){
     && (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(h) || hasKey);
   /* 인터넷 주소로 들어왔는데 키가 없으면, 조용히 수동 모드로 떨어뜨리지 않는다.
      여기는 PC 화면이 없어서 키를 받을 데가 이 칸뿐이다. */
-  if(!servable){ if(onWeb) needKey(false); return; }
+  if(!servable){
+    if(onWeb){
+      /* health 는 키 없이도 열려 있다. 키가 없어도 서버 상태는 물어볼 수 있고,
+         그래야 "이 서버는 켜질 때마다 키가 바뀝니다"를 처음부터 말해 줄 수 있다. */
+      let src = null;
+      try{ src = (await (await fetch("/api/health",
+        { signal: AbortSignal.timeout(90000) })).json())?.keySource; }catch{}
+      needKey(false, src);
+    }
+    return;
+  }
   try{
     /* 인터넷에 올려 둔 서버는 안 쓰면 잠든다. 깨우는 데 1분 가까이 걸리므로
        2초 만에 포기하면 멀쩡한 서버를 두고 수동 모드로 떨어진다. */
@@ -5478,8 +5497,9 @@ function apiUrl(pathAndQuery){
     if(!r.ok) return;
     /* health 는 키 없이도 200 이다. 여기서 멈추면 키가 틀린 기기가
        "서버 연결됨"을 보고 나서 수집·순위·AI 에서 전부 401 을 맞는다. */
-    if(onWeb && !(await keyWorks())){ needKey(true); return; }
-    SERVER = await r.json();
+    const info = await r.json();
+    if(onWeb && !(await keyWorks())){ needKey(true, info?.keySource); return; }
+    SERVER = info;
     $("srv").style.display = "block";
     $("srv-off").style.display = "none";
     /* 붙여넣기는 서버가 없을 때의 대체 수단이다. 서버가 되면 쓸 일이 없으므로
