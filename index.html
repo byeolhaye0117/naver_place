@@ -3619,9 +3619,15 @@ function renderRpKw(){
    "주차 가능 / 24시간 운영 / GX 프로그램" 다섯 줄은 옆 가게도 그대로 갖고 있어서,
    그것만으로는 AI 가 아무리 잘 써도 어느 헬스장에나 붙는 답글이 나온다.
    돈을 쓰기 전에 말해 줘야 한다 - 실제로 몇 번을 그렇게 쓰고 나서야 알았다. */
-function thinFactNote(){
+function thinFactNote(made = []){
   const F = replyFacts();
-  const strong = F.filter(x => /\d+\s*(대|종|명|층)|\d+\s*개(?!월)/.test(x) && !/리뷰|평점/.test(x));
+  const STRONG = /\d+\s*(대|종|명|층)|\d+\s*개(?!월)/;
+  const strong = F.filter(x => STRONG.test(x) && !/리뷰|평점/.test(x));
+  /* 화면에 "재료가 전부 흔한 것뿐"이라고 띄웠는데, 바로 아래 답글이
+     "프리미엄 웨이트머신 100종"을 말하고 있었다. 보이는 글과 어긋나는 경고는
+     사장님을 헷갈리게만 한다. 만든 답글이 이미 그런 사실을 말하고 있으면 접는다 -
+     재료를 어떻게 세든, 결과가 멀쩡하면 경고할 이유가 없다. */
+  if(made.some(t => STRONG.test(String(t)))) return "";
   if(F.length >= 3 && strong.length) return "";
   const only = F.length >= 3;
   return `<div class="rp-thin">
@@ -3666,7 +3672,7 @@ function makePastedReply(){
       아래 답글은 무난하지만 <b>이 리뷰에 대한 답은 아닙니다.</b> 이런 리뷰는 AI에게 맡기세요.
       <button class="btn sm" type="button" id="rp-toai">이 리뷰로 AI 지시문 만들기</button>
     </div>` : ""}
-    ${thinFactNote()}
+    ${thinFactNote(uniq.map(x => x.text))}
     ${uniq.map(x=>{
       const n = [...x.text].length;
       const idx = cpPut(x.text);
@@ -6928,7 +6934,7 @@ document.addEventListener("click", async e=>{
           <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
           ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
             r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
-      ${thinFactNote()}
+      ${thinFactNote(list)}
       <p class="rp-tip">AI가 썼어도 <b>없는 시설이 적혀 있으면 반드시 지우세요.</b>
         위 점검은 저희 잣대로 잰 것입니다.</p>
     </div>`;
