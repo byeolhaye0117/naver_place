@@ -3042,20 +3042,33 @@ function iRa(t){
   const code = ch.charCodeAt(0) - 0xAC00;
   return (code >= 0 && code < 11172 && code % 28) ? "이라" : "라";
 }
-function factSentence(t){
-  if(/\d+\s*(대|종|개)/.test(t))
-    return `${t}${iRa(t)} 기다렸다가 쓰시는 일은 거의 없으실 거예요.`;
-  if(/존|룸|실$|실이|실도/.test(t))
-    return `${t}도 따로 있어서 눈치 볼 일 없이 쓰시면 됩니다.`;
-  if(/무료/.test(t))
-    return `${t}${iRa(t)} 따로 내시는 건 없어요. 필요하실 때 편하게 쓰세요.`;
-  if(/PT|피티|상담/.test(t))
-    return `${t}도 있으니 막히는 게 생기면 그때 쓰셔도 됩니다.`;
-  return `${t}도 있으니 필요하실 때 편하게 쓰세요.`;
+/* 한 답글에 사실이 둘 이상 들어가면 같은 틀이 반복된다 -
+   "21대라 기다렸다가 쓰시는 일은 거의 없으실 거예요. 6대라 기다렸다가 쓰시는 일은…"
+   좋은 점은 그대로 두고 말하는 방식만 바꾼다. */
+const FACT_GOOD = {
+  count: [ (t)=>`${t}${iRa(t)} 기다렸다가 쓰시는 일은 거의 없으실 거예요.`,
+           (t)=>`${t}${iRa(t)} 붐비는 시간에도 순서 기다릴 일이 적습니다.`,
+           (t)=>`${t}${iRa(t)} 쓰고 싶은 기구 앞에서 서성이실 일은 없으실 거예요.` ],
+  room:  [ (t)=>`${t}도 따로 있어서 눈치 볼 일 없이 쓰시면 됩니다.`,
+           (t)=>`${t}도 따로 빼 뒀어요. 방해받지 않고 하실 수 있습니다.` ],
+  free:  [ (t)=>`${t}${iRa(t)} 따로 내시는 건 없어요. 필요하실 때 편하게 쓰세요.`,
+           (t)=>`${t}${iRa(t)} 추가 비용은 없습니다. 써 보시고 맞으면 계속 쓰시면 돼요.` ],
+  pt:    [ (t)=>`${t}도 있으니 막히는 게 생기면 그때 쓰셔도 됩니다.`,
+           (t)=>`${t}도 있어서 혼자 하다 막히실 때 도움받으실 수 있어요.` ],
+  etc:   [ (t)=>`${t}도 있으니 필요하실 때 편하게 쓰세요.`,
+           (t)=>`${t}도 있습니다. 궁금하시면 한 번 보고 가셔도 됩니다.` ],
+};
+function factSentence(t, v = 0){
+  const kind = /\d+\s*(대|종|개)/.test(t) ? "count"
+             : /존|룸|실$|실이|실도/.test(t) ? "room"
+             : /무료/.test(t) ? "free"
+             : /PT|피티|상담/.test(t) ? "pt" : "etc";
+  const list = FACT_GOOD[kind];
+  return list[Math.abs(v) % list.length](t);
 }
-const RP_FACT_FRAME = [ t => factSentence(t),
-                        t => `그런 분들이 많으셔서 ${factSentence(t)}`,
-                        t => `참고로 ${factSentence(t)}` ];
+const RP_FACT_FRAME = [ (t, v) => factSentence(t, v),
+                        (t, v) => `그런 분들이 많으셔서 ${factSentence(t, v)}`,
+                        (t, v) => `참고로 ${factSentence(t, v)}` ];
 
 /* 주제마다 어울리는 사실이 다르다. 가격 이야기에 에어컨 대수를 붙이면
    읽는 사람은 "그래서?"가 된다. 실제로 그렇게 나왔다.
@@ -3099,6 +3112,7 @@ function rpFactPool(said, review){
    "완초자 (초보자) PT 무료까지" 처럼 읽힌다. 문장에 넣을 만하게 다듬는다. */
 function tidyFact(t){
   return String(t)
+    .replace(/^\s*각종\s*/, "")            // 각종 유산소 머신 21대 → 유산소 머신 21대
     .replace(/\s+\(/g, "(")               // 완초자 (초보자) → 완초자(초보자)
     .replace(/([가-힣])(\d)/g, "$1 $2")   // 웨이트머신100종 → 웨이트머신 100종
     .replace(/\s{2,}/g, " ").trim();
@@ -3161,22 +3175,41 @@ function firstEnd(text){
   return a.length ? endOf(a[0]) : "";
 }
 
+/* 사실의 종류. 같은 종류를 연달아 내면 좋은 점 문장까지 닮아서 목록처럼 읽힌다. */
+function factKind(t){
+  return /\d+\s*(대|종|개)/.test(t) ? "count"
+       : /존|룸|실$|실이|실도/.test(t) ? "room"
+       : /무료/.test(t) ? "free"
+       : /PT|피티|상담/.test(t) ? "pt" : "etc";
+}
+/* 앞에서 이미 사실을 한 줄 냈는지 - 좋은 점 문장으로 알아본다 */
+const SAID_FACT = /기다렸다가 쓰시는|순서 기다릴|서성이실|눈치 볼 일 없이|따로 빼 뒀|따로 내시는 건 없|추가 비용은 없|막히는 게 생기면|도움받으실/;
+
 function rpFactLine(i, said, topicKey, review){
   const pool = rpFactPool(said, review);
   if(!pool.length) return "";
   const fit = TOPIC_FACT[topicKey];
   const near = fit ? pool.filter(t => fit.test(t)) : [];
-  const list = near.length ? near : pool;
+  let list = near.length ? near : pool;
+  /* 두 번째 사실은 앞엣것과 다른 종류로 고른다. 없으면 그냥 간다 - 없는 것보다 낫다. */
+  if(SAID_FACT.test(said)){
+    const kinds = new Set(pool.filter(t => said.includes(tidyFact(t))).map(factKind));
+    const other = list.filter(t => !kinds.has(factKind(t)));
+    if(other.length) list = other;
+  }
   const t = tidyFact(list[i % list.length]);
   /* 바로 앞 문장과 어미가 겹치지 않는 틀을 고른다.
      "…나눠 두었습니다. …갖춰 두었습니다." 가 이어지면 읽는 사람이 바로 안다. */
   const prev = lastEnd(said);
-  for(let k = 0; k < RP_FACT_FRAME.length; k++){
-    const cand = RP_FACT_FRAME[(i + k) % RP_FACT_FRAME.length](t);
+  /* "그런 분들이 많으셔서"는 앞 문장이 사람 얘기일 때만 맞는다.
+     이미 사실을 한 줄 낸 뒤에 또 붙이면 받을 앞말이 없어 어색해진다. */
+  const frames = SAID_FACT.test(said) ? [RP_FACT_FRAME[0]] : RP_FACT_FRAME;
+  for(let k = 0; k < frames.length; k++){
+    const cand = frames[(i + k) % frames.length](t, i + k);
     /* 앞 문장과 부딪히는 것은 이 덩어리의 첫 문장이다 */
     if(!prev || firstEnd(cand) !== prev) return cand;
   }
-  return RP_FACT_FRAME[i % RP_FACT_FRAME.length](t);
+  return frames[i % frames.length](t, i);
 }
 
 function replyFor(review, o, i = 0, used = new Set(), opt = {}){
@@ -3289,7 +3322,17 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
     /* 3번 - 짧게. 반응은 1번 몫이라 빼고, 답 한 줄과 사실 한 줄만 남긴다. */
     const fact = rpFactLine(i, [hello, line].join(" "), key, review);
     /* 답도 사실도 없으면 빈 껍데기가 된다. 그때는 반응이라도 남긴다. */
-    parts = (line || fact) ? [hello, line, fact, bye] : [hello, echo, bye];
+    /* 길게를 고르셔도 3번만 191자로 멈춰 있었다 - 길이 설정이 안 먹는 답글이 하나
+       있으면 사장님은 그걸 고장으로 보신다. 사실을 한 줄 더 얹는다.
+       1번의 "한 걸음 더"나 2번의 RP_MORE 를 빌리지 않아야 셋이 안 겹친다. */
+    /* 짧게와 중간이 글자 하나까지 같았다. 사실 줄이 하나뿐이라 늘 자리가 같았기 때문이다.
+       길이마다 사실을 한 줄씩 더 얹는다. 1번의 "한 걸음 더"나 2번의 RP_MORE 를
+       빌리지 않아야 셋이 안 겹치므로, 여기서는 사실만 더한다. */
+    const fact2 = len === "short" ? ""
+      : rpFactLine(i + 1, [hello, line, fact].join(" "), key, review);
+    const fact3 = len === "long"
+      ? rpFactLine(i + 2, [hello, line, fact, fact2].join(" "), key, review) : "";
+    parts = (line || fact) ? [hello, line, fact, fact2, fact3, bye] : [hello, echo, bye];
   }
   /* 짧게를 고르셔도 알맹이는 남겨야 한다. 1번은 리뷰에 답하는 문장을,
      2·3번은 우리 사실 한 줄을 남긴다. 셋 다 같은 문장만 남으면 짧게가
@@ -3398,7 +3441,9 @@ function replyAudit(text, review, o, star = 5){
         note: bye ? "" : "끝맺음이 없습니다 - 다시 오시라는 말이나 덕담으로 닫으세요" };
     })(),
     { t:"손님이 쓴 말을 되받았다", ok: echoed, note: echoed ? "" : "리뷰 내용이 안 들어갔습니다" },
-    { t:"길이가 적당하다 (80~400자)", ok: n >= 80 && n <= 400, note: `${n}자` },
+    /* 상한을 400에서 500으로 올렸다. 정성껏 쓴 답글은 그보다 길어지는데,
+       우리 잣대가 그걸 "너무 길다"고 잡으면 안 된다. */
+    { t:"길이가 적당하다 (80~500자)", ok: n >= 80 && n <= 500, note: `${n}자` },
     { t:"네이버 금지문자 0개", ok: charCheck(t, false).risky.length === 0 },
     /* 같은 어미가 이어지면 조립한 티가 난다. 사람은 문장마다 맺음을 바꾼다.
        "…두었습니다. …두었습니다. …있습니다." 가 실제로 나왔다. */
@@ -4755,7 +4800,12 @@ ${CHAR_RULE}`,
     if(!rv) return PROMPT_REPLY_GENERIC(f);
     const o = getInfo();
     const star = Number($("rp-star")?.value || 5);
-    const len = { short:"3~4문장", medium:"5~6문장", long:"7~8문장" }[$("rp-len")?.value || "medium"];
+    /* 163~189자가 나왔다. 읽는 사람이 "정성껏 썼구나"를 느끼기에는 짧다.
+       문장 수만 적으면 AI 가 짧은 문장으로 개수만 채우므로 글자 수도 같이 준다. */
+    const LEN = { short:{ s:"4~5문장", c:"150~230자" },
+                  medium:{ s:"6~7문장", c:"250~350자" },
+                  long:{ s:"9~10문장", c:"380~480자" } }[$("rp-len")?.value || "medium"];
+    const len = `${LEN.s} (공백 포함 ${LEN.c})`;
     const kw = $("rp-kw")?.value || "";
     const cl = ($("rp-closing")?.value || "").trim();
     const S = SERVICE_WORD[o.type] || "헬스장";
@@ -4841,6 +4891,22 @@ ${OWNER_TONE.length ? toneBlock("답글") : `[이런 답글을 원합니다 - �
 
 ${star <= 2 ? "" : LIVELY}
 
+[우리 가게가 자연스럽게 알려지는 법]
+이 답글은 후기를 써 주신 그분께 드리는 인사입니다. 그런데 나중에 이 플레이스를
+보는 사람도 같이 읽습니다. 그 사람이 "여기 괜찮네" 하고 느끼게 만드는 것은
+광고 문구가 아니라, 그분께 해 드리는 말 안에 우리 사실이 자연스럽게 들어가는 것입니다.
+
+  광고로 읽힘 - 저희는 웨이트머신 100종에 유산소 21대를 갖추고 있습니다.
+  알아서 전해짐 - 붐비는 시간이 걱정이셨다면, 웨이트머신이 100종이라
+                 기다렸다가 쓰시는 일은 거의 없으실 거예요.
+
+뒤쪽은 그분 걱정에서 출발했는데 결과적으로 우리 규모가 전해졌습니다.
+읽는 사람은 광고를 본 게 아니라 손님을 챙기는 가게를 본 것입니다. 그게 제일 센 홍보입니다.
+
+분량도 그래서 중요합니다. 세 줄짜리 답글은 성의로 읽히지 않습니다.
+위에 적힌 길이를 채우되, 채우려고 같은 말을 늘이지는 마시고
+그분께 해 드릴 말을 하나 더 찾으세요.
+
 [반드시 지킬 것]
 1. 이 리뷰에만 할 수 있는 말을 하세요. 어느 리뷰에 붙여도 말이 되는 문장이면 실패입니다.
 1-1. "감사합니다" 또는 "고맙습니다"가 앞의 두 문장 안에 반드시 한 번 들어가야 합니다.
@@ -4854,7 +4920,9 @@ ${star <= 2 ? "" : LIVELY}
 3. 리뷰에 사람 이름(트레이너, 실장, 선생님)이 나오면 그 이름을 그대로 부르고, 전달하겠다고 하세요.
 4. 아래 [답글에 쓸 수 있는 사실]에서 하나는 꼭 넣으세요. 다만 위 [따뜻하면서 우리도
    보여주는 법]의 순서를 지키세요 - 그분 마음을 먼저 알아준 다음에 붙입니다.
-   두 개 넘게 넣으면 나열이 되어 안내판이 됩니다. 하나면 충분합니다.
+   두 개까지 쓰셔도 됩니다. 다만 나란히 붙이면 안내판이 되니, 사이에 그분 얘기가
+   한 문장은 있어야 합니다. 하나는 그분이 리뷰에 쓴 것과 이어지는 것으로,
+   다른 하나는 앞으로 겪으실 만한 것으로 고르세요.
    같은 값이면 숫자나 고유한 이름이 붙은 것을 고르세요. "24시간 운영", "주차 가능"은
    옆 가게도 그대로 씁니다. "유산소 머신 21대"는 이 집만 쓸 수 있는 문장입니다.
 4-2. 여성전용 공간은 리뷰에 성별 단서가 있을 때만 권하세요. 단서가 없으면 남성 회원일 수 있고,
@@ -4868,6 +4936,8 @@ ${star <= 2 ? "" : LIVELY}
 4-1. 아래 문장들은 쓰지 마세요. 어느 헬스장에나 그대로 붙는 말이라 읽는 사람이 아무것도 못 얻습니다.
    - 회원분들의 신뢰 덕분입니다 / 더 좋은 환경을 만들겠습니다
    - 건강관리를 함께하겠습니다 / 앞으로도 보답하겠습니다 / 언제든지 문의해 주세요 (이 말만 있는 경우)
+   - "함께하겠습니다"로 끝나는 문장 전부. "목표 이루시는 데 저희가 함께하겠습니다"도 여기 듭니다.
+     무엇을 어떻게 함께하는지가 없으면 그냥 소리입니다.
    판별법은 하나입니다. 그 문장에서 우리 가게 이름을 빼고 다른 헬스장 이름을 넣어도 말이 되면 실패입니다.
 5. 그분이 앞으로 겪을 만한 불편 하나를 먼저 챙기세요. 붐비는 시간대 / 오시는 길과 주차 /
    기구 쓰는 순서 / 몸이 안 따라주는 날 - 리뷰와 자연스럽게 이어지는 하나만 고르세요.
