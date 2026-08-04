@@ -3012,7 +3012,10 @@ function rpKwLine(kw, o){
   if(!kw) return "";
   /* 끝인사와 겹치면 "말씀해 주세요"가 한 답글에 두 번 나온다.
      그래서 부탁이 아니라 고마움을 적는다. 검색어는 그 안에 들어간다. */
-  return `${kw} 여러 곳 중에 여기를 골라 주신 것, 늘 고맙습니다.`;
+  /* 이 문장이 그 답글의 세 번째 "감사"가 되고 있었다.
+     인사에서 한 번, 반응에서 한 번 했는데 여기서 또 하면 성의가 아니라 습관으로 읽힌다.
+     고마움 대신, 고르신 분이 마땅히 누리셔야 할 것을 적는다. */
+  return `${kw} 여러 곳 중에 여기를 골라 주신 만큼, 편하게 쓰시는 게 맞습니다.`;
 }
 
 /* 길게 고르셨을 때 한 문장 더. 빈말이 아니라 다음에 오실 이유가 되는 말로 둔다. */
@@ -3230,8 +3233,11 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
   const tail = t => naverSafe(oneTic(oneBang(dedupThanks([t, closing].filter(Boolean).join(" ")).replace(/\s+/g, " ").trim())));
 
   if(star <= 2){
+    /* 사과하는 자리에 "^&^"가 붙으면 그 답글이 원래 문제보다 더 큰 문제가 된다. */
     const r = lowReply(review, N, i);
-    return { topics: r.topics, text: tail(r.text) };
+    const low = t => naverSafe(dedupThanks([t, closing === OWNER_SIGN ? "" : closing]
+      .filter(Boolean).join(" ")).replace(/\s+/g, " ").trim());
+    return { topics: r.topics, text: low(r.text) };
   }
 
   const scored = replyTopics(review, used);
@@ -3296,12 +3302,16 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
        3번  답 + 사실 하나            (짧게 - 반응은 1번에 맡긴다) */
   let parts;
   if(i % 3 === 0){
+    /* "다이어트를 위해 재등록" 리뷰에서 재등록만 받고 다이어트를 흘렸다.
+       읽는 분은 "내가 쓴 걸 반만 읽었네" 싶어진다.
+       두 번째 주제는 "답"이 아니라 "반응"으로 받는다 - 답은 2번 답글 몫이라 안 겹친다. */
+    const react2 = t2 ? replyEcho(review, t2, i) : "";
     const second = t1?.more || "";
-    const f1 = rpFactLine(i, [hello, echo, line, second].join(" "), key, review);
+    const f1 = rpFactLine(i, [hello, echo, line, react2, second].join(" "), key, review);
     const f2 = len === "long"
-      ? (rpFactLine(i + 1, [hello, echo, line, second, f1].join(" "), key, review) || pickV(RP_MORE))
+      ? (rpFactLine(i + 1, [hello, echo, line, react2, second, f1].join(" "), key, review) || pickV(RP_MORE))
       : "";
-    parts = [hello, echo, line, second, f1, f2, bye];
+    parts = [hello, echo, line, react2, second, f1, f2, bye];
   } else if(i % 3 === 1){
     /* 2번 - 손님이 쓴 얘기를 넓게 받는다. 한 리뷰에 다이어트, 재등록, 혼자,
        24시가 다 들어 있는데 하나만 답하면 읽은 티가 안 난다.
@@ -3516,7 +3526,10 @@ function replyAudit(text, review, o, star = 5){
       /* 숫자 없이 새는 것도 있다. AI 가 "합리적인 가격으로 시작하신 것도 좋지만"이라고
          썼는데 그 리뷰에는 가격 얘기가 한 줄도 없었다. 손님이 안 한 말을 했다고
          돌려주는 셈이라, 받는 분은 "내가 그런 말 했나" 하게 된다. */
-      const MONEY = /가격|저렴|합리적|가성비|비용|부담 ?없|싸(게|고)/;
+      /* "비용"이나 "부담 없"까지 잡으면 우리 사실 문장이 걸린다 -
+         "기구필라테스 무료이용이라 추가 비용은 없습니다"는 지어낸 게 아니다.
+         손님 사정으로 값을 말하는 표현만 잡는다. */
+      const MONEY = /저렴|합리적인 ?가격|가성비|가격 ?부담|부담 ?없는 ?가격|싸게|가격이 좋/;
       const moneyMade = MONEY.test(t) && !MONEY.test(String(review || ""));
       const all = [...made, ...(moneyMade ? ["가격 얘기"] : [])];
       return { t:"지어낸 숫자·행사가 없다", ok: all.length === 0,
@@ -3581,7 +3594,11 @@ ${replyFor("", o, 0, new Set(), { star:2, closing: rpClosing() }).text}
 * '감사합니다' 한 줄은 효과가 없습니다. 손님이 읽느라 머무는 시간이 점수라서, 2~3줄로 시설이나 프로그램을 언급해야 의미가 있습니다.`;
 }
 
-const rpClosing = () => ($("rp-closing")?.value || "").trim();
+/* 사장님 답글은 "^&^"로 끝난다. AI 는 말투 예시에서 그걸 보고 붙이는데
+   무료 답글에는 안 붙어서, 같은 가게 글인데 끝이 달랐다.
+   끝인사 칸을 비워 두시면 이걸 쓴다. 다른 걸 적으시면 그게 이긴다. */
+const OWNER_SIGN = "^&^";
+const rpClosing = () => ($("rp-closing")?.value || "").trim() || OWNER_SIGN;
 
 /* 답글에 심을 키워드 목록 — 목표 키워드와 등록된 대표키워드에서 고른다 */
 function renderRpKw(){
