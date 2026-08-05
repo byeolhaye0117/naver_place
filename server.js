@@ -1292,6 +1292,87 @@ function introMaterial(data, jsons) {
 }
 
 /* ============================================================================
+ * 네이버 검색광고 API — 월 검색량과 연관키워드
+ *
+ * 우리가 은코치에 확실히 진 자리가 여기였다. 키워드를 고르라고 하면서
+ * "그 말을 한 달에 몇 명이 검색하는지"를 못 보여줬다. 근거 없이 고르라는 것과 같다.
+ *
+ * 광고주 가입(무료)만 하면 열리는 API 다. 사장님이 렌더에 값을 넣으시면 그때부터 돈다.
+ * 서명은 HMAC-SHA256 이고, 서명 대상은 "타임스탬프.메서드.경로" 다 (쿼리는 뺀다).
+ * ========================================================================== */
+const SEARCHAD_HOST = 'https://api.searchad.naver.com';
+const searchAdKeys = () => ({
+  key:  String(process.env.NAVER_AD_API_KEY  || '').trim(),
+  sec:  String(process.env.NAVER_AD_SECRET   || '').trim(),
+  cust: String(process.env.NAVER_AD_CUSTOMER || '').trim(),
+});
+/* 값은 내보내지 않는다. 들어왔는지만 알려준다 - 그래야 화면에서 확인할 수 있다. */
+function searchAdStatus() {
+  const k = searchAdKeys();
+  const have = { apiKey: Boolean(k.key), secret: Boolean(k.sec), customer: Boolean(k.cust) };
+  const n = Object.values(have).filter(Boolean).length;
+  return { ...have, ready: n === 3,
+    note: n === 3 ? '세 개 다 들어왔습니다'
+        : n === 0 ? '아직 없습니다'
+        : `${3 - n}개가 빠졌습니다 - 하나라도 없으면 안 돕니다` };
+}
+function searchAdSign(ts, method, p, secret) {
+  return crypto.createHmac('sha256', secret).update(`${ts}.${method}.${p}`).digest('base64');
+}
+async function searchAdGet(p, params) {
+  const k = searchAdKeys();
+  if (!k.key || !k.sec || !k.cust) return { ok: false, error: '검색광고 키가 설정되어 있지 않습니다.' };
+  const ts = String(Date.now());
+  const url = `${SEARCHAD_HOST}${p}?${new URLSearchParams(params)}`;
+  try {
+    const r = await fetch(url, { headers: {
+      'X-Timestamp': ts,
+      'X-API-KEY': k.key,
+      'X-Customer': k.cust,
+      'X-Signature': searchAdSign(ts, 'GET', p, k.sec),
+    } });
+    const body = await r.text();
+    if (!r.ok) {
+      /* 네이버가 주는 오류 메시지를 그대로 돌려주면 무엇이 틀렸는지 사장님이 아신다.
+         다만 우리 키 값은 어디에도 안 싣는다. */
+      let msg = body.slice(0, 200);
+      try { msg = JSON.parse(body).title || JSON.parse(body).message || msg; } catch {}
+      return { ok: false, status: r.status, error: msg };
+    }
+    return { ok: true, data: JSON.parse(body) };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+/* 한 번 눌러 보고 실제로 도는지 알려준다 */
+async function searchAdTest(kw) {
+  const st = searchAdStatus();
+  if (!st.ready) return { ok: false, searchad: st, error: st.note };
+  const r = await searchAdGet('/keywordstool',
+    { hintKeywords: String(kw).replace(/\s+/g, ''), showDetail: '1' });
+  if (!r.ok) {
+    /* 키가 틀린 것과 아예 못 나간 것은 다른 문제다. 둘을 같은 말로 안내하면
+       사장님이 멀쩡한 키를 지우고 다시 발급받으신다. 먼저 갈라 놓는다. */
+    const net = /allowlist|egress|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|getaddrinfo/i
+      .test(String(r.error || ''));
+    const hint = net ? '키 문제가 아니라 서버가 네이버로 나가지 못한 것입니다. 키는 그대로 두세요.'
+               : r.status === 401 ? '액세스라이선스나 비밀키가 안 맞습니다. 앞뒤 공백이 붙었는지도 보세요.'
+               : r.status === 403 ? '고객 ID가 안 맞거나 API 사용 신청이 안 된 상태입니다.'
+               : r.status === 429 ? '오늘 호출 한도를 넘었습니다. 잠시 뒤 다시 해 보세요.'
+               : '';
+    return { ok: false, searchad: st, status: r.status, error: r.error, network: net, hint };
+  }
+  const list = r.data?.keywordList || [];
+  const num = v => Number(String(v).replace(/[^0-9]/g, '')) || 0;
+  const top = list.slice(0, 5).map(x => ({
+    kw: x.relKeyword,
+    pc: num(x.monthlyPcQcCnt), mo: num(x.monthlyMobileQcCnt),
+    comp: x.compIdx || '',
+  }));
+  return { ok: true, searchad: st, asked: kw, got: list.length, top };
+}
+
+/* ============================================================================
  * 순위 조회
  * ========================================================================== */
 
@@ -1930,10 +2011,20 @@ const server = http.createServer(async (req, res) => {
         keySource: KEY_SOURCE,
         ai: Boolean(process.env.ANTHROPIC_API_KEY),
         aiStatus: aiStatus(),   // 오늘 몇 번 썼는지 - 화면에 보여준다
+        /* 검색광고 키가 들어왔는지. 값은 절대 내보내지 않는다 - 있는지 없는지만.
+           세 개가 다 있어야 쓸 수 있어서 하나씩 표시한다. 하나만 빠져도 안 돈다. */
+        searchad: searchAdStatus(),
         /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —
            키를 알려주면 키를 두는 의미가 없다. 이 PC 화면에서만 보인다. */
         lanUrl: (ip && isLocal(req)) ? `http://${ip}:${PORT}/#k=${KEY}` : null,
       });
+    }
+
+    /* 넣으신 키가 실제로 도는지 한 번 눌러 본다. "환경변수에 들어갔다"와
+       "네이버가 받아 준다"는 다른 얘기다 - 오타 하나면 조용히 안 돈다.
+       응답에 키 값은 한 글자도 담지 않는다. 됐는지 여부와 받아온 개수만. */
+    if (u.pathname === '/api/searchad-test') {
+      return sendJson(res, 200, await searchAdTest(q.get('kw') || '헬스장'));
     }
 
     if (u.pathname === '/api/place') {
