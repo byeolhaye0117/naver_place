@@ -1210,6 +1210,21 @@ function introMaterial(data, jsons) {
   }
   for (const n of grab('FsasReview')) push(blogs, n.contents || n.body || n.description, 120, 3000);
 
+  /* 답글이 아직 안 달린 리뷰. VisitorReview 노드에 reply 가 통째로 실려 있어서
+     본문이 비었는지만 보면 바로 안다(reply 자체는 null 이 아니라 껍데기로 온다).
+     사장님이 네이버를 한 장씩 넘기며 밀린 것을 찾으실 필요가 없다 —
+     이건 도구가 대신할 수 있는 일이고, 실제로 20개 중 4개가 비어 있었다. */
+  const openReviews = grab('VisitorReview')
+    .filter(n => !String(n?.reply?.body || '').trim())
+    .map(n => ({
+      body: String(n?.body || '').replace(/\s+/g, ' ').trim(),
+      rating: Number(n?.rating) || null,
+      date: String(n?.created || n?.visited || '').trim(),
+    }))
+    .filter(x => x.body.length >= 10)
+    .filter((x, i, a) => a.findIndex(y => y.body === x.body) === i)
+    .slice(0, 12);
+
   /* 블로그 후기의 주소가 여기 그대로 들어 있다. 손으로 붙여넣으실 필요가 없다.
      본문까지 지금 받아 오면 수집이 그만큼 느려지므로, 주소만 넘기고
      본문은 화면에서 버튼을 누를 때 받는다. */
@@ -1266,6 +1281,7 @@ function introMaterial(data, jsons) {
     feeds,
     blogLinks,
     reviews: reviews.slice(0, 20),
+    openReviews,
     blogs: blogs.slice(0, 5),
     /* 리뷰 문장에서 손님이 실제로 쓴 말을 센다. 프리셋 페르소나 대신
        "우리 손님이 무엇 때문에 왔다고 쓰는가"를 근거로 쓰기 위해서다. */
