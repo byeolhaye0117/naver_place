@@ -2824,13 +2824,17 @@ const REPLY_TOPIC = [
      "다이어트를 위해 재등록하게 되었습니다"를 읽고도 그 말을 못 했다.
      맨 앞에 둔다 - 다른 주제와 같이 걸리면 이쪽을 먼저 받는 게 맞다. */
   { key:"again", label:"재등록·재방문", hit:["재등록","다시 등록","또 등록","재결제","연장","다시 다니","돌아왔","재방문","오랜만에 다시"],
-    alt:`이렇게 다시 뵙게 되어 저희도 반갑습니다.`,
+    /* "저희도"를 뺐다. 인사말, 시설 문장, 마무리에 이미 "저희"가 들어가서
+       이 한 마디가 네 번째가 됐다. 반가운 건 주어를 안 써도 전해진다. */
+    alt:`이렇게 다시 뵙게 되어 반갑습니다.`,
     more:"이번엔 어떤 목표를 잡고 계신지 편하게 말씀해 주시면 거기 맞춰 같이 짜 드릴게요.",
     /* "다시 찾아 주신 것이 저희한테는 제일 큰 칭찬이에요" 처럼 빙 둘러 말하면
        고마움이 우리 얘기가 된다. 바로 고맙다고 하는 편이 낫다 - 사장님 말씀이다.
        인사말과 "감사합니다"가 겹치는 문제는 인사 쪽을 짧게 해서 푼다(아래 hello). */
-    echo:["다시 찾아 주셨다니 정말 반가웠어요.",
-          "이렇게 다시 뵙게 되어 정말 반갑습니다."],
+    /* 공감 문장에 손님이 쓴 말이 없으면, 뒤에서 안전망이 통조림 한 줄을 도로 끼워 넣는다.
+       그러면 문단 2가 다시 짧은 문장 더미가 된다 - 공감 문장이 그 말을 직접 받아야 한다. */
+    echo:["재등록해 주셨다니 정말 반가운 소식이에요.",
+          "이렇게 다시 등록해 주시니 정말 반갑습니다."],
     /* 이 주제 문장에는 손님이 쓴 낱말이 하나도 없었다. 그래서 1번 답글이
        읽었다는 표시를 남기려고 2번 주제 문장을 빌려 갔고, 1번과 2번이 반쯤 같아졌다.
        손님이 "재등록"이라고 쓰셨으면 그 말을 그대로 받는다. 빌릴 일이 없어진다. */
@@ -2939,11 +2943,19 @@ const RP_GOAL = {
   price: "여러 곳 비교해 보시고 ", clean: "시설 꼼꼼히 보시고 ",
   kind:  "", park: "", "": "",
 };
-/* 첫 문단. {g}는 위의 목적, {n}은 업체명. 셋을 돌려 쓴다. */
+/* 첫 문단. {g}는 위의 목적, {n}은 업체명, {k}는 검색어.
+   견본은 "다이어트 목표로 쌍용동 헬스장 찾으시다가 저희 MTO 피트니스 쌍용점 찾아주시고"
+   처럼 검색어를 첫 문장에 자연스럽게 실어 나른다 - 손님이 실제로 그렇게 찾아오셨기
+   때문에 어색하지 않고, 답글도 플레이스 안의 글이라 검색과 맞물린다.
+   억지로 넣는 것과 다르다. 검색어가 없으면 예전 모양 그대로 간다. */
 const RP_HI3 = [
-  (n, g) => `고객님, 안녕하세요. ${g}저희 ${n} 찾아주시고 이렇게 좋은 후기까지 남겨주셔서 감사합니다`,
-  (n, g) => `고객님, 안녕하세요! ${g}저희 ${n}에 등록해주시고, 이렇게 후기까지 남겨주셔서 정말 감사합니다`,
-  (n, g) => `고객님, 안녕하세요. ${g}저희 ${n}${eulReul(n)} 찾아주셔서 감사합니다`,
+  (n, g, k) => k
+    ? `고객님, 안녕하세요. ${g}${k} 찾으시다가 저희 ${n} 찾아주시고 이렇게 좋은 후기까지 남겨주셔서 감사합니다`
+    : `고객님, 안녕하세요. ${g}저희 ${n} 찾아주시고 이렇게 좋은 후기까지 남겨주셔서 감사합니다`,
+  (n, g, k) => k
+    ? `고객님, 안녕하세요! ${g}${k} 중에 저희 ${n}${eulReul(n)} 골라 주시고, 이렇게 후기까지 남겨주셔서 정말 감사합니다`
+    : `고객님, 안녕하세요! ${g}저희 ${n}에 등록해주시고, 이렇게 후기까지 남겨주셔서 정말 감사합니다`,
+  (n, g, k) => `고객님, 안녕하세요. ${g}저희 ${n}${eulReul(n)} 찾아주셔서 감사합니다`,
 ];
 /* 이모지는 첫 문단 끝과 마지막 문단 끝에 하나씩만. 문장 중간에 흩뿌리면 산만해진다.
    답글 칸은 이모지를 받는다(replySafe 참고). */
@@ -3239,14 +3251,20 @@ const FACT_END = {
 /* 여는 말도 돌려 쓴다. 셋이 다 "그래서 저희 매장은"으로 열면 또 복붙으로 보인다. */
 /* "그런 마음 아니까 저희도 유산소 머신 21대도 …" 처럼 조사가 겹치면 안 된다.
    뒤에 오는 것이 늘 "○○도" 라서, 여는 말은 그 앞에 자연스럽게 붙는 것만 쓴다. */
-const FACT_OPEN = [`그래서 저희 매장은 `, `그래서 저희는 `, `그래서 이 부분은 특히 신경 써서, `];
-function factFlow(list, v = 0){
+/* "그래서 이 부분은 특히 신경 써서, …" 는 앞에 무엇이 왔느냐에 따라 가리키는 것이
+   모호해진다. 어떤 문장 뒤에 붙어도 말이 되는 것만 남긴다. */
+const FACT_OPEN = [`그래서 저희 매장은 `, `그래서 저희는 `, `저희 매장은 `];
+/* 시설 문장을 두 번째로 낼 때. "그래서"를 두 번 쓰면 앞뒤가 어긋난다.
+   견본도 두 번째 문장은 "그리고 말씀하신 것처럼 …" 으로 잇는다. */
+const FACT_OPEN2 = [`여기에 `, `그리고 `, `거기다 `];
+function factFlow(list, v = 0, second = false){
   const t = (list || []).map(tidyFact).filter(Boolean);
   if(!t.length) return "";
   const mids = t.map(x => FACT_MID[factKind(x)](x));
   const last = factLink(mids.pop());
-  return FACT_OPEN[Math.abs(v) % FACT_OPEN.length]
-    + [...mids, last].join(", ") + " " + FACT_END[factKind(t[t.length - 1])];
+  const open = second ? FACT_OPEN2[Math.abs(v) % FACT_OPEN2.length]
+                      : FACT_OPEN[Math.abs(v) % FACT_OPEN.length];
+  return open + [...mids, last].join(", ") + " " + FACT_END[factKind(t[t.length - 1])];
 }
 function factSentence(t, v = 0){
   const list = FACT_GOOD[factKind(t)];
@@ -3373,7 +3391,7 @@ const SAID_FACT = /기다렸다가 쓰시는|순서 기다릴|서성이실|눈�
 /* 시설을 몇 개 골라 한 문장으로 엮는다. 예전에는 한 번에 하나씩 뽑아
    조건절 문장으로 만들어 쌓았는데, 그러면 같은 틀이 반복돼 목록처럼 읽힌다.
    견본은 여러 시설을 한 문장에 엮고 마지막에 좋은 점 하나로 닫는다. */
-function rpFactFlow(n, said, topicKey, review, wide = false, v = 0){
+function rpFactFlow(n, said, topicKey, review, wide = false, v = 0, second = false){
   const pool = rpFactPool(said, review);
   if(!pool.length) return "";
   const fit = TOPIC_FACT[topicKey];
@@ -3387,8 +3405,17 @@ function rpFactFlow(n, said, topicKey, review, wide = false, v = 0){
     if(kinds.has(factKind(t))) continue;
     kinds.add(factKind(t)); picked.push(t);
   }
+  /* 시설 문장이 둘일 때 끝맺음까지 같으면 쌍둥이가 된다 - 실제로 이렇게 나왔다.
+       … 마련해 두어서 따로 내시는 것 없이 편하게 써 보시면 됩니다.
+       … 마련해 두어서 따로 내시는 것 없이 편하게 써 보시면 됩니다.
+     끝맺음은 마지막에 든 시설의 종류로 정해지므로, 앞 문장이 이미 쓴 끝맺음이면
+     아직 안 쓴 종류를 맨 뒤로 돌린다. */
+  if(picked.length && said.includes(FACT_END[factKind(picked[picked.length - 1])])){
+    const fresh = picked.findIndex(x => !said.includes(FACT_END[factKind(x)]));
+    if(fresh >= 0) picked.push(picked.splice(fresh, 1)[0]);
+  }
   /* 종류가 모자라면 남는 자리는 비워 둔다 - 억지로 채우면 다시 목록이 된다 */
-  return factFlow(picked, v);
+  return factFlow(picked, v, second);
 }
 
 /* wide - 주제에 딱 맞는 것으로 좁히지 않는다.
@@ -3511,7 +3538,9 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
   /* 첫 문단. 무엇 때문에 오셨는지를 받고 고맙다고 한 다음 이모지 하나로 닫는다.
      예전 인사말(RP_HELLO)은 "안녕하세요 회원님, ○○입니다"로 시작해서 어느 리뷰에나
      그대로 붙었다. 사장님이 보여 주신 답글은 첫 줄부터 이분 얘기로 시작한다. */
-  const hello = `${RP_HI3[i % RP_HI3.length](N, RP_GOAL[key] ?? "")} ${RP_EMO1[i % RP_EMO1.length]}`;
+  /* 검색어는 첫 문장에 한 번만 싣는다. 업체명에 이미 들어 있으면 두 번이 되므로 뺀다. */
+  const hiKw = (kw && !N.replace(/\s/g, "").includes(kw.replace(/\s/g, ""))) ? kw : "";
+  const hello = `${RP_HI3[i % RP_HI3.length](N, RP_GOAL[key] ?? "", hiKw)} ${RP_EMO1[i % RP_EMO1.length]}`;
   const line  = t1 ? t1.line(o, review) : "";
   const bye   = RP_BYE[i % RP_BYE.length];
   /* 여기까지 쓴 말을 넘겨서 같은 것을 두 번 말하지 않게 한다 */
@@ -3532,29 +3561,55 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
      나머지 둘에 나눠 준 재료는 그냥 버려지는 셈이었다.
      은코치도 답글 하나만 내놓는다. 하나만 만들되 재료를 다 쓴다. */
   if(opt.one){
-    /* 예전에는 두 번째 주제를 "반응"으로 받고 그 주제의 "답"은 다른 답글에 맡겼다.
-       하나만 만들면 둘 다 여기 들어와서 같은 말을 두 번 하게 된다.
-         거기다 혼자 조용히 운동하고 싶으시다는 말씀 정말 공감돼요.
-         혼자 조용히 하시는 분이 많거든요.
-       두 번째 주제는 "답" 하나로만 받는다. 반응은 첫 주제 몫이다. */
-    const l2 = t2 ? RP_ALSO[(t2.key.length + i) % RP_ALSO.length] + t2.line(o, review) : "";
-    const l3 = t3 ? RP_JOIN[0] + t3.line(o, review) : "";
-    /* 길이는 문장을 몇 개 얹느냐가 아니라 무엇까지 얹느냐로 정한다.
-       하나만 만들면서 재료를 다 밀어 넣었더니 "중간"인데 451자가 나왔다. */
-    const wide2 = len === "long" ? [l2, l3, t1?.more || ""]
-                : len === "medium" ? [l2]
-                : [];
-    const f1 = rpFactFlow(len === "short" ? 1 : len === "long" ? 3 : 2,
-      [hello, echo, line, ...wide2].join(" "), key, review, false, i);
+    /* ── 문장 수를 줄이고 한 문장이 실어 나르는 내용을 늘린다 ──────────
+       개수를 셋에서 하나로 줄였는데도 "퀄리티는 그대로"라는 말씀을 들었다.
+       세어 보니 맞는 말이었다.
+         우리 문단 2   6문장 · 문장 평균 39자
+         견본 문단 2   3문장 · 문장 평균 74자
+       통조림 한 줄씩 쌓아 올려서 그렇다. "재등록이라 수월하실 거예요 /
+       기구도 시간대도 이미 아시니까요 / 이번엔 어떤 목표를 잡고 계신지" -
+       셋 다 어느 헬스장에나 붙는 말이고, 넷을 붙여 놔도 알맹이는 그대로다.
+
+       견본은 반대다. 짧은 공감 한 줄로 열고, 그다음은 90자짜리 긴 문장 하나에
+       시설 여러 개와 "그래서 뭐가 좋은지"를 통째로 실어 나른다.
+       문장을 쌓는 대신 문장을 채운다. */
+    /* 문장을 줄이다가 리뷰의 다른 주제를 통째로 놓쳤다. 한 리뷰에 재등록, 다이어트,
+       혼자 조용히, 24시가 다 들어 있는데 재등록만 받으면 "내가 쓴 걸 반만 읽었네"가 된다.
+       짧게 쓰는 것과 읽은 티를 내는 것은 둘 다 해야 한다 -
+       공감은 짧게 두 줄, 시설은 길게 한 줄. 견본이 그 비율이다. */
+    const e2 = (len !== "short" && t2) ? replyEcho(review, t2, i + 1) : "";
+    const echo2 = e2 ? RP_ALSO[(t2.key.length + i) % RP_ALSO.length] + e2 : "";
+    const flows = [];
+    let said = [hello, echo, echo2].join(" ");
+    /* 짧게는 시설 문장 하나, 중간도 하나(대신 시설 두 개를 엮는다),
+       길게는 두 문장. 문장 개수가 아니라 한 문장의 밀도로 길이를 만든다. */
+    const nFlow = len === "long" ? 2 : 1;
+    const per   = len === "short" ? 1 : 2;
+    for(let k = 0; k < nFlow; k++){
+      const fl = rpFactFlow(per, said, key, review, k > 0, i + k * 2, k > 0);
+      if(!fl) break;
+      flows.push(fl); said += " " + fl;
+    }
+    /* 시설이 없는 가게, 또는 시설과 안 이어지는 주제(친절, 가격)에서는
+       그 주제의 답이 알맹이다. 시설 문장이 없을 때만 데려온다 -
+       둘 다 넣으면 다시 여섯 문장이 된다. */
+    const fill = flows.length ? "" : [line, t1?.alt].filter(Boolean)[0] || "";
     /* 시설도 없고 두 번째 주제도 안 걸리는 리뷰가 있다. 그러면 짧게와 중간이
        글자 하나까지 같아져서 길이 설정이 고장 난 것처럼 보인다.
-       그때는 한 걸음 더 나가는 문장을 중간에도 넣는다 - 그게 유일한 차이다. */
-    if(len === "medium" && !f1 && !wide2.filter(Boolean).length) wide2.push(t1?.more || "");
-    /* 길게도 마찬가지다. 재료가 얇으면 중간과 같아진다. */
-    if(len === "long" && !f1 && wide2.filter(Boolean).length < 2) wide2.push(RP_MORE[i % RP_MORE.length]);
-    parts = [hello, echo, line, ...wide2, f1,
+       그때만 한 걸음 더 나가는 문장을 얹는다 - 재료가 있으면 이건 안 쓴다. */
+    const thin = !flows.length && !echo2;
+    const pad = (len === "medium" && thin) ? (t1?.more || t1?.alt || "")
+              : (len === "long" && thin) ? [t1?.more, RP_MORE[i % RP_MORE.length]].filter(Boolean).join(" ")
+              : "";
+    /* 길게는 한 겹 더. 두 번째 주제의 답이 있으면 그걸 쓰고, 없으면
+       사장님이 짚어 주신 "이번엔 어떤 목표를 잡고 계신지" 를 쓴다. */
+    /* 두 번째 주제는 위에서 공감으로 이미 받았다. 여기서 또 데려오면 겹친다 -
+       세 번째 주제나, 사장님이 짚어 주신 "이번엔 어떤 목표를" 을 쓴다. */
+    const deep = len !== "long" ? ""
+      : (t3 ? RP_JOIN[0] + t3.line(o, review) : (t1?.more || line || ""));
+    parts = [hello, echo, echo2, fill, ...flows, pad, deep,
              len === "long" ? rpKwLine(kw, o) : "", bye];
-  } else if(i % 3 === 0){
+    } else if(i % 3 === 0){
     /* "다이어트를 위해 재등록" 리뷰에서 재등록만 받고 다이어트를 흘렸다.
        읽는 분은 "내가 쓴 걸 반만 읽었네" 싶어진다.
        두 번째 주제는 "답"이 아니라 "반응"으로 받는다 - 답은 2번 답글 몫이라 안 겹친다. */
@@ -3922,7 +3977,11 @@ function renderRpKw(){
   const cur = sel.value;
   sel.innerHTML = `<option value="">안 넣기</option>`
     + list.map(k=>`<option value="${escH(k)}">${escH(k)}</option>`).join("");
-  if(cur && list.includes(cur)) sel.value = cur;
+  /* 예전에는 "안 넣기"가 기본이었다. 그러면 사장님이 매번 고르셔야 하고,
+     안 고르시면 답글이 검색과 아무 상관 없는 글이 된다.
+     답글도 플레이스 안의 글이라 검색어와 맞물리는 재료다. 1순위를 미리 골라 둔다.
+     빼고 싶으시면 "안 넣기"를 고르시면 되고, 한 번 고르신 뒤로는 안 건드린다. */
+  sel.value = (cur && list.includes(cur)) ? cur : (sel.dataset.touched ? "" : (list[0] || ""));
 }
 
 /* 새로 달린 리뷰를 붙여넣으면 그 리뷰에 맞춰 만든다.
@@ -4633,6 +4692,7 @@ $("btn-intro-again")?.addEventListener("click", ()=>{
 $("rp-make")?.addEventListener("click", ()=>{ try{ makePastedReply(); }catch(e){ alert(e.message); } });
 
 /* 별점·길이·키워드·끝인사를 바꾸면 바로 다시 만든다. 버튼을 또 누르게 하지 않는다. */
+$("rp-kw")?.addEventListener("change", e => { e.target.dataset.touched = "1"; });
 ["rp-star","rp-len","rp-kw"].forEach(id => $(id)?.addEventListener("change", ()=>{
   if($("rp-paste")?.value.trim()) { try{ makePastedReply(); }catch{} }
 }));
@@ -5293,7 +5353,13 @@ ${modelBlock()}
 
 [답글의 모양] - 위 견본과 같습니다
 - 1문단: "고객님, 안녕하세요"로 열고, 무엇 때문에 오셨는지 리뷰에서 읽어서 받고, 감사 + 이모지 하나
-- 2문단: 리뷰에 쓰신 얘기에 공감하고, 그 얘기에 붙여서 시설을 소개
+- 2문단: 리뷰에 쓰신 얘기에 공감하고, 그 얘기에 붙여서 시설을 소개.
+  여기가 제일 중요합니다. 짧은 문장을 여러 개 쌓지 마세요 - 조립한 티가 바로 납니다.
+  공감은 한 줄로 짧게 열고, 시설은 여러 개를 한 문장에 엮어서 길게 쓰세요.
+  위 견본을 세어 보시면 문단 2가 두세 문장이고 그중 하나가 90자 안팎입니다.
+  나쁨 - 기구가 많습니다. 공간도 넓습니다. 대기도 적습니다. 편하게 쓰세요.
+  좋음 - 저희 매장은 웨이트실과 프리웨이트실을 아예 공간부터 분리해두었고, 인기 머신도
+        여유 있게 배치해서 기구 기다리다 흐름 끊기는 일 없이 운동하실 수 있답니다.
 - 3문단: 다음에 해 보시면 좋을 것 하나 + 응원 + 이모지 하나
 - 문단 사이에는 빈 줄을 넣으세요. 한 덩어리로 쓰면 같은 글자라도 읽는 맛이 다릅니다.
 - 이모지는 1문단 끝과 3문단 끝에 하나씩만. 문장 중간에 흩뿌리지 마세요.
@@ -5339,6 +5405,7 @@ ${cl ? `- 끝인사: 마지막을 "${cl}" 로 닫아 주세요.` : ""}
 4. 위 [쓸 수 있는 사실] 밖의 숫자, 가격, 행사가 섞이지 않았는가
 5. "함께하겠습니다", "더 좋은 환경을 만들겠습니다" 같은 빈말이 없는가
 6. 문단이 셋이고 사이에 빈 줄이 있는가
+6-1. 문단 2가 짧은 문장 대여섯 개로 되어 있지 않은가 (그러면 조립한 글로 읽힙니다)
 7. 글자 수가 위 길이에 맞는가
 
 [출력] 답글 하나만. 번호, 제목, 머리말, 설명, 마무리 말은 붙이지 마세요.`;
