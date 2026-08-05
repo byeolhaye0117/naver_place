@@ -1344,6 +1344,34 @@ async function searchAdGet(p, params) {
     return { ok: false, error: String(e.message || e) };
   }
 }
+/* 사장님이 "네가 확인해줘"라고 하셨는데 /api/searchad-test 는 접근 키가 있어야 열린다.
+   그래서 키가 없는 상태에서도 "됐다/안 됐다"만 볼 수 있는 자리를 따로 둔다.
+
+   담는 것은 성공 여부와 오류 코드뿐이다. 검색어도, 검색량 숫자도, 키도 안 싣는다.
+   그것까지 열어 두면 남이 사장님 API 한도를 대신 써 버릴 수 있다.
+   열 번에 한 번씩만 실제로 눌러 본다 - health 는 자주 불리는 자리라 매번 부르면
+   그것만으로 하루 한도를 태운다. */
+let SA_PROBE = { at: 0, val: null };
+const SA_PROBE_TTL = 10 * 60 * 1000;
+async function searchAdProbe() {
+  const st = searchAdStatus();
+  if (!st.ready) return null;
+  if (SA_PROBE.val && Date.now() - SA_PROBE.at < SA_PROBE_TTL) return SA_PROBE.val;
+  const r = await searchAdGet('/keywordstool', { hintKeywords: '헬스장', showDetail: '1' });
+  const net = /allowlist|egress|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|getaddrinfo/i
+    .test(String(r.error || ''));
+  const val = r.ok
+    ? { ok: true, note: '네이버가 받아 줍니다. 검색량을 쓸 수 있습니다.' }
+    : { ok: false, status: r.status || 0, network: net,
+        note: net ? '키 문제가 아니라 서버가 네이버로 나가지 못했습니다.'
+            : r.status === 401 ? '액세스라이선스나 비밀키가 안 맞습니다.'
+            : r.status === 403 ? '고객 ID가 안 맞거나 API 사용 신청이 안 된 상태입니다.'
+            : r.status === 429 ? '오늘 호출 한도를 넘었습니다.'
+            : '알 수 없는 오류입니다.' };
+  SA_PROBE = { at: Date.now(), val };
+  return val;
+}
+
 /* 한 번 눌러 보고 실제로 도는지 알려준다 */
 async function searchAdTest(kw) {
   const st = searchAdStatus();
@@ -2013,7 +2041,7 @@ const server = http.createServer(async (req, res) => {
         aiStatus: aiStatus(),   // 오늘 몇 번 썼는지 - 화면에 보여준다
         /* 검색광고 키가 들어왔는지. 값은 절대 내보내지 않는다 - 있는지 없는지만.
            세 개가 다 있어야 쓸 수 있어서 하나씩 표시한다. 하나만 빠져도 안 돈다. */
-        searchad: searchAdStatus(),
+        searchad: { ...searchAdStatus(), live: await searchAdProbe() },
         /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —
            키를 알려주면 키를 두는 의미가 없다. 이 PC 화면에서만 보인다. */
         lanUrl: (ip && isLocal(req)) ? `http://${ip}:${PORT}/#k=${KEY}` : null,
