@@ -459,8 +459,8 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .rp-audit span.y{color:var(--muted)}
 .rp-audit span.n{color:var(--acc-fg);font-weight:700}
 .rp-audit span i{font-style:normal;color:var(--muted);font-weight:500}
-/* 답글마다 점수를 따로 붙인다. 사장님은 셋 중 하나를 골라 실제로 다시는데,
-   첫 번째만 점검하면 나머지 둘은 멀쩡해 보인 채로 올라간다. */
+/* 답글에 점수를 붙인다. 사장님이 그대로 올리시는 글이라,
+   몇 점짜리인지 복사 버튼 옆에서 바로 보여야 한다. */
 .rp-score{font-style:normal;font-weight:800;font-size:11px;padding:1px 7px;border-radius:6px}
 .rp-score.pass{background:var(--ok-bg);color:var(--ok-fg)}
 .rp-score.todo{background:var(--warn-bg);color:var(--warn-fg)}
@@ -1336,7 +1336,8 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <h4>새로 달린 리뷰에 답글 달기 <span class="cnt">붙여넣으면 그 리뷰에 맞춰 만듭니다</span></h4>
         <p class="hint" style="margin:0 0 8px">
           아래 목록은 <b>수집한 과거 리뷰</b>로 만든 것입니다. <b>오늘 달린 리뷰</b>는 여기에 붙여넣으세요.
-          리뷰가 무슨 얘기인지 읽어서 <b>거기에 답하는</b> 답글을 세 가지로 만들어 드립니다.</p>
+          리뷰가 무슨 얘기인지 읽어서 <b>거기에 답하는</b> 답글을 하나 만들어 드립니다.
+          <b>어정쩡한 셋보다 제대로 된 하나</b>가 낫습니다. 마음에 안 드시면 다시 만들기를 누르세요.</p>
         <!-- 답글이 아직 안 달린 리뷰. 수집할 때 VisitorReview 노드의 reply 가
              비어 있는 것만 골라 둔다. 네이버를 한 장씩 넘기며 찾으실 필요가 없다. -->
         <div id="rp-open" class="rp-open" style="display:none"></div>
@@ -3525,7 +3526,35 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
        2번  반응 + 다른 주제들        (읽은 티를 넓게 - 답은 1번에 맡긴다)
        3번  답 + 사실 하나            (짧게 - 반응은 1번에 맡긴다) */
   let parts;
-  if(i % 3 === 0){
+  /* ── 어정쩡한 셋보다 완벽한 하나 ────────────────────────────────
+     예전에는 재료를 세 답글이 나눠 썼다. 그래야 셋이 안 겹치기 때문인데,
+     그 대신 어느 하나도 재료를 다 쓰지 못했다. 사장님이 셋 중 하나만 고르시니까
+     나머지 둘에 나눠 준 재료는 그냥 버려지는 셈이었다.
+     은코치도 답글 하나만 내놓는다. 하나만 만들되 재료를 다 쓴다. */
+  if(opt.one){
+    /* 예전에는 두 번째 주제를 "반응"으로 받고 그 주제의 "답"은 다른 답글에 맡겼다.
+       하나만 만들면 둘 다 여기 들어와서 같은 말을 두 번 하게 된다.
+         거기다 혼자 조용히 운동하고 싶으시다는 말씀 정말 공감돼요.
+         혼자 조용히 하시는 분이 많거든요.
+       두 번째 주제는 "답" 하나로만 받는다. 반응은 첫 주제 몫이다. */
+    const l2 = t2 ? RP_ALSO[(t2.key.length + i) % RP_ALSO.length] + t2.line(o, review) : "";
+    const l3 = t3 ? RP_JOIN[0] + t3.line(o, review) : "";
+    /* 길이는 문장을 몇 개 얹느냐가 아니라 무엇까지 얹느냐로 정한다.
+       하나만 만들면서 재료를 다 밀어 넣었더니 "중간"인데 451자가 나왔다. */
+    const wide2 = len === "long" ? [l2, l3, t1?.more || ""]
+                : len === "medium" ? [l2]
+                : [];
+    const f1 = rpFactFlow(len === "short" ? 1 : len === "long" ? 3 : 2,
+      [hello, echo, line, ...wide2].join(" "), key, review, false, i);
+    /* 시설도 없고 두 번째 주제도 안 걸리는 리뷰가 있다. 그러면 짧게와 중간이
+       글자 하나까지 같아져서 길이 설정이 고장 난 것처럼 보인다.
+       그때는 한 걸음 더 나가는 문장을 중간에도 넣는다 - 그게 유일한 차이다. */
+    if(len === "medium" && !f1 && !wide2.filter(Boolean).length) wide2.push(t1?.more || "");
+    /* 길게도 마찬가지다. 재료가 얇으면 중간과 같아진다. */
+    if(len === "long" && !f1 && wide2.filter(Boolean).length < 2) wide2.push(RP_MORE[i % RP_MORE.length]);
+    parts = [hello, echo, line, ...wide2, f1,
+             len === "long" ? rpKwLine(kw, o) : "", bye];
+  } else if(i % 3 === 0){
     /* "다이어트를 위해 재등록" 리뷰에서 재등록만 받고 다이어트를 흘렸다.
        읽는 분은 "내가 쓴 걸 반만 읽었네" 싶어진다.
        두 번째 주제는 "답"이 아니라 "반응"으로 받는다 - 답은 2번 답글 몫이라 안 겹친다. */
@@ -3601,8 +3630,20 @@ function replyFor(review, o, i = 0, used = new Set(), opt = {}){
      여기까지는 어떤 문장을 쓸지 고르는 일이었다. 이제 사장님이 쓰시는 모양에 넣는다.
      인사(문단 1)와 마무리(문단 3)는 따로 만드므로 가운데 문단에서는 뺀다.
      RP_BYE 는 "말씀해 주세요"류 부탁이라 문단 3의 제안과 겹친다 - 여기서 놓는다. */
-  const mid = dropThanks(parts.filter(Boolean)
-    .filter(x => x !== hello && x !== bye).join(" "));
+  let body = parts.filter(Boolean).filter(x => x !== hello && x !== bye);
+  /* 재료가 많은 리뷰에서는 하나만 만들어도 548자가 나왔다. 점검표 상한이 500자다.
+     사장님이 고르실 다른 답글이 없으니 넘긴 채로 내보낼 수 없다.
+     인사와 마무리는 모양이라 못 줄이고, 가운데에서 뒤쪽부터 한 문장씩 던다 -
+     앞쪽이 그 리뷰에 답하는 문장이고 뒤로 갈수록 곁가지다.
+     알맹이(리뷰에 답하는 문장 + 우리 사실)는 남겨야 하므로 둘까지만 던다. */
+  if(opt.one){
+    const roomFor = { short: 230, medium: 350, long: 470 }[len] || 350;
+    for(let k = 0; k < 2 && body.length > 2; k++){
+      if([...(hello + body.join(" ")).replace(/\s+/g, " ")].length <= roomFor - 110) break;
+      body = body.slice(0, -1);
+    }
+  }
+  const mid = dropThanks(body.join(" "));
 
   /* 마지막 문단에 쓸 시설 하나. 가운데 문단에서 아직 안 나온 것으로 고른다.
      여기까지 와서 남는 게 없으면 시설 이름 없이도 다음에 오실 이유는 만들 수 있다. */
@@ -3953,25 +3994,32 @@ document.addEventListener("click", e => {
   requestAnimationFrame(()=> $("rp-out")?.scrollIntoView({ behavior:"smooth", block:"start" }));
 });
 
+/* 다시 만들기를 누를 때마다 다른 결로 나온다. 하나만 만들면 "이건 아닌데" 싶을 때
+   고를 것이 없으므로, 고르는 대신 다시 뽑는다 - 은코치도 그렇게 한다. */
+let RP_TAKE = 0;
+
 function makePastedReply(){
   const box = $("rp-out"); if(!box) return;
   const raw = ($("rp-paste")?.value || "").trim();
   if(!raw){ alert("답글을 달 리뷰를 붙여넣어 주세요."); return; }
   const opt = { star: Number($("rp-star")?.value || 5), len: $("rp-len")?.value || "medium",
-                kw: $("rp-kw")?.value || "", closing: rpClosing() };
+                kw: $("rp-kw")?.value || "", closing: rpClosing(), one: true };
   const o = getInfo();
-  const used = new Set();
-  const outs = [0, 1, 2].map(i => replyFor(raw, o, i, i === 0 ? used : new Set(), opt));
-  const uniq = [...new Map(outs.map(x => [x.text, x])).values()];
+  /* 어정쩡한 셋보다 완벽한 하나. 사장님은 어차피 하나만 골라 다시는데,
+     셋으로 나누느라 어느 하나도 재료를 다 쓰지 못했다. */
+  const made = replyFor(raw, o, RP_TAKE, new Set(), opt);
 
   /* 우리 사전에 없는 얘기면 그렇다고 말한다. 이게 은코치에는 없는 자리다 —
      AI 는 무엇이든 그럴듯하게 써 주기 때문에, 못 알아들었다는 사실 자체가 안 보인다.
      못 알아들었으면 숨기지 말고 AI 로 넘길 길을 준다. */
-  const unknown = opt.star > 3 && uniq[0].topics.length === 0;
+  const unknown = opt.star > 3 && made.topics.length === 0;
 
   const LEN_LABEL = { short:"짧게", medium:"중간", long:"길게" };
+  const rows = replyAudit(made.text, raw, o, opt.star);
+  const pass = rows.filter(r=>r.ok).length;
+  const n = [...made.text].length;
   box.innerHTML = `<div class="rp-res">
-    <div class="rp-h">읽어낸 주제 <b>${uniq[0].topics.map(t=>t.label).join(", ")
+    <div class="rp-h">읽어낸 주제 <b>${made.topics.map(t=>t.label).join(", ")
       || (opt.star <= 2 ? "불만 응대" : opt.star === 3 ? "아쉬움 응대" : "못 알아들었습니다")}</b>
       <span>${opt.star}점 · ${LEN_LABEL[opt.len]}${opt.kw ? ` · ${escH(opt.kw)} 심음` : ""}</span></div>
     ${unknown ? `<div class="rp-unknown">
@@ -3979,21 +4027,18 @@ function makePastedReply(){
       아래 답글은 무난하지만 <b>이 리뷰에 대한 답은 아닙니다.</b> 이런 리뷰는 AI에게 맡기세요.
       <button class="btn sm" type="button" id="rp-toai">이 리뷰로 AI 지시문 만들기</button>
     </div>` : ""}
-    ${thinFactNote(uniq.map(x => x.text))}
-    ${uniq.map(x=>{
-      const n = [...x.text].length;
-      const idx = cpPut(x.text);
-      return `<div class="rp-one"><p>${escH(x.text)}</p>
-        <div class="rp-foot"><i>${n}자</i>
-          <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div></div>`;
-    }).join("")}
-    ${(()=>{ const rows = replyAudit(uniq[0].text, raw, o, opt.star);
-      const pass = rows.filter(r=>r.ok).length;
-      return `<div class="rp-audit"><div class="rp-audit-h">첫 번째 답글 점검
-        <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
-        ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
-          r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
-    <p class="rp-tip">셋 중 마음에 드는 것을 고르세요. 손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
+    ${thinFactNote([made.text])}
+    <div class="rp-one"><p>${escH(made.text)}</p>
+      <div class="rp-foot"><i>${n}자</i>
+        <em class="rp-score ${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em>
+        <button class="btn sm ghost" type="button" id="rp-again">다시 만들기</button>
+        <button class="btn sm" type="button" data-cp="${cpPut(made.text)}">복사</button></div></div>
+    <div class="rp-audit"><div class="rp-audit-h">답글 점검
+      <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
+      ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
+        r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>
+    <p class="rp-tip">마음에 안 드시면 <b>다시 만들기</b>를 누르세요. 누를 때마다 다른 결로 나옵니다.
+      손님 이름이나 그날 상황을 한 줄 얹으면 더 좋습니다.
       ${opt.star <= 2 ? "<b>불만 리뷰는 하루 안에 다세요.</b> 다른 예비 회원이 그 답글을 보고 판단합니다." : ""}</p>
     ${/* 문장 자연스러움은 사람이 쓴 것도 AI 가 쓴 것도 우리 조립보다 낫다.
          감추지 말고, 더 잘 쓰고 싶으실 때 갈 길을 항상 열어 둔다. */""}
@@ -4006,6 +4051,13 @@ function makePastedReply(){
     </div>
   </div>`;
 }
+
+/* 다시 만들기 - 다음 결로 넘긴다 */
+document.addEventListener("click", e => {
+  if(!e.target.closest("#rp-again")) return;
+  RP_TAKE++;
+  try{ makePastedReply(); }catch{}
+});
 
 /* 못 알아들은 리뷰는 AI 지시문 도구로 넘긴다 */
 document.addEventListener("click", e=>{
@@ -5212,7 +5264,7 @@ ${CHAR_RULE}`,
 
     /* 1~2점은 사과하는 자리다. 견본도 모양도 홍보도 전부 걷어낸다.
        사과할 자리에 광고를 넣으면 그것부터 다음 손님 눈에 들어온다. */
-    if(star <= 2) return `네이버 플레이스에 달린 아래 불만 리뷰에 사장님이 달 답글을 3개 써 주세요.
+    if(star <= 2) return `네이버 플레이스에 달린 아래 불만 리뷰에 사장님이 달 답글을 써 주세요.
 
 ${f}
 
@@ -5227,12 +5279,13 @@ ${rv}
 - 변명 금지. "바쁜 시간대라", "그날따라" 는 읽는 사람에게 핑계로 보입니다.
 - "확인해 보겠습니다"로 끝내지 마세요. 무엇을 하겠다고 적으세요.
 - 홍보, 시설 자랑, 검색어, 이모지 전부 금지입니다.
-- 각 ${LEN}
+- 길이 ${LEN}
 ${cl ? `- 끝인사는 붙이지 마세요. 사과 자리에는 안 맞습니다.` : ""}
 
-[출력] 답글 3개만. 사이에 --- 한 줄. 번호나 설명은 붙이지 마세요.`;
+[출력] 답글 하나만. 번호, 제목, 설명은 붙이지 마세요.`;
 
-    return `네이버 플레이스에 달린 아래 리뷰에 사장님이 달 답글을 3개 써 주세요.
+    return `네이버 플레이스에 달린 아래 리뷰에 사장님이 달 답글을 써 주세요.
+여러 개를 만들어 고르게 하지 마시고, 제대로 된 하나를 주세요.
 
 ${f}
 
@@ -5256,9 +5309,9 @@ ${F.map(x => `- ${x}`).join("\n")}`
 - 지어내지 마시고, 손님이 리뷰에 쓴 얘기만 받아서 쓰세요.`}
 
 [답글 옵션]
-- 길이: 세 답글 각각 ${LEN}. 다 쓰신 뒤 글자 수를 세어 보시고 모자라면 채우세요.
-- 박을 키워드: ${kw || "자동 선택"}${kw ? ` (세 답글 전부에 한 번씩. 한 답글 안에서 두 번은 안 됩니다)` : ""}
-${cl ? `- 끝인사: 세 개 모두 마지막을 "${cl}" 로 닫아 주세요.` : ""}
+- 길이: ${LEN}. 다 쓰신 뒤 글자 수를 세어 보시고 모자라면 채우세요.
+- 박을 키워드: ${kw || "자동 선택"}${kw ? ` (한 번만. 두 번 나오면 반복으로 보입니다)` : ""}
+${cl ? `- 끝인사: 마지막을 "${cl}" 로 닫아 주세요.` : ""}
 
 [꼭 지킬 것 - 일곱 개뿐입니다]
 1. 시설을 그냥 나열하지 마세요. "웨이트머신 100종이 있으니 부담없이 쓰셔도 됩니다"는
@@ -5278,13 +5331,17 @@ ${cl ? `- 끝인사: 세 개 모두 마지막을 "${cl}" 로 닫아 주세요.` 
         하시다가 막힌다면 언제든 편하게 문의해주시면 함께 고민해드리겠습니다.
    뒤쪽이 "이 센터는 회원을 진짜로 챙겨 주는구나"로 읽힙니다. 같은 내용인데 그렇습니다.
 
-[3개를 서로 다르게]
-- 1번: 손님이 말한 그 얘기에 가장 직접 답하는 것
-- 2번: 다음 손님이 궁금해할 것(시간대, 분위기, 오시는 길)을 한 줄 더 얹은 것
-- 3번: 짧고 담백하게
-- 세 개가 같은 문장으로 시작하면 안 됩니다.
+[내보내기 전에 스스로 확인하세요 - 하나만 주시니 이건 꼭 하셔야 합니다]
+하나라도 아니면 그 자리를 고쳐서 내세요. 고친 것만 주시면 됩니다.
+1. 앞 두 문장 안에 "감사합니다" 또는 "고맙습니다"가 있는가
+2. 이 리뷰를 읽지 않으면 쓸 수 없는 문장이 있는가
+3. 시설을 말한 자리마다 "그래서 회원님께 뭐가 좋은지"가 붙어 있는가
+4. 위 [쓸 수 있는 사실] 밖의 숫자, 가격, 행사가 섞이지 않았는가
+5. "함께하겠습니다", "더 좋은 환경을 만들겠습니다" 같은 빈말이 없는가
+6. 문단이 셋이고 사이에 빈 줄이 있는가
+7. 글자 수가 위 길이에 맞는가
 
-[출력] 답글 3개만. 사이에 --- 한 줄. 번호, 제목, 머리말, 마무리 말은 붙이지 마세요.`;
+[출력] 답글 하나만. 번호, 제목, 머리말, 설명, 마무리 말은 붙이지 마세요.`;
   },
 
   news: f => `네이버 플레이스 "소식"에 올릴 글감 4주치를 만들어 주세요.
@@ -7159,54 +7216,35 @@ document.addEventListener("click", async e=>{
       const el = $("rp-live"); if(el) el.textContent = t;
     });
     const box = $("rp-ai-out"); if(!box) return;
-    /* 지시문에서 "--- 로만 구분하라"고 못박았으므로 그걸로 가른다.
-       그래도 다르게 오면 빈 줄로 한 번 더 시도하고, 끝내 못 가르면 통째로 보여준다.
-       못 가르는 것보다 잘못 갈라서 문장을 잘라 먹는 쪽이 더 나쁘다. */
-    /* 이모지와 문단 나눔은 답글 모양의 일부다 - naverSafe 를 쓰면 둘 다 사라진다. */
+    /* 이제 답글 하나만 달라고 시킨다 - 어정쩡한 셋보다 완벽한 하나가 낫다.
+       그래도 AI 가 습관처럼 여러 개를 보낼 때가 있다. "---" 나 "1)" 이 보이면
+       첫 덩어리만 쓴다. 잘못 갈라 문장을 잘라 먹는 것보다는 낫다.
+       이모지와 문단 나눔은 답글 모양의 일부라 replySafe 로 살린다. */
     const clean = x => replySafe(x).replace(/^\s*(\d+[.)]|답글\s*\d*\s*[:：]?)\s*/, "").trim();
-    let parts = text.split(/^\s*-{3,}\s*$/m).map(clean).filter(x => x.length > 30);
-    if(parts.length < 2){
-      /* --- 로 안 나눠 왔을 때. 답글 하나가 세 문단이라 빈 줄로 가르면 아홉 토막이 난다.
-         예전에는 그 아홉 중 앞의 셋만 보여줘서 답글 한 개를 셋으로 쪼개 놓고 있었다.
-         토막을 셋으로 고르게 묶는다 - 잘못 갈라 문장을 잘라 먹는 것보다 낫다. */
-      const blocks = text.split(/\n{2,}/).map(clean)
-        .filter(x => x.length > 15 && !/^\[|^#/.test(x));
-      if(blocks.length > 3){
-        const per = Math.ceil(blocks.length / 3);
-        parts = [0, 1, 2].map(g => blocks.slice(g * per, (g + 1) * per).join("\n\n"))
-          .filter(x => x.length > 40);
-      } else parts = blocks.filter(x => x.length > 40);
-    }
-    const list = parts.length ? parts.slice(0, 3) : [replySafe(text)];
+    const first = text.split(/^\s*-{3,}\s*$/m)[0];
+    const one = clean(first).replace(/\n{2,}\s*(?:답글\s*)?[2-9][.)]\s*[\s\S]*$/, "").trim()
+             || replySafe(text);
+    const star = Number($("rp-star")?.value || 5);
+    const rows = replyAudit(one, raw, o, star);
+    const bad = rows.filter(r => !r.ok);
+    const pass = rows.length - bad.length;
     box.style.display = "";
     box.innerHTML = `<div class="rp-res">
-      <div class="rp-h">AI가 쓴 답글 <b>${list.length}개</b>
+      <div class="rp-h">AI가 쓴 답글
         <em style="font-style:normal;font-weight:600;color:var(--muted)">${
           tier === "good" ? "좋은 것 (약 50원)" : "기본 (약 10원)"}</em>
         <span data-ailelft></span></div>
-      ${(()=>{ const star = Number($("rp-star")?.value || 5);
-        return list.map(t=>{
-        const idx = cpPut(t);
-        /* 셋 다 잰다. 사장님은 이 중 하나를 골라 실제로 다시는데,
-           첫 번째만 점검하면 나머지 둘은 멀쩡해 보인 채로 올라간다. */
-        const rows = replyAudit(t, raw, o, star);
-        const bad = rows.filter(r => !r.ok);
-        return `<div class="rp-one"><p>${escH(t)}</p>
-          <div class="rp-foot"><i>${[...t].length}자</i>
-            <em class="rp-score ${bad.length ? "todo" : "pass"}">${rows.length - bad.length} / ${rows.length}</em>
-            <button class="btn sm ghost" type="button" data-cp="${idx}">복사</button></div>
-          ${bad.length ? `<div class="rp-bad">${bad.map(r =>
-            `<span>○ ${r.t}${r.note ? ` <i>${r.note}</i>` : ""}</span>`).join("")}</div>` : ""}
-          </div>`;
-      }).join(""); })()}
-      ${(()=>{ const rows = replyAudit(list[0], raw, o, Number($("rp-star")?.value || 5));
-        const pass = rows.filter(r=>r.ok).length;
-        return `<div class="rp-audit"><div class="rp-audit-h">첫 번째 답글 - 전체 항목
-          <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
-          ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
-            r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>`; })()}
-      ${thinFactNote(list)}
-      <p class="rp-tip">AI가 썼어도 <b>없는 시설이 적혀 있으면 반드시 지우세요.</b>
+      <div class="rp-one"><p>${escH(one)}</p>
+        <div class="rp-foot"><i>${[...one].length}자</i>
+          <em class="rp-score ${bad.length ? "todo" : "pass"}">${pass} / ${rows.length}</em>
+          <button class="btn sm" type="button" data-cp="${cpPut(one)}">복사</button></div></div>
+      <div class="rp-audit"><div class="rp-audit-h">답글 점검
+        <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
+        ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
+          r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>
+      ${thinFactNote([one])}
+      <p class="rp-tip">마음에 안 드시면 <b>AI로 답글 쓰기</b>를 한 번 더 누르세요.
+        AI가 썼어도 <b>없는 시설이 적혀 있으면 반드시 지우세요.</b>
         위 점검은 저희 잣대로 잰 것입니다.</p>
     </div>`;
     refreshAiLeft();
