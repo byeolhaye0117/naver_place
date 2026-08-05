@@ -5018,7 +5018,10 @@ document.addEventListener("click", e=>{
    "진단으로 알아낸 사실을 빠짐없이 담은 지시문"을 만들어 주는 것이다.
    재료(업체명·지역·키워드·시설·미달 항목·경쟁사 표현)는 도구만 알고 있다.
    ============================================================ */
-function promptFacts(){
+/* kind - 어떤 글에 쓸 재료인지. 소개글과 답글에는 이벤트를 안 넘긴다.
+   둘 다 한 번 올리면 오래 남는 글이라, 기간 한정 혜택을 적으면 끝난 뒤에
+   그 문장이 그대로 거짓말이 된다. 소식과 문구는 반대다 - 그때그때 다시 만든다. */
+function promptFacts(kind){
   const o = getInfo();
   const comp = window.__lastComp;
   const L = [];
@@ -5053,7 +5056,8 @@ function promptFacts(){
   if((m.bus||[]).length){
     L.push(`- 버스정류장: ${m.bus.slice(0,3).map(b=>`${b.name}${b.walkTime?` 도보 ${b.walkTime}분`:""}`).join(", ")}`);
   }
-  if((m.events||[]).length) L.push(`- 진행 중인 이벤트: ${m.events.map(e=>naverSafe(e).trim()).filter(Boolean).join(" / ")}`);
+  const longLived = kind === "intro" || kind === "reply";
+  if(!longLived && (m.events||[]).length) L.push(`- 진행 중인 이벤트: ${m.events.map(e=>naverSafe(e).trim()).filter(Boolean).join(" / ")}`);
   if((m.payments||[]).length) L.push(`- 결제수단: ${m.payments.join(", ")}`);
   if((m.voice||[]).length){
     L.push(`- 손님이 리뷰에서 자주 쓰는 말: ${m.voice.slice(0,5).map(v=>`${v.label}(${v.n}회)`).join(", ")}`);
@@ -5133,11 +5137,21 @@ function replyFacts(){
     + (m.subway.walkTime ? ` 도보 ${m.subway.walkTime}분` : ""));
   (m.bus || []).slice(0,2).forEach(b =>
     F.push(`${b.name} 정류장${b.walkTime ? ` 도보 ${b.walkTime}분` : ""}`));
-  (m.events || []).forEach(e => { const t = naverSafe(e).trim(); if(t) F.push(t); });
+  /* 이벤트는 답글 재료에서 뺀다. 무료 답글은 이미 빼고 있었는데(rpFactPool)
+     AI 쪽만 열려 있어서 둘이 갈라져 있었다.
+     답글은 몇 년씩 그 자리에 남는다. "광복절 기념 8월무료"를 인용한 답글이
+     9월에도 남아 있으면, 그걸 보고 찾아오신 손님을 사장님이 감당하셔야 한다.
+     소개글과 같은 이유이고, 사장님이 소개글에서 빼라고 하신 것과 같은 판단이다.
+     이벤트는 소식·쿠폰·문구에서 알린다 - 거기는 바뀌면 바로 다시 만드는 자리다. */
   /* 사장님이 메뉴 칸에 직접 적어 두신 시설·프로그램. 여기가 제일 값진 재료다 -
      "여성전용(우먼존) 24시이용권", "스미스머신 파워렉 6대" 같은 것은
-     다른 헬스장이 쓸 수 없는 문장이고, 우리 말고는 아무도 안 읽는다. */
-  (m.menuNames || []).forEach(x => { const t = naverSafe(x).trim(); if(t) F.push(t); });
+     다른 헬스장이 쓸 수 없는 문장이고, 우리 말고는 아무도 안 읽는다.
+     다만 기간 한정 혜택은 위와 같은 이유로 걸러 낸다. */
+  const EV_OUT = /특가|이벤트|할인|증정|기념|무료행사|\d+\s*%|\d[\d,.]*\s*(만원|원)(?!짜)/;
+  (m.menuNames || []).forEach(x => {
+    const t = naverSafe(x).trim();
+    if(t && !EV_OUT.test(t)) F.push(t);
+  });
   if(o.edge) F.push(o.edge);
   /* 개업 연차는 어느 필드에도 없다. 사장님이 소식이나 소개글에 쓰신 문장에만 있다.
      "28년째 같은 자리를 지키고 있는" 처럼 - 이건 다른 헬스장이 절대 못 쓰는 사실이다. */
@@ -5544,7 +5558,7 @@ ${f}
 function renderPrompt(){
   const kind = $("ai-kind")?.value || "intro";
   const build = PROMPT_KIND[kind]; if(!build) return;
-  setBox("o-prompt", build(promptFacts()));
+  setBox("o-prompt", build(promptFacts(kind)));
 }
 $("ai-kind")?.addEventListener("change", renderPrompt);
 
@@ -7329,7 +7343,7 @@ document.addEventListener("click", async e=>{
   const raw = ($("rp-paste")?.value || "").trim();
   if(!raw){ alert("답글을 달 리뷰를 붙여넣어 주세요."); return; }
   const o = getInfo();
-  const prompt = PROMPT_KIND.reply(promptFacts());
+  const prompt = PROMPT_KIND.reply(promptFacts("reply"));
   btn.disabled = true; const label = btn.textContent; btn.textContent = "AI가 쓰는 중…";
   try{
     const tier = $("rp-model")?.value || "fast";
