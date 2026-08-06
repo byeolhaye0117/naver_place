@@ -815,6 +815,23 @@ table.cmp td.gap{font-size:12px;font-weight:700}
 .todo-item.done{opacity:.5}
 .done-mark{display:inline-block;margin-top:11px;font-size:12.5px;font-weight:700;
   color:var(--ok-fg);background:var(--ok-bg);border:1px solid var(--ok-line);padding:6px 12px;border-radius:8px}
+/* 순위선 + 작업 표시 — 목록만 주면 사장님이 눈으로 이어 붙이셔야 한다 */
+.wl-chart{border:1px solid var(--line);border-radius:10px;padding:11px 12px 8px;margin:4px 0 14px;
+  background:var(--card)}
+.wl-chart svg{display:block;width:100%;height:190px}
+.wc-head{display:flex;flex-wrap:wrap;gap:2px 12px;justify-content:space-between;
+  font-size:12.5px;color:var(--muted);margin-bottom:6px}
+.wc-head b{font-weight:800}
+.wc-up{color:var(--ok-fg)} .wc-dn{color:var(--bad-fg,#c0392b)} .wc-eq{color:var(--muted)}
+.wc-grid{stroke:var(--line);stroke-width:1}
+.wc-ax{fill:var(--muted);font-size:10px}
+.wc-line{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round;
+  vector-effect:non-scaling-stroke}
+.wc-dot circle{fill:var(--accent)}
+.wc-mark{stroke-width:1.5;stroke-dasharray:3 3;opacity:.75;vector-effect:non-scaling-stroke}
+.wc-legend{font-size:11.5px;color:var(--muted);margin:6px 0 0;line-height:1.6}
+.wl-chart-none{border:1px dashed var(--line);border-radius:10px;padding:14px;
+  font-size:12.5px;color:var(--muted);margin:4px 0 14px;line-height:1.7}
 .wl{margin-top:6px;border-left:2px solid var(--line);padding-left:2px}
 .wl-row{display:flex;align-items:baseline;gap:10px;padding:8px 0 8px 14px;position:relative;font-size:13.5px}
 .wl-row.rank{background:color-mix(in srgb,var(--info-bg) 60%,transparent);border-radius:0 8px 8px 0}
@@ -6106,6 +6123,72 @@ function logWork(item){
   renderWorklog();
 }
 
+/* 순위선 위에 "무엇을 한 날"을 세로선으로 얹는다.
+
+   목록만 있으면 "8월 6일 4위, 8월 9일 3위"를 눈으로 이어 붙여야 한다.
+   그건 사장님 몫으로 남기는 일이다. 선을 그려 두면 대표키워드를 바꾼 날 뒤로
+   선이 올라갔는지 내려갔는지가 한눈에 들어온다.
+
+   순위는 작을수록 좋으므로 세로축을 뒤집는다 - 1위가 맨 위다.
+   점이 두 개 미만이면 선이 안 되므로 그리지 않고 몇 개 더 필요한지 적는다. */
+function rankChart(ranks, work){
+  if(!ranks || ranks.length < 2){
+    const n = ranks ? ranks.length : 0;
+    return `<div class="wl-chart-none">순위 점이 <b>${n}개</b>입니다.
+      두 개부터 선이 그려집니다. 매일 새벽에 하나씩 쌓입니다.</div>`;
+  }
+  const pts = ranks.slice().sort((a,b)=> new Date(a.ts) - new Date(b.ts));
+  const t0 = new Date(pts[0].ts).getTime();
+  const t1 = new Date(pts[pts.length-1].ts).getTime();
+  const span = Math.max(t1 - t0, 1);
+  /* 순위 폭이 좁으면(4위→3위) 선이 납작해서 안 보인다. 최소 3칸은 벌려 둔다. */
+  const rs = pts.map(p=>p.rank);
+  let lo = Math.min(...rs), hi = Math.max(...rs);
+  if(hi - lo < 3){ const mid = (hi+lo)/2; lo = Math.max(1, Math.round(mid-1.5)); hi = lo + 3; }
+  const W = 640, H = 190, L = 34, R = 12, T = 14, B = 26;
+  const x = ts => L + (new Date(ts).getTime() - t0) / span * (W - L - R);
+  const y = r  => T + (r - lo) / (hi - lo) * (H - T - B);
+
+  const line = pts.map((p,i)=>`${i?"L":"M"}${x(p.ts).toFixed(1)} ${y(p.rank).toFixed(1)}`).join(" ");
+  const dots = pts.map(p=>`<circle cx="${x(p.ts).toFixed(1)}" cy="${y(p.rank).toFixed(1)}" r="3.2"/>`).join("");
+  /* 가로 눈금은 정수 순위에만 긋는다. 4.5위 같은 눈금은 뜻이 없다. */
+  const ticks = [];
+  for(let r = Math.ceil(lo); r <= Math.floor(hi); r++){
+    if(Math.floor(hi) - Math.ceil(lo) > 6 && r % 2) continue;
+    ticks.push(`<line class="wc-grid" x1="${L}" y1="${y(r).toFixed(1)}" x2="${W-R}" y2="${y(r).toFixed(1)}"/>
+      <text class="wc-ax" x="${L-7}" y="${(y(r)+3.5).toFixed(1)}" text-anchor="end">${r}위</text>`);
+  }
+  /* 작업 표시는 순위 기록이 걸쳐 있는 기간 안의 것만. 밖에 있는 것을 끌어다 그리면
+     "이 작업 뒤에 이렇게 됐다"가 거짓말이 된다. */
+  const marks = (work||[])
+    .filter(w=>{ const t = new Date(w.ts).getTime(); return t >= t0 && t <= t1; })
+    .map(w=>{
+      const px = x(w.ts).toFixed(1);
+      const c = PILLARS[w.pillar]?.color || "var(--muted)";
+      return `<line class="wc-mark" x1="${px}" y1="${T}" x2="${px}" y2="${H-B}" style="stroke:${c}"/>
+        <circle cx="${px}" cy="${T-1}" r="2.6" style="fill:${c}"><title>${escH(w.title)}</title></circle>`;
+    }).join("");
+
+  const first = pts[0], last = pts[pts.length-1];
+  const diff = first.rank - last.rank;
+  const summary = diff > 0 ? `<b class="wc-up">${diff}칸 올랐습니다</b>`
+                : diff < 0 ? `<b class="wc-dn">${-diff}칸 내려갔습니다</b>`
+                : `<b class="wc-eq">제자리입니다</b>`;
+
+  return `<div class="wl-chart">
+    <div class="wc-head"><span>"${escH(last.keyword)}" 순위 변화</span>
+      <span>${dstr(first.ts)} → ${dstr(last.ts)} · ${summary}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+         aria-label="순위 변화 그래프">
+      ${ticks.join("")}
+      ${marks}
+      <path class="wc-line" d="${line}"/>
+      <g class="wc-dot">${dots}</g>
+    </svg>
+    ${marks ? `<p class="wc-legend">세로선은 <b>작업을 완료한 날</b>입니다. 점에 손을 올리면 무엇을 했는지 보입니다.</p>` : ""}
+  </div>`;
+}
+
 /* 작업 기록과 순위 기록을 시간순으로 합쳐 보여준다.
    인과로 단정하지 않는다 — 순서일 뿐이고 다른 요인도 있다. */
 async function renderWorklog(){
@@ -6157,7 +6240,7 @@ async function renderWorklog(){
        다만 같은 작업이 여러 번 순위 상승 앞에 나온다면, 그건 신호로 볼 만합니다.</p>`
     : `<p class="wl-note">PC 도우미를 켜고 순위를 조회하면, 작업 기록과 순위 변화가 여기서 겹쳐 보입니다.</p>`;
 
-  $("wl-body").innerHTML = `<div class="wl">${html}</div>${note}
+  $("wl-body").innerHTML = `${rankChart(ranks, work)}<div class="wl">${html}</div>${note}
     <div class="btn-row"><button class="btn ghost" id="wl-clear" type="button"
       style="width:auto;padding:9px 15px;font-size:13.5px">기록 지우기</button></div>`;
 

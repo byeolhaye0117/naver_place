@@ -1744,20 +1744,47 @@ function josa(word, pair) {
 }
 
 /* 한 업체의 지표를 표준 형태로 정리 */
-function toMetrics(data = {}) {
+/* collectPlace 가 준 것 전체를 받는다 - {data, numbers, photoInfo}.
+
+   예전에는 data 만 봤고, 그것도 필드 이름이 틀려 있었다. visitorReviewCount 는
+   네이버에 없는 이름이고 실제 이름은 visitorReviewsTotal 이다. 그래서 리뷰·블로그·
+   평점이 전부 "모름"으로 나왔다. 사진은 더 나빴다 - imageCount 를 집었는데
+   그건 사진 수가 아니라 늘 1 이었다. 결과가 "우리 1장, 상위 최저 1장 → 충족"이었고,
+   기준 보정이 "사진 30장 이상" 항목을 통과로 체크해 버렸다.
+
+   실제로 재 보면 우리 16장, 상위 3곳은 31·25·26장이다. 여섯 곳 중 우리가 꼴찌인
+   유일한 항목인데, 화면은 그걸 통과로 적고 있었다. 틀린 값으로 안심시키는 것은
+   값이 없다고 말하는 것보다 나쁘다. */
+function toMetrics(place = {}) {
+  const d  = place.data || place || {};
+  const n  = place.numbers || {};
+  const pi = place.photoInfo || {};
+  const pick = (...keys) => {
+    for (const k of keys) for (const src of [d, n]) {
+      const v = src[k];
+      if (v != null && v !== '' && isFinite(Number(v))) return Number(v);
+    }
+    return null;
+  };
+  /* 사진은 업체가 올린 목록(PlaceDetailImages)이 가장 정확하다. 없으면 이름으로 물러선다.
+     imageCount 는 맨 뒤에 둔다 - 사진 수가 아닌 값이 그 이름으로 오는 가게가 있다. */
+  const photo = (pi.own != null && isFinite(Number(pi.own)))
+    ? Number(pi.own)
+    : pick('totalImages', 'photoTotal', 'imageTotal', 'totalImageCount', 'photoCount', 'imageCount');
+
   return {
-    introLen : String(data.description || '').trim().length,
-    review   : numOr(data.visitorReviewCount, data.totalReviewCount),
-    blog     : numOr(data.blogCafeReviewCount),
-    photo    : numOr(data.imageCount, data.photoCount),
-    save     : numOr(data.bookmarkCount),
-    score    : numOr(data.visitorReviewScore),
-    booking  : Boolean(data.bookingUrl || data.talktalkUrl),
-    homepage : Boolean(data.homepage),
-    x        : data.x, y: data.y,
-    intro    : String(data.description || ''),
-    name     : String(data.name || ''),
-    category : String(data.category || ''),
+    introLen : String(d.description || '').trim().length,
+    review   : pick('visitorReviewsTotal', 'visitorReviewCount', 'totalReviewCount', 'reviewCount'),
+    blog     : pick('cafeBlogReviewsTotal', 'blogCafeReviewCount'),
+    photo,
+    save     : pick('bookmarkCount', 'saveCount', 'favoriteCount'),
+    score    : pick('visitorReviewsScore', 'visitorReviewScore', 'avgRating'),
+    booking  : Boolean(d.bookingUrl || d.talktalkUrl),
+    homepage : Boolean(d.homepage),
+    x        : d.x, y: d.y,
+    intro    : String(d.description || ''),
+    name     : String(d.name || ''),
+    category : String(d.category || ''),
   };
 }
 
@@ -1909,13 +1936,13 @@ async function analyzeCompetitors(keyword, myUrl, topN = 3) {
   for (const p of top) {
     await new Promise(r => setTimeout(r, 300));
     const c = await collectPlace(p.id, undefined, { deep: false });
-    rivals.push({ rank: p.rank, id: p.id, name: p.name, ok: c.ok, m: c.ok ? toMetrics(c.data) : {} });
+    rivals.push({ rank: p.rank, id: p.id, name: p.name, ok: c.ok, m: c.ok ? toMetrics(c) : {} });
   }
 
   const usable = rivals.filter(r => r.ok);
   if (!usable.length) return { ok: false, stage: 'rivals', error: '상위 업체 정보를 하나도 가져오지 못했습니다.' };
 
-  const mine = toMetrics(myPlace.data);
+  const mine = toMetrics(myPlace);
 
   // 검색 중심을 상위권 좌표의 중심으로 추정한다.
   // 네이버의 실제 검색 좌표는 알 수 없지만, 상위권이 몰려 있는 지점이 곧 그 키워드의 중심이다.
