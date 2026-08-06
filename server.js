@@ -1372,6 +1372,63 @@ async function searchAdProbe() {
   return val;
 }
 
+/* ── 검색어별 월 검색량 ──────────────────────────────────────────────
+   keywordstool 은 힌트 키워드를 최대 5개까지 받고, 그 자신과 연관어를 함께 돌려준다.
+   우리가 알고 싶은 것은 "우리가 고른 그 말"의 검색량이라, 돌려받은 목록에서
+   우리 말과 같은 것을 찾아 짝을 맞춘다. 띄어쓰기는 네이버가 없애서 돌려준다.
+
+   하루치 캐시를 둔다. 검색량은 월 단위 값이라 하루에 여러 번 물어볼 이유가 없고,
+   API 한도는 하루 단위로 걸린다. 사장님이 후보를 몇 번 다시 만드셔도 한도가 안 샌다. */
+const KWVOL_FILE = path.join(DATA_DIR, 'kw-volume.json');
+const kwNorm = k => String(k).replace(/\s+/g, '').toLowerCase();
+const kwNum  = v => {
+  const t = String(v ?? '').replace(/[^0-9]/g, '');
+  /* "< 10" 으로 오는 것이 있다. 0 으로 적으면 "아무도 안 찾는다"로 읽혀서 다르다. */
+  return t ? Number(t) : (String(v).includes('<') ? 5 : 0);
+};
+function kwVolCache() {
+  try {
+    const v = JSON.parse(fs.readFileSync(KWVOL_FILE, 'utf8'));
+    if (v && v.date === today()) return v;
+  } catch { /* 없으면 오늘 처음 */ }
+  return { date: today(), map: {} };
+}
+function kwVolSave(c) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(KWVOL_FILE, JSON.stringify(c)); }
+  catch { /* 디스크가 없어도 조회는 계속 돌아야 한다 */ }
+}
+async function keywordVolume(list) {
+  const want = [...new Set((list || []).map(x => String(x).trim()).filter(Boolean))].slice(0, 60);
+  if (!want.length) return { ok: true, rows: [] };
+  const st = searchAdStatus();
+  if (!st.ready) return { ok: false, error: '검색광고 키가 설정되어 있지 않습니다.', searchad: st };
+
+  const cache = kwVolCache();
+  const todo = want.filter(k => !cache.map[kwNorm(k)]);
+  let failed = null;
+  /* 한 번에 다섯 개까지. 네이버가 정한 상한이다. */
+  for (let i = 0; i < todo.length; i += 5) {
+    const chunk = todo.slice(i, i + 5);
+    const r = await searchAdGet('/keywordstool',
+      { hintKeywords: chunk.map(kwNorm).join(','), showDetail: '1' });
+    if (!r.ok) { failed = r; break; }
+    for (const x of (r.data?.keywordList || [])) {
+      const n = kwNorm(x.relKeyword);
+      if (cache.map[n]) continue;
+      cache.map[n] = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
+                       comp: String(x.compIdx || '').trim() };
+    }
+    /* 못 찾은 것은 "0" 이 아니라 "모름" 이다. 둘을 섞으면 판단이 틀어진다. */
+    chunk.forEach(k => { if (!cache.map[kwNorm(k)]) cache.map[kwNorm(k)] = null; });
+  }
+  kwVolSave(cache);
+  const rows = want.map(k => {
+    const v = cache.map[kwNorm(k)];
+    return v ? { keyword: k, ...v, total: v.pc + v.mo } : { keyword: k, unknown: true };
+  });
+  return { ok: !failed, rows, ...(failed ? { error: failed.error, status: failed.status } : {}) };
+}
+
 /* 한 번 눌러 보고 실제로 도는지 알려준다 */
 async function searchAdTest(kw) {
   const st = searchAdStatus();
@@ -2053,6 +2110,11 @@ const server = http.createServer(async (req, res) => {
        응답에 키 값은 한 글자도 담지 않는다. 됐는지 여부와 받아온 개수만. */
     if (u.pathname === '/api/searchad-test') {
       return sendJson(res, 200, await searchAdTest(q.get('kw') || '헬스장'));
+    }
+
+    if (u.pathname === '/api/kw-volume') {
+      const list = String(q.get('keywords') || '').split(',').map(x => x.trim()).filter(Boolean);
+      return sendJson(res, 200, await keywordVolume(list));
     }
 
     if (u.pathname === '/api/place') {

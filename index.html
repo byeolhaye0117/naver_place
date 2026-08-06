@@ -4902,6 +4902,16 @@ function kfVerdict(rank){
   return { cls:"later", t:`${rank}위`, why:"뒤로 미루고 위쪽부터 잡으세요." };
 }
 
+/* 검색량 칸. 0 과 "모름"은 다른 값이라 다르게 적는다 -
+   0 은 아무도 안 찾는 말이고, 모름은 네이버가 값을 안 준 것이다.
+   둘을 같게 보여주면 사장님이 멀쩡한 후보를 버리시게 된다. */
+function volCell(v){
+  if(!v || v.unknown) return "—";
+  const t = (v.total ?? 0).toLocaleString("ko-KR");
+  return `<b>${t}</b><i style="font-style:normal;color:var(--muted);font-size:11px"> `
+    + `PC ${(v.pc||0).toLocaleString("ko-KR")} · 모바일 ${(v.mo||0).toLocaleString("ko-KR")}</i>`;
+}
+
 /* 줄마다 "그래서 뭘 하면 되나"를 적는다.
 
    순위만 늘어놓으면 사장님은 그 표를 보고 할 일을 못 정한다. 특히 "아직 밖"이
@@ -4914,6 +4924,19 @@ function kfAction(x, o){
   const kw = x.keyword;
   const rank = x.found ? x.rank : null;
   const inRep = o.repkw.some(k => norm(k) === norm(kw));
+  const v = x.vol && !x.vol.unknown ? x.vol : null;
+
+  /* 검색량을 알게 되면서 판단이 통째로 달라지는 자리가 생겼다.
+     한 달에 아무도 안 찾는 말에서 3위인 것은 값어치가 없다. 그런데 예전 화면은
+     그걸 "이미 잡았습니다"라고 칭찬하고 있었다. 순위보다 이게 먼저다. */
+  if(v && v.total === 0){
+    return rank != null && rank <= 10
+      ? "순위는 높지만 한 달에 찾는 사람이 없습니다. 잡아 둬도 손님이 안 옵니다 - 다른 말로 옮기세요."
+      : "한 달에 찾는 사람이 없는 말입니다. 순위와 상관없이 버리세요.";
+  }
+  if(v && v.total < 30 && (rank == null || rank > 30)){
+    return `한 달에 ${v.total}명이 찾습니다. 잡아도 손님 수가 거의 안 달라집니다. 뒤로 미루세요.`;
+  }
 
   /* 이 검색어를 다른 검색어와 가르는 말 — 지역과 업종어를 뺀 나머지 */
   const extra = kw.replace(new RegExp(o.area || "\u0000", "gi"), "")
@@ -4927,12 +4950,22 @@ function kfAction(x, o){
       : "이미 잡았습니다. 대표키워드 5칸에는 없으니 한 칸 넣으면 더 굳습니다.";
   }
   if(rank != null && rank <= 30){
-    return `제일 싼 목표입니다. 소개글에 "${kw}"를 통째로 한 번 넣고 2주 뒤 다시 재 보세요.`;
+    return `제일 싼 목표입니다${v ? ` (한 달 ${v.total.toLocaleString("ko-KR")}명)` : ""}. `
+      + `소개글에 "${kw}"를 통째로 한 번 넣고 2주 뒤 다시 재 보세요.`;
+  }
+  /* 많이 찾는데 아직 밖이면, 미루라는 말만 하고 끝내면 안 된다.
+     제일 값어치가 큰 자리이므로 왜 오래 걸리는지까지 적는다. */
+  if(v && v.total >= 500 && (rank == null || rank > 30)){
+    return `한 달에 ${v.total.toLocaleString("ko-KR")}명이 찾는 큰 말입니다. `
+      + `값어치는 제일 큰데 지금은 밖이라 오래 걸립니다. `
+      + `30위 안에 든 것들을 먼저 1페이지로 올리고, 그다음 목표로 잡으세요.`;
   }
   if(!extra) return "이 검색어는 다른 곳이 더 셉니다. 지금은 미루세요.";
+  /* "가격"라는 -> "가격"이라는. 받침에 따라 갈린다. */
+  const ira = hasJong(extra) ? "이라는" : "라는";
   return hasWord
-    ? `"${extra}"라는 말은 이미 우리 글에 있습니다. 그런데도 안 잡히면 다른 곳이 더 센 것이라 지금 붙어도 오래 걸립니다.`
-    : `"${extra}"라는 말이 우리 글 어디에도 없습니다. 실제로 하시는 거면 소개글에 한 번 쓰시고, 안 하시는 거면 이 줄은 버리세요.`;
+    ? `"${extra}"${ira} 말은 이미 우리 글에 있습니다. 그런데도 안 잡히면 다른 곳이 더 센 것이라 지금 붙어도 오래 걸립니다.`
+    : `"${extra}"${ira} 말이 우리 글 어디에도 없습니다. 실제로 하시는 거면 소개글에 한 번 쓰시고, 안 하시는 거면 이 줄은 버리세요.`;
 }
 
 $("kf-rank")?.addEventListener("click", async ()=>{
@@ -4952,23 +4985,53 @@ $("kf-rank")?.addEventListener("click", async ()=>{
     if(!r.ok){ $("kf-out").innerHTML = srvError("순위 일괄 조회 실패", r); return; }
 
     const info = getInfo();
-    const rows = (r.rows || []).map(x=>({ ...x, v: kfVerdict(x.found ? x.rank : null),
-                                          act: kfAction(x, info) }));
+    /* 순위만 있으면 "몇 위인가"는 알아도 "그 자리가 값어치가 있는가"를 모른다.
+       한 달에 열 명 찾는 말에서 1위인 것과 이천 명 찾는 말에서 8위인 것은
+       완전히 다른 얘기인데, 지금까지 우리 화면은 둘을 같게 보여줬다.
+       검색광고 키가 들어와 있으면 월 검색량을 같이 받아 온다. 없으면 예전 그대로 돈다. */
+    let vol = {};
+    try{
+      const vr = await (await fetch(apiUrl(
+        `/api/kw-volume?keywords=${encodeURIComponent(KF_PICK.join(","))}`))).json();
+      (vr.rows || []).forEach(x => { vol[norm(x.keyword)] = x; });
+    }catch{ /* 검색량은 덤이다. 못 받아 와도 순위는 보여준다 */ }
+    /* vol 을 먼저 붙여야 kfAction 이 그걸 보고 판단한다. 순서가 바뀌면
+       "한 달에 아무도 안 찾는다"는 판정이 통째로 안 나온다. */
+    const rows = (r.rows || []).map(x=>{
+      const w = { ...x, vol: vol[norm(x.keyword)] || null };
+      return { ...w, v: kfVerdict(w.found ? w.rank : null), act: kfAction(w, info) };
+    });
     const order = { now:0, soon:1, later:2 };
-    rows.sort((a,b)=> (order[a.v.cls]-order[b.v.cls]) || ((a.rank ?? 999)-(b.rank ?? 999)));
+    /* 같은 판정 안에서는 검색량이 큰 것을 위로 올린다. 사장님은 위에서부터 읽으신다.
+       검색량을 모르면 예전처럼 순위 순으로 간다. */
+    rows.sort((a,b)=> (order[a.v.cls]-order[b.v.cls])
+      || ((b.vol?.total ?? -1) - (a.vol?.total ?? -1))
+      || ((a.rank ?? 999)-(b.rank ?? 999)));
+    const hasVol = rows.some(x => x.vol && !x.vol.unknown);
     window.__kfRows = rows;
 
-    const soon = rows.filter(x=>x.v.cls==="soon");
-    const now  = rows.filter(x=>x.v.cls==="now");
+    /* 검색량 0 인 말은 공략 대상에서 뺀다. 표에서는 "버리세요"라고 해 놓고
+       아래 요약에서는 "먼저 공략하세요"라고 하던 자리다 - 한 화면에서 두 말을 했다.
+       순위가 22위든 3위든, 한 달에 아무도 안 찾으면 잡을 이유가 없다. */
+    const alive = x => !(x.vol && !x.vol.unknown && x.vol.total === 0);
+    const soon = rows.filter(x=>x.v.cls==="soon" && alive(x));
+    const now  = rows.filter(x=>x.v.cls==="now"  && alive(x));
     $("kf-out").innerHTML = `<div class="srv-res">
       <h5>조회 결과 ${rows.length}개</h5>
       <p class="hint" style="margin:0 0 10px">
         <b>이 순위는 네이버에 그 말을 그대로 검색했을 때 우리 가게가 몇 번째로 나오는가</b>입니다.
         광고 자리가 아니라 실제 검색 결과입니다. 50곳까지 훑어서 없으면 "아직 밖"으로 적습니다.
         1~10위면 손님이 첫 화면에서 우리를 봅니다. 그 밖은 사실상 안 보인다고 보시면 됩니다.</p>
-      <div class="kwf-scroll"><table class="kwf"><thead><tr><th>키워드</th><th>내 순위</th><th>판정</th><th>무엇을 하면 되나</th></tr></thead><tbody>
+      ${hasVol ? `<p class="hint" style="margin:0 0 10px">
+        <b>월 검색량</b>은 네이버 검색광고가 알려주는 한 달 조회수입니다(PC + 모바일).
+        플레이스는 우리 행정구역 안에서만 노출되므로 절대치보다 <b>후보끼리의 크기 비교</b>로 보세요.
+        <b>0</b>은 아무도 안 찾는 말이고, <b>—</b>는 네이버가 값을 안 준 것입니다. 둘은 다릅니다.</p>` : ""}
+      <div class="kwf-scroll"><table class="kwf"><thead><tr><th>키워드</th>${
+        hasVol ? "<th>월 검색량</th><th>경쟁</th>" : ""}<th>내 순위</th><th>판정</th><th>무엇을 하면 되나</th></tr></thead><tbody>
       ${rows.map(x=>`<tr>
         <td>${x.keyword}</td>
+        ${hasVol ? `<td class="r">${volCell(x.vol)}</td>
+        <td class="r">${x.vol && x.vol.comp ? x.vol.comp : "—"}</td>` : ""}
         <td class="r">${x.found ? x.rank + "위" : "—"}</td>
         <td><span class="v ${x.v.cls}">${x.v.t}</span></td>
         <td class="act">${x.act}</td></tr>`).join("")}
@@ -4976,8 +5039,16 @@ $("kf-rank")?.addEventListener("click", async ()=>{
       <div class="kwf-note">
         <b>1페이지 ${now.length}개 · 한 발 남음 ${soon.length}개 · 아직 밖 ${
           rows.length - now.length - soon.length}개</b><br>
+        ${(()=>{ if(!hasVol) return "";
+          const dead = rows.filter(x=>x.vol && !x.vol.unknown && x.vol.total === 0);
+          const big  = rows.filter(x=>x.vol && x.vol.total >= 500);
+          return (dead.length ? `<b>한 달에 찾는 사람이 0명인 말 ${dead.length}개</b> — ${
+              dead.slice(0,4).map(x=>x.keyword).join(", ")}. 잡아도 손님이 안 옵니다. 후보에서 빼세요.<br>` : "")
+            + (big.length ? `<b>제일 값어치가 큰 말</b> — ${big.slice(0,3).map(
+                x=>`${x.keyword}(${x.vol.total.toLocaleString("ko-KR")}명)`).join(", ")}.<br>` : ""); })()}
         ${soon.length
-          ? `<b>먼저 공략할 키워드 ${soon.length}개</b> — ${soon.slice(0,3).map(x=>x.keyword).join(", ")}.
+          ? `<b>먼저 공략할 키워드 ${soon.length}개</b> — ${soon.slice(0,3).map(
+              x=>`${x.keyword}${x.vol && !x.vol.unknown ? `(${x.vol.total.toLocaleString("ko-KR")}명)` : ""}`).join(", ")}.
              이미 30위 안이라 한 발만 더 밀면 1페이지입니다. 여기에 자원을 모으세요.`
           : now.length
             ? `이미 1~2페이지에 있는 키워드가 ${now.length}개입니다. 그 자리를 지키면서
