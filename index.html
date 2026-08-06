@@ -2730,6 +2730,32 @@ function introAudit(text, o){
   ];
 }
 
+/* 검색광고에서 받아 온 월 검색량. 키가 없으면 비어 있고, 그러면 예전처럼 돈다.
+   대표키워드는 다섯 칸뿐이라 "무엇을 넣을까"보다 "무엇을 뺄까"가 더 어렵다.
+   그 판단의 근거가 검색량이다 - 이게 없을 때는 순서대로 앞의 다섯 개를 줬다. */
+let KW_VOL = {};
+const kwVolOf = k => KW_VOL[norm(k)] || null;
+
+/* 대표키워드 후보의 검색량을 받아 와서 그 칸만 다시 그린다 */
+async function enrichKwVolume(o){
+  if(!SERVER?.searchad?.ready) return;
+  const A = o.area, list = [];
+  const add = k => { const n = String(k||"").replace(/\s+/g,""); if(n && !list.includes(n)) list.push(n); };
+  o.keywords.forEach(add);
+  (KEYWORD_BASE[o.type]||KEYWORD_BASE["헬스장"])(A).forEach(add);
+  if(o.fac.includes("24시간 운영")) add(`${A}24시간헬스장`);
+  if(o.fac.includes("여성 전용존")) add(`${A}여성헬스장`);
+  add(o.name);
+  o.repkw.forEach(add);
+  if(!list.length) return;
+  try{
+    const r = await (await fetch(apiUrl(
+      `/api/kw-volume?keywords=${encodeURIComponent(list.slice(0,30).join(","))}`))).json();
+    (r.rows || []).forEach(x => { KW_VOL[norm(x.keyword)] = x; });
+    if(Object.keys(KW_VOL).length) setBox("o-kw", buildKeywords(getInfo()));
+  }catch{ /* 검색량은 덤이다. 못 받아 와도 대표키워드는 그대로 나온다 */ }
+}
+
 function buildKeywords(o){
   const A=o.area;
   const list = [];
@@ -2739,6 +2765,9 @@ function buildKeywords(o){
   else if(o.fac.includes("여성 전용존")) list.push(`${A}여성헬스장`);
   const nm = o.name.replace(/\s+/g,"");
   if(!list.includes(nm)) list.push(nm);
+  /* 지금 등록해 두신 칸도 후보에 넣는다. 검색량을 알게 되면 "지금 것이 더 낫다"는
+     결론이 나올 수 있는데, 후보에 없으면 그 비교 자체를 못 한다. */
+  o.repkw.forEach(k=>{ const n=k.replace(/\s+/g,""); if(n && !list.includes(n)) list.push(n); });
 
   /* 왜 이 키워드인지, 지금 등록된 것과 무엇이 다른지까지 같이 적는다.
      번호만 다섯 줄 주면 사장님은 이걸 넣어야 할지 말지 판단할 근거가 없다. */
@@ -2755,11 +2784,41 @@ function buildKeywords(o){
     return "업종 표현이 다른 손님을 받는 칸";
   };
 
-  const picked = list.slice(0,5);
+  /* 다섯 칸을 무엇으로 채울지. 예전에는 만든 순서대로 앞의 다섯 개였다.
+     검색량을 알면 그럴 이유가 없다 - 많이 찾는 말부터 넣는다.
+     다만 목표 키워드와 가게 이름은 검색량과 무관하게 한 칸씩 가져간다.
+     가게 이름으로 찾아오는 손님은 검색량이 적어도 이미 우리를 찾는 손님이다. */
+  const known = list.filter(k => kwVolOf(k));
+  const hasVol = known.length >= 3;
+  /* 목표 키워드와 가게 이름은 원래 무조건 한 칸씩 가져갔다. 그런데 그러다
+     한 달에 아무도 안 찾는 말이 2번 칸에 들어가고, 바로 아래에서 우리가
+     "이 칸은 아무도 안 찾습니다"라고 적는 일이 생겼다. 한 화면에서 두 말을 한 것이다.
+     목표로 정하신 말이라도 찾는 사람이 없으면 다섯 칸에 넣을 이유가 없다. */
+  const dead = k => { const v = kwVolOf(k); return Boolean(v && !v.unknown && v.total === 0); };
+  const must = k => !dead(k)
+                 && (o.keywords.some(x=>norm(x.replace(/\s+/g,"")) === norm(k))
+                     || norm(k) === norm(nm));
+  let picked;
+  if(hasVol){
+    const val = k => { const v = kwVolOf(k); return v && !v.unknown ? v.total : -1; };
+    const rest = list.filter(k => !must(k))
+      /* 한 달에 아무도 안 찾는 말은 다섯 칸에 넣을 이유가 없다.
+         값을 못 받은 것(-1)은 버리지 않는다 - 모르는 것과 0 은 다르다. */
+      .filter(k => val(k) !== 0)
+      .sort((a,b) => val(b) - val(a));
+    picked = [...list.filter(must), ...rest].slice(0,5);
+  } else {
+    picked = list.slice(0,5);
+  }
+  const volTail = k => {
+    const v = kwVolOf(k);
+    if(!v || v.unknown) return hasVol ? " · 검색량 모름" : "";
+    return ` · 한 달 ${v.total.toLocaleString("ko-KR")}명${v.comp ? ` · 경쟁 ${v.comp}` : ""}`;
+  };
   const body = picked.map((k,i)=>{
     const len = [...k].length;
     const already = nowN.includes(norm(k));
-    return `${i+1}. ${k}  (${len}자${already ? ", 이미 등록됨" : ", 새로 넣을 것"})\n   - ${why(k)}`;
+    return `${i+1}. ${k}  (${len}자${already ? ", 이미 등록됨" : ", 새로 넣을 것"}${volTail(k)})\n   - ${why(k)}`;
   }).join("\n");
 
   /* 지금 등록돼 있는데 추천에 없는 칸 = 뺄 후보. 오타면 그 칸은 아무것도 못 잡는다. */
@@ -2776,16 +2835,40 @@ function buildKeywords(o){
     /* "봉명역" 에서 "봉명" 만 뽑아야 "봉명동헬스장" 과 맞는다 */
     .map(x => String(x).replace(/역$|사거리$|정류장$|입구$/, "").trim())
     .filter(x => [...x].length >= 2))];
-  const typo  = A ? now.filter(k => !norm(k).includes(norm(A))
-                                 && !near.some(x => norm(k).includes(norm(x)))) : [];
-  const nearKw = A ? now.filter(k => !norm(k).includes(norm(A))
-                                  && near.some(x => norm(k).includes(norm(x)))) : [];
+  /* 검색량이 있으면 오타가 아니다. 한 달에 220명이 그 말을 실제로 치고 있는데
+     우리가 "오타 아닙니까" 하고 물으면 사장님이 멀쩡한 칸을 지우신다.
+     역·정류장 이름을 못 읽어 왔을 때도 이 잣대 하나면 걸러진다. */
+  const alive = k => { const v = kwVolOf(k); return Boolean(v && !v.unknown && v.total > 0); };
+  const odd = A ? now.filter(k => !norm(k).includes(norm(A)) && !alive(k)) : [];
+  const typo  = odd.filter(k => !near.some(x => norm(k).includes(norm(x))));
+  const nearKw = odd.filter(k =>  near.some(x => norm(k).includes(norm(x))));
+
+  /* 지금 등록해 두신 칸 중에 아무도 안 찾는 말이 있으면 그게 제일 급하다.
+     다섯 칸뿐인데 한 칸이 죽어 있으면 20%를 버리고 있는 것이다.
+     예전에는 "2주간 유입이 없었다면 교체 후보"라고 사장님더러 확인하라고 했다.
+     이제는 확인할 필요가 없다 - 검색량이 0이면 유입이 0인 게 당연하다. */
+  const deadNow = hasVol ? now.filter(dead) : [];
+  /* 바꿔 넣을 것을 권할 때는 "이미 그 다섯 칸에 든 것" 말고, 아직 안 쓰는 것 중에서
+     실제로 찾는 사람이 있는 말을 골라야 한다. 예전에는 추천 목록 안에서 골라서
+     "이미 넣기로 한 것으로 바꾸세요"라는 말이 나왔다. */
+  const spare = list.filter(k => !nowN.includes(norm(k)) && !picked.includes(k))
+    .filter(k => { const v = kwVolOf(k); return v && !v.unknown && v.total > 0; })
+    .sort((a,b) => (kwVolOf(b)?.total ?? 0) - (kwVolOf(a)?.total ?? 0));
 
   return `${body}
+${hasVol ? `\n※ 위 다섯 칸은 월 검색량이 많은 순입니다. 목표 키워드와 가게 이름은 앞자리를 가져가되, 한 달에 찾는 사람이 0명인 말은 목표라도 뺐습니다.` : ""}
 
 [지금 등록된 5칸]
-${now.length ? now.map((k,i)=>`${i+1}. ${k}`).join("\n") : "(수집되지 않았습니다)"}
-${drop.length ? `\n[바꿔 볼 칸] ${drop.join(", ")}\n  위 추천에 없는 값입니다. 2주간 유입이 없었다면 교체 후보입니다.` : ""}${
+${now.length ? now.map((k,i)=>`${i+1}. ${k}${(()=>{ const v=kwVolOf(k);
+  return (hasVol && v && !v.unknown) ? `  (한 달 ${v.total.toLocaleString("ko-KR")}명)` : ""; })()}`).join("\n")
+  : "(수집되지 않았습니다)"}
+${deadNow.length ? `\n[이 칸은 아무도 안 찾습니다] ${deadNow.join(", ")}\n  한 달 검색량이 0입니다. 1위를 해도 손님이 안 옵니다. 다섯 칸뿐인데 한 칸을 버리고 계신 겁니다.${
+  spare.length ? ` 위 추천 중 ${spare.slice(0,2).join(", ")} 로 바꾸세요.` : ""}` : ""}${
+(()=>{ /* 이미 위에서 한 번 얘기한 칸을 또 의심하지 않는다.
+     검색량이 있는 칸도 뺀다 - 근거가 있는데 "2주 지켜보세요"라고 하면 헛일을 시키는 것이다. */
+  const d = drop.filter(k => !deadNow.includes(k) && !typo.includes(k)
+                          && !nearKw.includes(k) && !alive(k));
+  return d.length ? `\n[바꿔 볼 칸] ${d.join(", ")}\n  위 추천에 없는 값입니다. 2주간 유입이 없었다면 교체 후보입니다.` : ""; })()}${
 typo.length ? `\n\n[오타 확인] ${typo.join(", ")}\n  지역명 "${A}"이 안 들어 있습니다. 오타라면 그 칸은 아무것도 못 잡습니다. 관리자 화면에서 자기가 쓴 글이라 눈에 잘 안 띕니다.` : ""}${
 nearKw.length ? `\n\n[옆 동네 노림수] ${nearKw.join(", ")}\n  "${A}"은 없지만 근처 역·정류장 이름과 맞물립니다. 일부러 넣으신 것이면 그대로 두세요.` : ""}
 
@@ -4454,6 +4537,10 @@ function buildWriter(o){
   renderAudit(intro, o);
   renderCharWarn();
   setBox("o-kw", buildKeywords(o));
+  /* 검색량은 서버를 한 번 다녀와야 안다. 진단을 붙잡아 두면 안 되므로
+     먼저 예전 모양으로 그려 놓고, 값이 오면 그 칸만 다시 그린다.
+     키가 없거나 못 받아 오면 예전 모양 그대로 남는다. */
+  enrichKwVolume(o);
   /* 답글은 이모지와 문단 나눔이 모양의 일부다. naverSafe 를 쓰면 둘 다 지워진다. */
   setBox("o-reply", replySafe(buildReplies(o)));
   renderRpKw();
