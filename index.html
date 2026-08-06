@@ -2815,6 +2815,7 @@ function buildKeywords(o){
   const volTail = k => {
     const v = kwVolOf(k);
     if(!v || v.unknown) return hasVol ? " · 검색량 모름" : "";
+    if(v.lt) return ` · 찾는 사람 거의 없음(10 미만)${v.comp ? ` · 경쟁 ${v.comp}` : ""}`;
     return ` · 한 달 ${v.total.toLocaleString("ko-KR")}명${v.comp ? ` · 경쟁 ${v.comp}` : ""}`;
   };
   const body = picked.map((k,i)=>{
@@ -2862,7 +2863,8 @@ ${hasVol ? `\n※ 위 다섯 칸은 월 검색량이 많은 순입니다. 목표
 
 [지금 등록된 5칸]
 ${now.length ? now.map((k,i)=>`${i+1}. ${k}${(()=>{ const v=kwVolOf(k);
-  return (hasVol && v && !v.unknown) ? `  (한 달 ${v.total.toLocaleString("ko-KR")}명)` : ""; })()}`).join("\n")
+  if(!hasVol || !v || v.unknown) return "";
+  return v.lt ? `  (찾는 사람 거의 없음)` : `  (한 달 ${v.total.toLocaleString("ko-KR")}명)`; })()}`).join("\n")
   : "(수집되지 않았습니다)"}
 ${deadNow.length ? `\n[이 칸은 아무도 안 찾습니다] ${deadNow.join(", ")}\n  한 달 검색량이 0입니다. 1위를 해도 손님이 안 옵니다. 다섯 칸뿐인데 한 칸을 버리고 계신 겁니다.${
   spare.length ? ` 위 추천 중 ${spare.slice(0,2).join(", ")} 로 바꾸세요.` : ""}` : ""}${
@@ -4972,7 +4974,8 @@ function renderCandidates(list){
     const v = kwVolOf(k);
     /* 후보 칩에 검색량을 같이 적는다. 무엇을 고를지 여기서 이미 갈린다 -
        조회에 하나당 3~6초씩 걸리므로, 죽은 말을 고르시게 두면 그 시간이 통째로 샌다. */
-    const tail = (v && !v.unknown) ? `<i>${v.total.toLocaleString("ko-KR")}</i>` : "";
+    const tail = (v && !v.unknown)
+      ? `<i>${v.lt ? "10 미만" : v.total.toLocaleString("ko-KR")}</i>` : "";
     return `<span data-kw="${k}" class="${KF_PICK.includes(k) ? "" : "off"}">${k}${tail}</span>`;
   }).join("") || `<span class="kwf-none">지역과 업종을 먼저 채워 주세요.</span>`;
 }
@@ -5033,6 +5036,11 @@ function kfVerdict(rank){
    둘을 같게 보여주면 사장님이 멀쩡한 후보를 버리시게 된다. */
 function volCell(v){
   if(!v || v.unknown) return "—";
+  /* 네이버가 "< 10" 으로 준 것을 숫자로 적으면 우리가 아는 척하는 것이 된다.
+     실제로 8개가 전부 "20 · PC 10 · 모바일 10" 으로 똑같이 나왔는데,
+     그건 측정값이 아니라 "열 미만"이라는 답을 우리가 10 으로 바꿔 적은 것이었다. */
+  if(v.lt) return `<b>거의 없음</b><i style="font-style:normal;color:var(--muted);font-size:11px"> `
+    + `네이버가 "10 미만"이라고만 알려줍니다</i>`;
   const t = (v.total ?? 0).toLocaleString("ko-KR");
   return `<b>${t}</b><i style="font-style:normal;color:var(--muted);font-size:11px"> `
     + `PC ${(v.pc||0).toLocaleString("ko-KR")} · 모바일 ${(v.mo||0).toLocaleString("ko-KR")}</i>`;
@@ -5059,6 +5067,12 @@ function kfAction(x, o){
     return rank != null && rank <= 10
       ? "순위는 높지만 한 달에 찾는 사람이 없습니다. 잡아 둬도 손님이 안 옵니다 - 다른 말로 옮기세요."
       : "한 달에 찾는 사람이 없는 말입니다. 순위와 상관없이 버리세요.";
+  }
+  /* "< 10" 을 숫자로 단정하지 않는다. 네이버가 모른다고 한 것이다. */
+  if(v && v.lt){
+    return rank != null && rank <= 10
+      ? "순위는 높지만 찾는 사람이 거의 없습니다(네이버가 10 미만이라고만 알려줍니다). 그대로 두시고 다른 말에 힘을 쓰세요."
+      : "찾는 사람이 거의 없는 말입니다(네이버가 10 미만이라고만 알려줍니다). 뒤로 미루세요.";
   }
   if(v && v.total < 30 && (rank == null || rank > 30)){
     return `한 달에 ${v.total}명이 찾습니다. 잡아도 손님 수가 거의 안 달라집니다. 뒤로 미루세요.`;

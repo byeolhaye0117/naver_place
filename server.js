@@ -1381,10 +1381,13 @@ async function searchAdProbe() {
    API 한도는 하루 단위로 걸린다. 사장님이 후보를 몇 번 다시 만드셔도 한도가 안 샌다. */
 const KWVOL_FILE = path.join(DATA_DIR, 'kw-volume.json');
 const kwNorm = k => String(k).replace(/\s+/g, '').toLowerCase();
+/* 네이버는 아주 적은 값을 "< 10" 으로 준다. 실제 숫자를 안 알려주는 것이다.
+   그걸 10 이라고 적으면 우리 화면이 "한 달에 20명이 찾습니다"라고 단정하게 된다 -
+   네이버가 모른다고 한 것을 우리가 아는 척하는 셈이다. 그 사실을 그대로 들고 간다. */
+const kwLt   = v => String(v ?? '').includes('<');
 const kwNum  = v => {
   const t = String(v ?? '').replace(/[^0-9]/g, '');
-  /* "< 10" 으로 오는 것이 있다. 0 으로 적으면 "아무도 안 찾는다"로 읽혀서 다르다. */
-  return t ? Number(t) : (String(v).includes('<') ? 5 : 0);
+  return t ? Number(t) : 0;
 };
 function kwVolCache() {
   try {
@@ -1416,6 +1419,7 @@ async function keywordVolume(list) {
       const n = kwNorm(x.relKeyword);
       if (cache.map[n]) continue;
       cache.map[n] = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
+                       lt: kwLt(x.monthlyPcQcCnt) || kwLt(x.monthlyMobileQcCnt),
                        comp: String(x.compIdx || '').trim() };
     }
     /* 못 찾은 것은 "0" 이 아니라 "모름" 이다. 둘을 섞으면 판단이 틀어진다. */
@@ -1452,6 +1456,7 @@ async function relatedKeywords(seed, area) {
   const rows = (r.data?.keywordList || []).map(x => {
     const k = String(x.relKeyword || '').trim();
     const v = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
+                lt: kwLt(x.monthlyPcQcCnt) || kwLt(x.monthlyMobileQcCnt),
                 comp: String(x.compIdx || '').trim() };
     /* 받아 온 김에 캐시에 넣어 둔다. 곧바로 순위 조회로 넘어가는 흐름이라
        거기서 또 물어볼 이유가 없다. */
