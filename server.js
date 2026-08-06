@@ -265,6 +265,40 @@ function harvestPlaces(node, acc = [], seen = new Set(), depth = 0) {
   return acc;
 }
 
+/* pcmap 목록 HTML 에서 순위 순서대로 업체를 뽑는다.
+
+   harvestPlaces 를 그냥 쓰면 안 된다. 그건 객체를 훑으며 나오는 대로 담는데,
+   아폴로 캐시에 담긴 순서는 검색 순위와 다르다 - 실제로 3위 가게가 맨 앞에 있었다.
+   순서는 businesses.items 배열에만 들어 있으므로 그 배열을 찾아 참조를 따라간다. */
+function placesFromListHtml(html) {
+  const at = String(html || '').indexOf('__APOLLO_STATE__');
+  if (at < 0) return null;
+  const s = html.indexOf('{', at);
+  if (s < 0) return null;
+  let state;
+  try { state = JSON.parse(extractBalanced(html, s)); } catch { return null; }
+  if (!state) return null;
+
+  let items = null;
+  (function walk(n, d) {
+    if (!n || typeof n !== 'object' || d > 8 || items) return;
+    if (n.businesses && Array.isArray(n.businesses.items)) { items = n.businesses.items; return; }
+    for (const v of Object.values(n)) walk(v, d + 1);
+  })(state, 0);
+  if (!items) return null;
+
+  const out = [];
+  for (const it of items) {
+    const node = it && it.__ref ? state[it.__ref] : it;
+    if (!node) continue;
+    const id = node.id, name = node.name;
+    if (id != null && name && /^\d{5,}$/.test(String(id))) {
+      out.push({ id: String(id), name: String(name).replace(/<[^>]*>/g, '') });
+    }
+  }
+  return out;
+}
+
 /* ============================================================================
  * 플레이스 ID 추출
  * ========================================================================== */
@@ -1621,8 +1655,12 @@ async function findRank(keyword, placeId, maxPages = 3) {
       try {
         const r = await get(url);
         const json = tryJson(r.text);
-        if (!json) { attempts.push({ url, status: r.status, result: 'JSON 파싱 실패' }); break; }
-        const places = harvestPlaces(json);
+        /* pcmap 목록은 JSON 이 아니라 HTML 로 온다. 예전에는 여기서 그냥 포기했는데,
+           그 안에 순위 순서가 그대로 들어 있다(businesses.items 가 차례대로 된 배열).
+           네이버가 JSON 주소를 막거나 서버 위치에 따라 그쪽이 안 열릴 때
+           이 경로가 마지막으로 남는 길이다. */
+        const places = json ? harvestPlaces(json) : placesFromListHtml(r.text);
+        if (!places) { attempts.push({ url, status: r.status, result: 'JSON 파싱 실패' }); break; }
         if (!places.length) { attempts.push({ url, status: r.status, result: '업체 목록 없음' }); break; }
         usable = true;
         collected.push(...places);
@@ -1922,6 +1960,46 @@ async function analyzeCompetitors(keyword, myUrl, topN = 3) {
 function readHistory() {
   try { return JSON.parse(fs.readFileSync(HISTORY, 'utf8')); }
   catch { return { records: [] }; }
+}
+
+/* 저장소에 올려 둔 기록을 가져와 로컬과 합친다.
+
+   렌더 무료 요금제는 배포할 때마다 디스크를 지운다. 그래서 서버가 자기 파일만
+   보고 있으면, 배포 한 번에 그동안의 순위 기록이 통째로 없어진 화면이 된다.
+   실제로 그렇게 지워지고 있었고, 그 바람에 "이 도구를 써서 순위가 올랐는가"를
+   물어볼 근거가 하나도 남아 있지 않았다.
+
+   진짜 기록은 깃허브에 있다(매일 액션이 재서 커밋한다). 여기서는 그걸 받아
+   로컬에 있는 것과 합쳐 보여 준다. 못 받아 오면 있는 것만 보여 준다 -
+   못 물어본 것을 "기록 없음"으로 만들지 않는다. */
+const HIST_RAW = process.env.HISTORY_URL
+  || 'https://raw.githubusercontent.com/byeolhaye0117/naver_place/'
+   + 'claude/webpage-dev-analysis-1rmgca/data/rank-history.json';
+let histCache = { at: 0, records: null };
+
+async function readHistoryMerged() {
+  const local = readHistory().records || [];
+  let remote = [];
+  const fresh = Date.now() - histCache.at < 10 * 60 * 1000;   // 10분이면 충분하다
+  if (fresh && histCache.records) {
+    remote = histCache.records;
+  } else {
+    try {
+      const r = await get(HIST_RAW);
+      const j = r.ok ? tryJson(r.text) : null;
+      remote = (j && Array.isArray(j.records)) ? j.records : [];
+      histCache = { at: Date.now(), records: remote };
+    } catch { remote = histCache.records || []; }
+  }
+  /* 같은 시각·같은 키워드는 한 번만. 액션이 잰 것과 화면에서 조회한 것이 겹칠 수 있다. */
+  const seen = new Set(), out = [];
+  for (const rec of [...remote, ...local]) {
+    const k = `${rec.ts}|${rec.keyword}|${rec.placeId}`;
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(rec);
+  }
+  out.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  return out;
 }
 
 function appendHistory(rec) {
@@ -2317,7 +2395,7 @@ const server = http.createServer(async (req, res) => {
 
     if (u.pathname === '/api/history') {
       const kw = q.get('keyword');
-      const all = readHistory().records;
+      const all = await readHistoryMerged();
       return sendJson(res, 200, { ok: true, records: kw ? all.filter(r => r.keyword === kw) : all });
     }
 
@@ -2641,6 +2719,38 @@ async function track(keyword, url) {
   console.log(`[${stamp}] "${keyword}" → ${r.found ? r.rank + '위' : `${r.scanned}위 밖`}`);
 }
 
+/* --track-all : rank-targets.json 을 읽어 한 번에 여러 개를 잰다.
+   GitHub Actions 가 매일 이걸 부르고, 쌓인 기록을 저장소에 도로 올린다.
+   렌더 무료 요금제는 배포할 때마다 디스크를 지운다. 서버가 스스로 쌓아 봐야
+   다음 배포에 없어지므로, 기록을 남길 곳을 서버 바깥에 둔 것이다. */
+async function trackAll() {
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'rank-targets.json'), 'utf8')); }
+  catch (e) { console.error('rank-targets.json 을 읽지 못했습니다:', e.message); process.exit(1); }
+
+  const url = String(cfg.place || '').trim();
+  const list = (cfg.keywords || []).map(k => String(k).trim()).filter(Boolean);
+  if (!url || !list.length) { console.error('rank-targets.json 에 place 와 keywords 가 있어야 합니다.'); process.exit(1); }
+
+  const id = await resolvePlaceId(url);
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  let done = 0;
+  for (const keyword of list) {
+    try {
+      const r = await findRank(keyword, id);
+      if (!r.ok) { console.error(`  ✗ "${keyword}" — ${r.error}`); continue; }
+      appendHistory({ keyword, placeId: id, rank: r.rank, scanned: r.scanned });
+      done++;
+      console.log(`  ✓ "${keyword}" → ${r.found ? r.rank + '위' : `${r.scanned}위 밖`}`);
+    } catch (e) { console.error(`  ✗ "${keyword}" — ${e.message}`); }
+    await new Promise(r => setTimeout(r, 1500));   // 네이버에 몰아치지 않는다
+  }
+  console.log(`[${stamp}] ${done}/${list.length}개 기록`);
+  /* 하나도 못 쟀으면 실패로 끝낸다 - 빈 기록을 커밋해서 "쟀는데 결과가 없다"로
+     보이게 두면, 나중에 그래프가 끊긴 이유를 알 수 없게 된다. */
+  if (!done) process.exit(1);
+}
+
 /* PowerShell에서 "키워드""URL" 처럼 공백 없이 붙여 넣으면 셸이 둘을 한 인자로 합친다.
    흔한 실수라서, 붙은 자리를 찾아 갈라 주고 그렇게 했다고 알려 준다. */
 function splitArgs(rest) {
@@ -2667,6 +2777,9 @@ if (argv.includes('--probe')) {
 } else if (argv.includes('--dump')) {
   const a = splitArgs(argv.slice(argv.indexOf('--dump') + 1));
   dump(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
+
+} else if (argv.includes('--track-all')) {
+  trackAll().catch(e => { console.error('오류:', e.message); process.exit(1); });
 
 } else if (argv.includes('--track')) {
   const a = splitArgs(argv.slice(argv.indexOf('--track') + 1));

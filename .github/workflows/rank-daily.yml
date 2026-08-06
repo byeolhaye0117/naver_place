@@ -1,0 +1,53 @@
+# 매일 순위를 재서 저장소에 쌓는다.
+#
+# 왜 서버가 아니라 여기서 재는가:
+# 렌더 무료 요금제는 배포할 때마다 디스크를 지운다. 서버가 아무리 성실히 쌓아도
+# 다음 배포에 통째로 없어진다. 그러면 "무엇을 했더니 순위가 어떻게 움직였나"를
+# 잴 방법이 사라진다. 그래서 기록을 서버 바깥, 저장소 안에 둔다.
+#
+# 비밀번호나 토큰을 따로 넣을 필요가 없다. GITHUB_TOKEN 은 깃허브가 알아서 준다.
+
+name: 매일 순위 기록
+
+on:
+  schedule:
+    # 21:00 UTC = 한국시간 새벽 6시. 영업 시작 전에 그날 자리를 남긴다.
+    - cron: "0 21 * * *"
+  workflow_dispatch:        # 버튼으로 바로 돌려볼 수도 있게
+
+permissions:
+  contents: write           # 잰 결과를 저장소에 도로 올리기 위해 필요하다
+
+concurrency:
+  group: rank-daily
+  cancel-in-progress: false # 기록을 쌓는 일이라 중간에 끊지 않는다
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 순위 재기
+        run: node server.js --track-all
+
+      - name: 기록 올리기
+        run: |
+          if git diff --quiet -- data/rank-history.json; then
+            echo "달라진 것이 없습니다. 올리지 않습니다."
+            exit 0
+          fi
+          git config user.name  "rank-bot"
+          git config user.email "rank-bot@users.noreply.github.com"
+          git add data/rank-history.json
+          git commit -m "순위 기록 $(date -u +'%Y-%m-%d')"
+          # 그 사이 다른 커밋이 올라왔을 수 있다. 한 번 당겨서 얹고 민다.
+          for i in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "다시 시도 $i"; sleep $((i * 5))
+          done
+          exit 1
