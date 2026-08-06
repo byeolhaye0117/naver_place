@@ -509,6 +509,7 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .v.now{background:var(--ok-bg);color:var(--ok-fg)}
 .v.soon{background:var(--acc-bg);color:var(--acc-fg)}
 .v.later{background:var(--track);color:var(--muted)}
+.kwf-h{margin:0 0 4px;font-size:13.5px;font-weight:800}
 .kwf-note{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.75}
 .kwf-use{margin-top:12px}
 
@@ -1302,6 +1303,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <div id="kf-cand" class="kwf-cand"></div>
     <div class="btn-row">
       <button class="btn ghost" id="kf-make" type="button">후보 만들기</button>
+      <button class="btn ghost" id="kf-rivals" type="button">상위 가게가 넣은 대표키워드 보기</button>
       <button class="btn" id="kf-rank" type="button">순위 일괄 조회</button>
     </div>
     <div id="kf-out"></div>
@@ -5020,6 +5022,115 @@ $("kf-cand")?.addEventListener("click", e=>{
   else if(KF_PICK.length >= n){ showToast(`한 번에 ${n}개까지만 조회합니다`); return; }
   else KF_PICK.push(k);
   el.classList.toggle("off", on);
+});
+
+/* ── 상위 가게가 다섯 칸에 무엇을 넣었나 ──────────────────────────────
+   대표키워드는 관리자 화면에서 넣는 값이라 남의 것은 못 본다고 생각하기 쉽다.
+   그런데 플레이스 페이지에 그대로 실려 나온다. 우리 것을 그렇게 읽고 있었으니
+   경쟁사 것도 같은 방법으로 읽힌다.
+
+   4위에서 위로 올라가려면 이게 필요하다. "여럿이 쓰는데 우리만 없는 말"이
+   그 동네에서 통하는데 우리가 안 잡고 있는 자리다. */
+$("kf-rivals")?.addEventListener("click", async ()=>{
+  if(needServer()) return;
+  const url = $("s-url").value.trim();
+  const o = getInfo();
+  const kw = (o.keywords[0] || `${o.area} ${SERVICE_WORD[o.type] || "헬스장"}`).trim();
+  if(!kw){ alert("먼저 목표 키워드를 채워 주세요."); return; }
+  const btn = $("kf-rivals");
+  btn.disabled = true; btn.textContent = "상위 가게 확인 중… (1분쯤)";
+  $("kf-out").innerHTML = `<div class="srv-res"><h5>"${escH(kw)}" 상위 가게를 한 곳씩 열어보는 중…</h5>
+    <p class="hint">가게마다 3~5초 걸립니다. 창을 닫지 마세요.</p></div>`;
+  try{
+    const r = await (await fetch(apiUrl(`/api/rivals?keyword=${encodeURIComponent(kw)}`
+      + `&url=${encodeURIComponent(url)}&n=5`))).json();
+    if(!r.ok){ $("kf-out").innerHTML = srvError("상위 가게 조회 실패", r); return; }
+    const cell = x => {
+      if(x.lt) return `거의 없음`;
+      return (x.total != null) ? `${x.total.toLocaleString("ko-KR")}명` : "—";
+    };
+    /* 두 곳이 쓴다고 다 따라 할 일이 아니다. "쌍용동다이어트"를 두 곳이 넣었는데
+       한 달 검색량이 0이면 그건 그 두 곳이 잘못 넣은 것이다.
+       남이 한다는 이유만으로 따라 하면 우리도 한 칸을 버리게 된다. */
+    /* 표마다 뜻이 다르다. "우리도 쓰는 말" 표에서 "우리만 없습니다"라고 적으면
+       바로 앞 문장과 어긋난다 - 한 화면에서 두 말을 하는 셈이다. */
+    const verdict = (x, kind) => {
+      if(x.total == null && !x.lt) return { t:"모름", why:"검색량을 못 받았습니다" };
+      const none = x.lt || x.total === 0;
+      if(kind === "shared"){
+        if(none) return { t:"빼세요", why:"우리도 남도 헛짚은 칸입니다" };
+        return { t:"지키기", why:x.total >= 300 ? "큰 말이라 놓치면 크게 잃습니다" : "" };
+      }
+      if(kind === "rare"){
+        if(none) return { t:"빈 이유가 있음", why:"아무도 안 찾아서 비어 있는 것입니다" };
+        return { t:x.total >= 300 ? "빈자리" : "보통",
+                 why:x.total >= 300 ? "한 곳만 쓰는데 찾는 사람은 많습니다" : "" };
+      }
+      if(x.lt) return { t:"뒤로", why:"찾는 사람이 거의 없습니다" };
+      if(x.total === 0) return { t:"따라 하지 마세요", why:"저기도 잘못 넣은 칸입니다" };
+      if(x.total >= 300) return { t:"먼저", why:"많이 찾는데 우리만 없습니다" };
+      return { t:"보통", why:"" };
+    };
+    const rowsOf = (list, cls, kind) => list.length
+      ? `<div class="kwf-scroll"><table class="kwf"><thead><tr>
+          <th>키워드</th><th>몇 곳이 쓰나</th><th>월 검색량</th><th>판정</th><th>어디가 쓰나</th></tr></thead><tbody>
+        ${list.slice(0,12).map(x=>{ const v = verdict(x, kind);
+          const vc = /먼저|빈자리|지키기/.test(v.t) ? (v.t === "지키기" ? "now" : "soon")
+                   : /따라 하지|뒤로|빼세요|빈 이유/.test(v.t) ? "later" : cls;
+          return `<tr>
+          <td>${escH(x.keyword)}</td>
+          <td class="r"><span class="v ${cls}">${x.n}곳</span></td>
+          <td class="r">${cell(x)}</td>
+          <td><span class="v ${vc}">${v.t}</span>${v.why ? `<i style="font-style:normal;color:var(--muted);font-size:11px"> ${v.why}</i>` : ""}</td>
+          <td class="act">${escH((x.who||[]).slice(0,3).join(", "))}</td></tr>`; }).join("")}
+        </tbody></table></div>` : "";
+    $("kf-out").innerHTML = `<div class="srv-res">
+      <h5>"${escH(kw)}" 상위 ${r.checked}곳이 넣은 대표키워드</h5>
+      <p class="hint" style="margin:0 0 10px">
+        대표키워드는 관리자 화면에서 넣는 값이지만 <b>플레이스 페이지에 그대로 실려 나옵니다.</b>
+        우리 것을 그렇게 읽고 있었으니 남의 것도 같은 방법으로 읽힙니다.
+        ${r.counted < r.checked ? `<b>${r.checked - r.counted}곳</b>은 다섯 칸을 등록하지 않았거나 못 읽어서 셈에서 뺐습니다.` : ""}</p>
+
+      ${r.missing.length ? `<h6 class="kwf-h">여럿이 쓰는데 우리만 없는 말 ${r.missing.length}개</h6>
+        <p class="hint" style="margin:0 0 8px">그 동네에서 통하는 말인데 우리 다섯 칸에 없습니다.
+          <b>여기가 제일 먼저 볼 자리입니다.</b></p>
+        ${rowsOf(r.missing, "soon", "missing")}` : `<h6 class="kwf-h">여럿이 쓰는데 우리만 없는 말 — 없습니다</h6>
+        <p class="hint">상위 가게들이 쓰는 말은 이미 다 잡고 계십니다.</p>`}
+
+      ${r.shared.length ? `<h6 class="kwf-h" style="margin-top:14px">우리도 쓰고 남도 쓰는 말 ${r.shared.length}개</h6>
+        <p class="hint" style="margin:0 0 8px">이 자리는 이미 붙어 있습니다. 빼지 마세요.</p>
+        ${rowsOf(r.shared, "now", "shared")}` : ""}
+
+      ${r.rare.length ? `<h6 class="kwf-h" style="margin-top:14px">한 곳만 쓰는 말 ${r.rare.length}개</h6>
+        <p class="hint" style="margin:0 0 8px">아직 빈자리일 수 있습니다.
+          다만 <b>아무도 안 찾아서 비어 있는 것</b>일 수도 있으니 월 검색량을 같이 보세요.</p>
+        ${rowsOf(r.rare, "later", "rare")}` : ""}
+
+      <h6 class="kwf-h" style="margin-top:14px">가게별로 무엇을 넣었나</h6>
+      <div class="kwf-scroll"><table class="kwf"><thead><tr>
+        <th>순위</th><th>가게</th><th>다섯 칸</th></tr></thead><tbody>
+      ${r.rivals.map(x=>`<tr${x.mine ? ' style="background:var(--ok-bg)"' : ''}>
+        <td class="r">${x.mine ? "우리" : (x.rank || "—") + "위"}</td>
+        <td>${escH(x.name)}</td>
+        <td class="act">${x.keywords.length ? escH(x.keywords.join(", "))
+          : `<i style="color:var(--muted)">${x.from === "" ? "등록 안 했거나 못 읽음" : escH(x.from)}</i>`}</td>
+      </tr>`).join("")}
+      </tbody></table></div>
+      ${(()=>{ const go = (r.missing||[]).filter(x=>!x.lt && x.total >= 300);
+        const bad = (r.missing||[]).filter(x=>x.total === 0);
+        return `<div class="kwf-note">
+        ${go.length ? `<b>지금 채울 것 ${go.length}개</b> — ${go.slice(0,3).map(
+            x=>`${x.keyword}(${x.total.toLocaleString("ko-KR")}명 · ${x.n}곳)`).join(", ")}.
+          여럿이 쓰는데 우리만 없고, 실제로 찾는 사람도 많습니다.<br>` : ""}
+        ${bad.length ? `<b>따라 하면 안 되는 것 ${bad.length}개</b> — ${bad.map(x=>x.keyword).join(", ")}.
+          여러 곳이 넣었지만 한 달 검색량이 0입니다. <b>저기도 한 칸을 버리고 있는 겁니다.</b><br>` : ""}
+        순위는 조회 시점 기준입니다. 남의 다섯 칸을 그대로 베끼지 마세요 —
+        같은 말에 다 몰려 있으면 그 안에서 또 순위 싸움입니다.
+        <b>우리가 실제로 하는 것</b>부터 채우세요.</div>`; })()}
+    </div>`;
+  }catch(e){
+    $("kf-out").innerHTML = `<div class="srv-err"><b>요청 실패</b><br>${e.message}</div>`;
+  }finally{ btn.disabled=false; btn.textContent="상위 가게가 넣은 대표키워드 보기"; }
 });
 
 /* 순위 구간별 판정 — 무엇을 지금 하고 무엇을 미룰지 */

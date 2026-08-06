@@ -1476,6 +1476,90 @@ async function relatedKeywords(seed, area) {
            got: rows.length };
 }
 
+/* ── 경쟁사가 다섯 칸에 무엇을 넣었나 ─────────────────────────────────
+   대표키워드는 관리자 화면에서 넣는 값이라 "남의 것은 못 본다"고 생각하기 쉽다.
+   그런데 플레이스 페이지에 keywordList 로 그대로 실려 나온다. 우리 것을 그렇게 읽고 있었으니
+   경쟁사 것도 같은 방법으로 읽힌다.
+
+   순위 조회가 이미 상위 업체의 id 와 이름을 돌려준다. 그 id 로 한 곳씩 들어가
+   다섯 칸을 모으면, "다들 쓰는 말"과 "아무도 안 쓴 빈자리"가 눈에 보인다.
+   4위에서 위로 올라가려면 이게 필요하다 - 지금 우리한테 없던 유일한 자리다. */
+async function rivalKeywords(keyword, myUrl, n) {
+  const kw = String(keyword || '').trim();
+  if (!kw) return { ok: false, error: '검색어가 필요합니다.' };
+  const top = Math.min(Math.max(Number(n) || 5, 1), 10);
+  let myId = null;
+  try { myId = myUrl ? await resolvePlaceId(myUrl) : null; } catch { /* 없어도 돈다 */ }
+
+  const r = await findRank(kw, myId || '0', 2);
+  /* findRank 는 전체 목록을 ranked 로 준다(top5 는 다섯 개로 잘린 것).
+     우리 가게가 6위 밖이면 top5 만 봐서는 비교 대상이 안 잡힌다. */
+  const list = (r.ranked || r.top5 || []).slice(0, top + 3);
+  if (!list.length) return { ok: false, error: r.error || '검색 결과를 읽지 못했습니다.' };
+
+  const rows = [];
+  /* 우리 가게가 상위 목록 밖에 있을 수 있다(지금 4위지만 더 밀릴 수도 있다).
+     그러면 비교 기준이 없어져서 "우리만 없는 말"을 셀 수 없다. 따로 데려온다. */
+  const inList = myId && list.some(x => String(x.id) === String(myId));
+  const queue = (!inList && myId) ? [{ id: myId, name: '(우리 가게)' }, ...list] : list;
+  for (const pl of queue) {
+    if (rows.filter(x => !x.mine).length >= top) break;
+    /* 우리 가게는 경쟁사가 아니다. 다만 비교 기준으로 따로 담는다. */
+    const mine = myId && String(pl.id) === String(myId);
+    try {
+      const c = await collectPlace(pl.id, null, { deep: false });
+      /* deriveInputs 는 다섯 칸을 쉼표 한 줄로 돌려준다("A, B, C"). 갈라서 쓴다.
+         등록값이 아니라 소개글에서 주워 온 것이면 다섯 칸이 아닐 수 있으므로
+         출처도 같이 들고 간다 - 근거가 다른 값을 같은 표에 섞으면 안 된다. */
+      const kws = String(c?.derived?.repkw || '').split(',').map(x => x.trim()).filter(Boolean);
+      const from = c?.derived?.repkwFrom || '';
+      const row = { id: String(pl.id), name: (mine && c?.data?.name) ? c.data.name : pl.name,
+                    rank: rows.filter(x => !x.mine).length + 1, mine, keywords: kws, from };
+      if (mine) { row.rank = r.found ? r.rank : null; rows.unshift(row); } else rows.push(row);
+    } catch (e) {
+      rows.push({ id: String(pl.id), name: pl.name, mine, keywords: [], error: String(e.message || e) });
+    }
+    await sleep(260);   // 연달아 두드리면 막힌다
+  }
+
+  /* 몇 곳이 같은 말을 쓰는지 센다. 여럿이 쓰는 말은 그 동네에서 통하는 말이라는 뜻이고,
+     한 곳만 쓰는 말은 아직 빈자리라는 뜻이다. 둘 다 값어치가 있는데 쓰임이 다르다. */
+  const rivals = rows.filter(x => !x.mine);
+  const counted = rivals.filter(x => x.from === '등록값');
+  const mineRow = rows.find(x => x.mine) || null;
+  const mineSet = new Set((mineRow?.keywords || []).map(kwNorm));
+  const tally = new Map();
+  for (const x of rivals) {
+    /* 소개글 끝줄에서 주워 온 것은 "등록한 다섯 칸"이 아니다. 세면 숫자가 거짓이 된다. */
+    if (x.from !== '등록값') continue;
+    for (const k of new Set(x.keywords.map(y => String(y).trim()).filter(Boolean))) {
+      const n2 = kwNorm(k);
+      if (!tally.has(n2)) tally.set(n2, { keyword: k, n: 0, who: [] });
+      const t = tally.get(n2); t.n++; t.who.push(x.name);
+    }
+  }
+  const all = [...tally.values()].sort((a, b) => b.n - a.n);
+  /* 검색량 칸이 제일 중요한데 처음 눌렀을 때 전부 "—"로 나왔다.
+     "남들이 쓰는 말"만 알고 "그 말을 몇 명이 찾는지"를 모르면 판단을 못 한다.
+     경쟁사 한 곳 여는 데 3~5초씩 걸리는 것에 비하면 이 왕복은 짧다. 받아 온다. */
+  await keywordVolume(all.slice(0, 24).map(x => x.keyword));
+  const cache = kwVolCache();
+  const withVol = x => {
+    const v = cache.map[kwNorm(x.keyword)];
+    return v ? { ...x, pc: v.pc, mo: v.mo, lt: v.lt, comp: v.comp, total: v.pc + v.mo } : x;
+  };
+  return { ok: true, keyword: kw, checked: rivals.length, counted: counted.length,
+    mine: mineRow ? { name: mineRow.name, keywords: mineRow.keywords } : null,
+    rivals: rows.map(x => ({ ...x, keywords: x.keywords })),
+    /* 여럿이 쓰는데 우리만 없는 말 - 제일 먼저 볼 자리 */
+    missing: all.filter(x => x.n >= 2 && !mineSet.has(kwNorm(x.keyword))).map(withVol),
+    /* 우리도 쓰고 남도 쓰는 말 - 이 자리는 이미 붙어 있다 */
+    shared: all.filter(x => mineSet.has(kwNorm(x.keyword))).map(withVol),
+    /* 한 곳만 쓰는 말 - 아직 빈자리일 수 있다 */
+    rare: all.filter(x => x.n === 1 && !mineSet.has(kwNorm(x.keyword))).map(withVol),
+  };
+}
+
 /* 한 번 눌러 보고 실제로 도는지 알려준다 */
 async function searchAdTest(kw) {
   const st = searchAdStatus();
@@ -2157,6 +2241,10 @@ const server = http.createServer(async (req, res) => {
        응답에 키 값은 한 글자도 담지 않는다. 됐는지 여부와 받아온 개수만. */
     if (u.pathname === '/api/searchad-test') {
       return sendJson(res, 200, await searchAdTest(q.get('kw') || '헬스장'));
+    }
+
+    if (u.pathname === '/api/rivals') {
+      return sendJson(res, 200, await rivalKeywords(q.get('keyword'), q.get('url'), q.get('n')));
     }
 
     if (u.pathname === '/api/kw-related') {
