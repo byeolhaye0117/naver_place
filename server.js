@@ -1,0 +1,2806 @@
+#!/usr/bin/env node
+/* ============================================================================
+ * 헬스장 플레이스 진단 — 로컬 서버
+ *
+ *   node server.js            서버 실행 (http://localhost:5173)
+ *   node server.js --probe "강남역 헬스장" <플레이스URL>
+ *                             네이버 응답이 살아있는지 점검하고 진단 출력
+ *
+ * 의존성 없음 (Node 18+ 내장 fetch 사용). npm install 불필요.
+ *
+ * ── 설계 원칙 ────────────────────────────────────────────────────────────
+ * 네이버는 공개 API를 제공하지 않고 내부 응답 구조를 예고 없이 바꿉니다.
+ * 그래서 경로를 고정해 파싱하지 않고,
+ *   (1) 여러 엔드포인트를 순서대로 시도하고 (STRATEGIES)
+ *   (2) 응답 트리 전체를 훑어 '필드 이름'으로 값을 주워담습니다 (harvest)
+ * 구조가 바뀌어도 필드명이 남아 있으면 계속 동작하고,
+ * 완전히 깨지면 --probe 가 어디서 깨졌는지 그대로 보여줍니다.
+ * ========================================================================== */
+
+'use strict';
+
+const http = require('http');
+const fs   = require('fs');
+const path = require('path');
+const os   = require('os');
+const crypto = require('crypto');
+
+const PORT     = Number(process.env.PORT || 5173);
+const HOST     = process.env.HOST || '0.0.0.0';   // 같은 와이파이의 휴대폰에서도 붙을 수 있게
+const ROOT     = __dirname;
+const DATA_DIR = path.join(ROOT, 'data');
+const HISTORY  = path.join(DATA_DIR, 'rank-history.json');
+const KEYFILE  = path.join(DATA_DIR, 'access-key.txt');
+const STATE    = path.join(DATA_DIR, 'state.json');   // 기기 사이 공유 저장
+const SAVES    = path.join(DATA_DIR, 'saves.json');   // 저장 내역
+
+/* ============================================================================
+ * 접근 키
+ *
+ * 0.0.0.0 으로 열면 같은 와이파이의 다른 기기도 접근할 수 있다.
+ * 집이나 매장 와이파이라면 대개 문제없지만, 손님용 와이파이를 함께 쓴다면
+ * /api/ai 를 통해 API 키가 쓰일 수 있다. 그래서 외부 기기 요청에만 키를 요구한다.
+ * 키는 파일에 저장하므로 서버를 다시 켜도 휴대폰 북마크가 그대로 동작한다.
+ * ========================================================================== */
+/* 키가 어디서 왔는지. 값은 절대 밖에 내보내지 않지만 출처는 알려 준다 -
+   이것 하나로 "배포할 때마다 로그아웃되는" 문제를 밖에서 가려낼 수 있다. */
+let KEY_SOURCE = 'env';
+
+function accessKey() {
+  /* 인터넷에 올려 두고 쓸 때는 파일이 배포마다 사라진다.
+     그래서 환경변수로 준 키를 최우선으로 쓴다 — 주소를 북마크해 두면 계속 통한다. */
+  const env = String(process.env.ACCESS_KEY || '').trim();
+  if (env) return env;
+  try {
+    const k = fs.readFileSync(KEYFILE, 'utf8').trim();
+    KEY_SOURCE = 'file';
+    return k;
+  }
+  catch {
+    /* 여기까지 왔다는 건 환경변수도 없고 저장된 키도 없다는 뜻이다.
+       무료 호스팅에서는 배포할 때마다 여기로 와서 키가 새로 생기고,
+       그러면 사장님 휴대폰에 저장된 키가 매번 무효가 된다. */
+    const k = crypto.randomBytes(9).toString('base64url');
+    KEY_SOURCE = 'new';
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(KEYFILE, k);
+    return k;
+  }
+}
+const KEY = accessKey();
+
+/* ---------------------------------------------------------------------------
+ * 접근 키를 브라우저에 한 번 더 심어 둔다.
+ *
+ * 지금까지 키는 화면 쪽 localStorage 한 군데에만 있었다. 그건 생각보다 잘 날아간다 -
+ * 카톡·인스타 안에서 링크로 열면 그 앱이 저장분을 따로 들고 있다가 지우고,
+ * 시크릿 창은 닫는 순간 사라지고, 휴대폰이 저장공간을 정리할 때도 지워진다.
+ * 그때마다 사장님이 렌더 대시보드에 들어가 키를 찾아 다시 넣어야 했다.
+ *
+ * 쿠키는 같은 상황에서 남는 일이 많다. 두 군데에 두면 한쪽이 지워져도 나머지가 버틴다.
+ * 통과할 때마다 다시 심어서 1년이 계속 밀린다 - 쓰는 동안은 잠기지 않는다.
+ * ------------------------------------------------------------------------- */
+const COOKIE_NAME = 'gpk';
+
+function cookieKey(req) {
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() !== COOKIE_NAME) continue;
+    try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return ''; }
+  }
+  return '';
+}
+
+function plantKey(req, res) {
+  /* Secure 는 https 로 들어온 요청에만 붙인다. 집 PC(http)에서도 써야 한다.
+     HttpOnly 라 화면 쪽 스크립트는 못 읽는다 - 읽을 일이 없다.
+     브라우저가 알아서 붙여 보내는 것이 이 쿠키가 하는 일의 전부다. */
+  const https = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  res.setHeader('Set-Cookie',
+    `${COOKIE_NAME}=${encodeURIComponent(KEY)}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax`
+    + (https ? '; Secure' : ''));
+}
+
+/* 렌더 같은 호스팅은 프록시가 컨테이너 안쪽 127.0.0.1 로 붙는다.
+   그래서 socket 주소만 보면 인터넷에서 온 요청까지 "이 PC"로 보이고,
+   접근 키 검사가 통째로 무력해진다 — 서버가 통째로 열린다.
+   프록시를 거친 흔적(x-forwarded-for)이 있으면 무조건 외부로 본다. */
+function isLocal(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) {
+    const first = String(fwd).split(',')[0].trim();
+    return first === '127.0.0.1' || first === '::1' || first === '::ffff:127.0.0.1';
+  }
+  const a = req.socket.remoteAddress || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
+/* 이 PC의 공유기 내부 주소 — 휴대폰이 붙을 곳 */
+function lanIp() {
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const n of list || []) {
+      if (n.family === 'IPv4' && !n.internal) return n.address;
+    }
+  }
+  return null;
+}
+
+/* ============================================================================
+ * 공통 HTTP
+ * ========================================================================== */
+
+const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 '
+         + '(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function get(url, extraHeaders = {}) {
+  const res = await fetch(url, {
+    redirect: 'follow',
+    headers: {
+      'user-agent': UA,
+      'accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
+      'accept-language': 'ko-KR,ko;q=0.9',
+      'referer': 'https://m.place.naver.com/',
+      ...extraHeaders,
+    },
+  });
+  const text = await res.text();
+  return { ok: res.ok, status: res.status, url: res.url, text };
+}
+
+/* 여는 괄호의 짝을 직접 세어 객체를 통째로 잘라낸다.
+   정규식으로 `(\{[\s\S]*?\})\s*<\/script>` 처럼 자르면
+   상태 객체 뒤에 다른 자바스크립트가 한 줄이라도 붙는 순간 전부 실패한다.
+   문자열 안의 괄호와 백슬래시 이스케이프는 세지 않는다. */
+function extractBalanced(text, start) {
+  const open = text[start];
+  if (open !== '{' && open !== '[') return null;
+  const close = open === '{' ? '}' : ']';
+  let depth = 0, inStr = false, quote = '', esc = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (esc) { esc = false; continue; }
+    if (inStr) {
+      if (c === '\\') esc = true;
+      else if (c === quote) inStr = false;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = true; quote = c; continue; }
+    else if (c === open) depth++;
+    else if (c === close && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;   // 끝까지 안 닫힘 (응답이 잘렸다는 뜻)
+}
+
+/* HTML 안에 박혀 있는 상태 객체를 꺼낸다.
+   구체적인 이름을 먼저 보고, 다 실패하면 이름을 모르는 것까지 훑는다.
+   네이버가 변수명이나 프레임워크를 바꿔도 살아남게 하려는 것이다. */
+const STATE_MARKERS = [
+  /window\.__APOLLO_STATE__\s*=\s*/g,
+  /window\.__PLACE_STATE__\s*=\s*/g,
+  /window\.__INITIAL_STATE__\s*=\s*/g,
+  /window\.__PRELOADED_STATE__\s*=\s*/g,
+  /<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>\s*/g,
+  /<script[^>]*\btype=["']application\/json["'][^>]*>\s*/g,
+  /window\.__[A-Z0-9_]+__\s*=\s*/g,          // 이름을 모르는 경우
+  /:\s*window\.__[A-Z0-9_]+__\s*\|\|\s*/g,   // 번들러가 감싸 놓은 경우
+];
+
+function tryJson(text) {
+  try { return JSON.parse(text); } catch { /* HTML 이거나 JSONP */ }
+
+  // JSONP: fn({...}) 형태
+  const jp = text.match(/^[^(]{0,80}\(\s*(?=[{[])/);
+  if (jp) {
+    const raw = extractBalanced(text, jp[0].length);
+    if (raw) { try { return JSON.parse(raw); } catch { /* 계속 */ } }
+  }
+
+  for (const re of STATE_MARKERS) {
+    re.lastIndex = 0;
+    const blocks = [];
+    let m;
+    while ((m = re.exec(text)) && blocks.length < 8) {
+      const raw = extractBalanced(text, m.index + m[0].length);
+      if (!raw) continue;
+      try {
+        const o = JSON.parse(raw);
+        if (o && typeof o === 'object' && Object.keys(o).length) blocks.push(o);
+      } catch { /* 자바스크립트 리터럴이라 JSON 이 아님 */ }
+    }
+    if (blocks.length === 1) return blocks[0];
+    // 여러 개 잡히면 하나로 묶는다 — harvest 는 트리 전체를 훑으므로 문제없다
+    if (blocks.length > 1) return Object.fromEntries(blocks.map((o, i) => [`_block${i}`, o]));
+  }
+  return null;
+}
+
+/* 트리 전체를 훑어 원하는 필드명의 값을 주워담는다.
+   경로가 바뀌어도 필드명만 남아 있으면 계속 동작한다. */
+/* 같은 필드명이 트리 안에 여러 번 나온다. 예를 들어 menus 가 어떤 노드에서는
+   빈 배열이고 다른 노드에서는 실제 목록이다. 먼저 만난 값을 그대로 쓰면
+   "메뉴 0개"로 읽고 끝나므로, 빈 값은 채워진 값으로 덮어쓴다.
+   반대로 이미 채워진 값은 덮지 않는다 (목록에 섞인 남의 가게 이름이 이기지 않게). */
+const isEmptyVal = v => v === undefined || v === null || v === '' || v === 0 || v === false;
+
+/* 아폴로는 인자를 받는 필드를 이름 뒤에 인자까지 붙여 저장한다.
+     description({"source":["shopWindow","jto"]})   ← 사장님이 쓴 소개글 1,947자
+     description                                     ← 네이버가 파는 서비스 광고 20자
+   이름만 그대로 비교하면 앞의 것을 못 알아보고, 엉뚱한 데 있는 같은 이름을 집어 온다.
+   실제로 소개글 자리에 "전화를 대신 받고 응대까지 해드려요!"가 들어왔다.
+   그래서 이름을 비교하기 전에 괄호 뒤를 잘라낸다. */
+const fieldName = k => { const i = String(k).indexOf('('); return i > 0 ? k.slice(0, i) : k; };
+
+function harvest(node, fields, out = {}, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return out;
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
+    if (fields.includes(k)) {
+      const cur = out[k];
+      const next = (v !== null && typeof v !== 'object') ? v
+                 : Array.isArray(v) ? v.length : undefined;
+      if (next !== undefined && (cur === undefined || (isEmptyVal(cur) && !isEmptyVal(next)))) out[k] = next;
+    }
+    if (v && typeof v === 'object') harvest(v, fields, out, depth + 1);
+  }
+  return out;
+}
+
+/* 트리에서 '업체처럼 생긴 객체'를 등장 순서대로 모은다 (순위 판정용) */
+function harvestPlaces(node, acc = [], seen = new Set(), depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return acc;
+  if (Array.isArray(node)) {
+    for (const v of node) harvestPlaces(v, acc, seen, depth + 1);
+    return acc;
+  }
+  const id = node.id ?? node.placeId ?? node.sid;
+  const name = node.name ?? node.title ?? node.displayName;
+  if (id != null && name && /^\d{5,}$/.test(String(id)) && !seen.has(String(id))) {
+    seen.add(String(id));
+    acc.push({ id: String(id), name: String(name).replace(/<[^>]*>/g, '') });
+  }
+  for (const v of Object.values(node)) harvestPlaces(v, acc, seen, depth + 1);
+  return acc;
+}
+
+/* pcmap 목록 HTML 에서 순위 순서대로 업체를 뽑는다.
+
+   harvestPlaces 를 그냥 쓰면 안 된다. 그건 객체를 훑으며 나오는 대로 담는데,
+   아폴로 캐시에 담긴 순서는 검색 순위와 다르다 - 실제로 3위 가게가 맨 앞에 있었다.
+   순서는 businesses.items 배열에만 들어 있으므로 그 배열을 찾아 참조를 따라간다. */
+function placesFromListHtml(html) {
+  const at = String(html || '').indexOf('__APOLLO_STATE__');
+  if (at < 0) return null;
+  const s = html.indexOf('{', at);
+  if (s < 0) return null;
+  let state;
+  try { state = JSON.parse(extractBalanced(html, s)); } catch { return null; }
+  if (!state) return null;
+
+  let items = null;
+  (function walk(n, d) {
+    if (!n || typeof n !== 'object' || d > 8 || items) return;
+    if (n.businesses && Array.isArray(n.businesses.items)) { items = n.businesses.items; return; }
+    for (const v of Object.values(n)) walk(v, d + 1);
+  })(state, 0);
+  if (!items) return null;
+
+  const out = [];
+  for (const it of items) {
+    const node = it && it.__ref ? state[it.__ref] : it;
+    if (!node) continue;
+    const id = node.id, name = node.name;
+    if (id != null && name && /^\d{5,}$/.test(String(id))) {
+      out.push({ id: String(id), name: String(name).replace(/<[^>]*>/g, '') });
+    }
+  }
+  return out;
+}
+
+/* ============================================================================
+ * 플레이스 ID 추출
+ * ========================================================================== */
+
+async function resolvePlaceId(input) {
+  const raw = String(input || '').trim();
+  if (/^\d{5,}$/.test(raw)) return raw;
+
+  let url = raw;
+  // naver.me 단축링크는 리다이렉트를 따라가야 실제 주소가 나온다
+  if (/naver\.me/.test(url)) {
+    const r = await get(url);
+    url = r.url || url;
+  }
+  const m = url.match(/(?:place|entry\/place|restaurant|hairshop)\/(\d{5,})/)
+         || url.match(/[?&]id=(\d{5,})/)
+         || url.match(/(\d{9,})/);
+  if (!m) throw new Error(`플레이스 ID를 찾지 못했습니다: ${raw}`);
+  return m[1];
+}
+
+/* ============================================================================
+ * 플레이스 정보 수집
+ * ========================================================================== */
+
+/* 네이버는 응답 구조를 예고 없이 바꾸고 페이지 유형마다 필드명이 다르다.
+   그래서 같은 뜻의 후보 이름을 여러 개 걸어두고, 잡히는 것을 쓴다. */
+const PLACE_FIELDS = [
+  'name', 'category', 'categoryCode', 'description', 'phone', 'virtualPhone',
+  'visitorReviewCount', 'visitorReviewScore', 'blogCafeReviewCount',
+  'totalReviewCount', 'imageCount', 'photoCount', 'bookmarkCount',
+  'roadAddress', 'address', 'x', 'y', 'homepage', 'bookingUrl', 'talktalkUrl',
+  'businessHours', 'conveniences', 'keywords', 'microReviews',
+  // ↓ 자동 판정을 위해 추가한 후보들
+  'newBusinessHours', 'businessHoursInfo', 'operationTime', 'businessStatus',
+  'menus', 'menuInfo', 'menuImages', 'hasMenu', 'priceInfo', 'prices',
+  'amenities', 'facilities', 'options', 'conveniencesInfo',
+  'isBusinessRegistered', 'businessRegistration', 'certified', 'isCertified', 'ownerVerified',
+  'newsCount', 'feedCount', 'announcementCount', 'newsList', 'feedList',
+  'reviewReplyCount', 'replyCount', 'answeredReviewCount', 'ownerReplyCount',
+  'lastPhotoUpdatedAt', 'photoUpdatedAt', 'lastFeedAt', 'lastNewsAt',
+  'homepages', 'socials', 'snsUrl', 'instagramUrl',
+  // ↓ 리뷰·저장 수는 페이지마다 이름이 다르게 나온다. 후보를 넓게 걸어둔다.
+  'visitorReviewsTotal', 'visitorReviewTotal', 'visitorReviewsCount',
+  'blogCafeReviewTotal', 'blogReviewCount', 'cafeReviewCount', 'ugcReviewCount',
+  'reviewCount', 'reviewTotal', 'fsasReviewCount',
+  'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount',
+  'photoTotal', 'imageTotal', 'totalImageCount',
+  // ↓ 사장님 플레이스 실측에서 확인된 실제 이름들
+  'totalImages', 'imageReviewCount', 'cafeBlogReviewsTotal',
+  'visitorReviewsScore', 'avgRating', 'ratingReviewsTotal', 'authorCount',
+];
+
+/* 필요한 값이 한 페이지에 다 있지 않다. 리뷰 수는 리뷰 탭에만 있는 경우가 많다.
+   그래서 첫 성공에서 멈추지 않고, 아래 항목이 다 채워질 때까지 이어서 시도한다. */
+const PLACE_STRATEGIES = [
+  id => `https://m.place.naver.com/place/${id}/home`,
+  id => `https://pcmap.place.naver.com/place/${id}/home`,
+  id => `https://m.place.naver.com/place/${id}/review/visitor`,
+  id => `https://m.place.naver.com/place/${id}/review/ugc`,
+  id => `https://m.place.naver.com/place/${id}/photo`,
+  id => `https://m.place.naver.com/place/${id}/news`,
+  id => `https://m.place.naver.com/place/${id}/feed`,
+  id => `https://m.place.naver.com/place/${id}/information`,
+  id => `https://m.place.naver.com/hairshop/${id}/home`,
+  id => `https://map.naver.com/p/api/place/summary/${id}`,
+];
+
+/* 이게 다 모이면 더 요청하지 않는다 (불필요한 왕복을 줄이려는 것) */
+const KEY_FIELDS = ['description', 'imageCount', 'visitorReviewCount',
+                    'blogCafeReviewCount', 'visitorReviewsScore'];
+
+/* 개수 항목은 남의 것이 섞이면 곧바로 거짓 판정이 된다.
+   실제로 리뷰 탭을 읽었더니 방문자 리뷰 4,667개라는 값이 잡혔는데 이 가게 것이 아니었다.
+   그래서 개수만큼은 "이 플레이스에 속한 노드"에서 나온 것만 인정한다. */
+const COUNT_FIELDS = [
+  'visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal', 'visitorReviewsCount',
+  'totalReviewCount', 'reviewCount', 'reviewTotal', 'fsasReviewCount',
+  'blogCafeReviewCount', 'blogCafeReviewTotal', 'blogReviewCount', 'cafeReviewCount', 'ugcReviewCount',
+  'bookmarkCount', 'favoriteCount', 'saveCount', 'bookmarkTotal', 'keepCount',
+  'imageCount', 'photoCount', 'photoTotal', 'imageTotal', 'totalImageCount',
+  'menus', 'menuImages', 'prices', 'conveniences', 'facilities', 'amenities', 'options',
+  'newsCount', 'feedCount', 'announcementCount', 'visitorReviewScore',
+  // 실측에서 확인된 이름들도 같은 보호를 받아야 한다
+  'visitorReviewsScore', 'avgRating', 'rating', 'ratingReviewsTotal',
+  'totalImages', 'imageReviewCount', 'cafeBlogReviewsTotal', 'authorCount',
+];
+
+/* 이름 목록으로 찾는 방식은 네이버가 이름을 바꾸면 그대로 놓친다.
+   실제로 블로그 리뷰·저장수·소식이 전부 "가져오지 못했습니다"로 남았다.
+   그래서 이름을 모를 때는 뜻으로 찾는다 — 무엇에 관한 키인지 + 개수인지. */
+/* 개념 단위로 묶는다. alts 중 하나라도 이미 잡혔으면 패턴 추측은 하지 않는다.
+   실측에서 imageReviewCount(리뷰에 달린 사진 3,775장)를 방문자 리뷰로 집는 사고가 났다.
+   "review 가 들어가고 count 로 끝난다"만으로는 부족하고, 아닌 것도 걸러야 한다. */
+const CONCEPTS = {
+  visitorReviewCount: {
+    alts: ['visitorReviewCount', 'visitorReviewsTotal', 'visitorReviewTotal', 'visitorReviewsCount',
+           'totalReviewCount', 'reviewCount', 'reviewTotal', 'fsasReviewCount'],
+    what: /visitor/i, count: /count|total|num|cnt/i,
+    not: /media|image|photo|text|score|rating|author|user|single|max/i,
+  },
+  blogCafeReviewCount: {
+    alts: ['blogCafeReviewCount', 'cafeBlogReviewsTotal', 'blogCafeReviewTotal',
+           'blogReviewCount', 'cafeReviewCount', 'ugcReviewCount'],
+    what: /blog|cafe|ugc/i, count: /count|total|num|cnt/i, not: /score|rating|media/i,
+  },
+  imageCount: {
+    alts: ['imageCount', 'totalImages', 'photoTotal', 'imageTotal', 'totalImageCount', 'photoCount'],
+    what: /image|photo|picture/i, count: /count|total|num|cnt/i,
+    not: /review|media|width|height|size/i,
+  },
+  newsCount: {
+    alts: ['newsCount', 'feedCount', 'announcementCount'],
+    what: /news|feed|announce|notice|event|post/i, count: /count|total|num|cnt/i,
+    not: /id$|score/i,
+  },
+  visitorReviewsScore: {
+    alts: ['visitorReviewsScore', 'visitorReviewScore', 'avgRating', 'rating'],
+    what: /rating|score/i, count: /rating|score|avg/i, not: /count|total|num/i,
+  },
+};
+
+/* 링크는 "필드가 있다"로 판단하면 안 된다.
+   실제로 homepages 라는 객체가 있는데 안에 주소가 하나도 없는 경우가 있다.
+   껍데기만 보고 "연결됨"이라 하면 사장님이 확인할 방법이 없다. */
+const LINK_FIELDS = ['homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials'];
+
+/* 업체 기본 정보 노드에서만 가져와야 하는 글. 다른 노드에도 같은 이름이 있다. */
+const TEXT_FROM_BASE = ['description', 'microReviews'];
+
+/* 소개글은 이름이 하나가 아니다. 그리고 리뷰 본문·예약 안내문처럼
+   "긴 한국어 문장"이 여럿 섞여 있어서 먼저 만난 것을 쓰면 엉뚱한 게 들어온다.
+   후보를 다 모은 뒤 사장님이 쓴 글로 보이는 쪽을 고른다. */
+const INTRO_KEYS = [
+  'description', 'introduction', 'intro', 'detailDescription', 'placeDescription',
+  'businessDescription', 'bizDescription', 'longDescription', 'shortDescription',
+  'profile', 'detail', 'content', 'body', 'text',
+];
+
+/* 사장님이 쓴 소개글인가, 손님이 쓴 리뷰인가 */
+function introScore(t) {
+  const s = String(t || '');
+  if (s.length < 15) return -99;
+  let v = Math.min(s.length, 1500) / 500;                       // 길수록 소개글일 확률이 높다
+  if (/안녕하세요|저희|입니다|운영합니다|드립니다|하고 있습니다|오시면/.test(s)) v += 3;
+  if (/방문했어요|다녀왔|받았어요|같아요|추천해요|좋았어요|친절하[셨시]/.test(s)) v -= 5;  // 리뷰 말투
+  if (/^실시간 예약|예약관리를 온라인/.test(s)) v -= 4;          // 네이버 예약 기본 문구
+  return v;
+}
+
+function collectIntros(nodes, out = [], depth = 0) {
+  for (const nd of nodes) walkIntros(nd, out);
+  return out;
+}
+/* 네이버가 자기 상품을 파는 자리. 여기 description 은 사장님 글이 아니라 광고 문구다.
+   ("전화를 대신 받고 응대까지 해드려요!" 가 소개글 자리에 들어온 적이 있다) */
+const AD_KEYS = /^(businessTools|houseBanners|banner|ads?|promotion|brandPromotion|gift|exp)$/i;
+
+function walkIntros(node, out, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 8 || out.length > 40) return;
+  if (isReviewNode(node)) return;                                // 리뷰 노드는 통째로 건너뛴다
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
+    if (AD_KEYS.test(k)) continue;                               // 네이버 광고 문구는 소개글이 아니다
+    if (typeof v === 'string' && INTRO_KEYS.includes(k) && v.trim().length >= 15)
+      out.push({ key: k, text: v.trim(), score: introScore(v) });
+    else if (v && typeof v === 'object') walkIntros(v, out, depth + 1);
+  }
+}
+
+function findUrls(node, out = [], depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 6 || out.length > 5) return out;
+  for (const v of Object.values(node)) {
+    if (typeof v === 'string' && /^https?:\/\/\S+$/.test(v.trim())) out.push(v.trim());
+    else if (v && typeof v === 'object') findUrls(v, out, depth + 1);
+  }
+  return out;
+}
+
+/* 링크 필드 아래에 실제로 존재하는 주소만 모은다 */
+function collectLinks(nodes, out = {}, depth = 0) {
+  for (const node of nodes) walkLinks(node, out);
+  return out;
+}
+function walkLinks(node, out, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 8) return;
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
+    if (LINK_FIELDS.includes(k)) {
+      const urls = typeof v === 'string' ? (/^https?:\/\//.test(v.trim()) ? [v.trim()] : []) : findUrls(v);
+      if (urls.length) (out[k] ||= []).push(...urls);
+    }
+    if (v && typeof v === 'object') walkLinks(v, out, depth + 1);
+  }
+}
+
+/* 좌표나 아이디 같은 것 말고, 세는 값으로 보이는 숫자만 모은다 */
+function collectNumbers(node, out = {}, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 6 || Object.keys(out).length > 80) return out;
+  for (const [k, v] of Object.entries(node)) {
+    if (typeof v === 'number' && isFinite(v) && !/^(x|y|lat|lng|longitude|latitude|id)$/i.test(k)
+        && out[k] === undefined) out[k] = v;
+    if (v && typeof v === 'object') collectNumbers(v, out, depth + 1);
+  }
+  return out;
+}
+
+function scanNumeric(node, c, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 6) return null;
+  for (const [k, v] of Object.entries(node)) {
+    if (typeof v === 'number' && isFinite(v) && v >= 0
+        && c.what.test(k) && c.count.test(k) && !(c.not && c.not.test(k)))
+      return { key: k, value: v };
+    if (v && typeof v === 'object') {
+      const hit = scanNumeric(v, c, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/* 이 플레이스를 가리키는 노드를 찾는다.
+   아폴로 캐시는 "PlaceDetailBase:11716617" 처럼 키에 번호가 박히고,
+   그렇지 않은 경우에도 노드 안에 id 가 들어 있다. */
+function scopedNodes(node, placeId, out = [], depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return out;
+  for (const [k, v] of Object.entries(node)) {
+    if (!v || typeof v !== 'object') continue;
+    const byKey  = k.includes(placeId);
+    const bySelf = !Array.isArray(v) && String(v.id ?? v.placeId ?? '') === placeId;
+    if (byKey || bySelf) { out.push(v); v.__key = k; }
+    scopedNodes(v, placeId, out, depth + 1);
+  }
+  return out;
+}
+
+/* 리뷰 노드에도 description 이라는 이름의 본문이 들어 있다.
+   그대로 훑으면 손님 리뷰가 소개글 자리를 차지한다. 실제로 그런 일이 있었다. */
+function isReviewNode(nd) {
+  if (!nd || typeof nd !== 'object') return false;
+  if (/review|comment|reply|ugc/i.test(String(nd.__key || ''))) return true;
+  const dated = DATE_KEYS.some(k => nd[k] != null);
+  return dated && (nd.rating != null || nd.author != null || nd.authorName != null || nd.score != null);
+}
+
+/* harvest 는 스칼라와 배열만 담는다.
+   businessHours 처럼 객체로 오는 필드는 "값이 있느냐"만 따로 확인한다. */
+function harvestPresence(node, fields, found = new Set(), depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return found;
+  for (const [k0, v] of Object.entries(node)) {
+    const k = fieldName(k0);
+    if (fields.includes(k) && v != null) {
+      const empty = (Array.isArray(v) && v.length === 0)
+                 || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0)
+                 || v === '' || v === false;
+      if (!empty) found.add(k);
+    }
+    if (v && typeof v === 'object') harvestPresence(v, fields, found, depth + 1);
+  }
+  return found;
+}
+
+/* 배열 필드의 '실제 값'을 꺼낸다. harvest 는 길이만 담기 때문에
+   대표키워드·메뉴처럼 내용이 필요한 것은 따로 주워야 한다. */
+function harvestList(node, field, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return null;
+  for (const [k, v] of Object.entries(node)) {
+    if (fieldName(k) === field && Array.isArray(v) && v.length) return v;
+    if (v && typeof v === 'object') {
+      const hit = harvestList(v, field, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/* ============================================================================
+ * 입력란 자동 채우기
+ *
+ * 사장님이 직접 타이핑할 것을 최대한 줄인다.
+ * 플레이스 주소만 넣으면 지역·업종·가격·대표키워드까지 채워지도록,
+ * 수집한 값에서 끌어낼 수 있는 것은 전부 끌어낸다.
+ * ========================================================================== */
+
+/* 주소에서 검색에 쓸 지역명을 뽑는다. 동 > 구 > 시 순으로 구체적이다. */
+function areaCandidates(addr) {
+  const out = [];
+  for (const tok of String(addr || '').split(/\s+/)) {
+    const m = tok.match(/^(.{2,6})(동|구|시|군|읍|면)$/);
+    if (!m) continue;
+    // "서울특별시" → "서울특별" 같은 광역자치단체 조각은 검색어로 못 쓴다
+    if (/(특별|광역|자치)$/.test(m[1])) continue;
+    const rank = { '동': 0, '읍': 0, '면': 0, '구': 1, '시': 2, '군': 2 }[m[2]];
+    // 동은 붙여 써야 검색어가 된다 (쌍용동 헬스장). 구·시는 떼는 쪽이 자연스럽다 (천안 헬스장).
+    out.push({ name: rank === 0 ? tok : m[1], rank });
+  }
+  return [...new Set(out.sort((a, b) => a.rank - b.rank).map(x => x.name))];
+}
+
+function guessType(category) {
+  const c = String(category || '');
+  if (/필라테스/.test(c)) return '필라테스';
+  if (/크로스핏/.test(c)) return '크로스핏';
+  if (/(PT|피티|퍼스널)/i.test(c)) return 'PT 전문';
+  return '헬스장';
+}
+
+/* 메뉴에서 1개월 이용권 가격을 찾는다 */
+function guessPrice(menus) {
+  if (!Array.isArray(menus)) return '';
+  const priceOf = m => {
+    const raw = m?.price ?? m?.amount ?? m?.cost;
+    const n = Number(String(raw ?? '').replace(/[^\d]/g, ''));
+    return isFinite(n) && n > 0 ? n : null;
+  };
+  const monthly = menus.find(m => /(1개월|한달|1달|월 ?회원|1개월권)/.test(String(m?.name ?? '')));
+  const pick = priceOf(monthly) ?? menus.map(priceOf).find(v => v != null);
+  return pick ? pick.toLocaleString('ko-KR') + '원' : '';
+}
+
+/* 대표키워드는 관리자 화면에만 있는 값이라 응답에 안 나온다.
+   그런데 사장님들이 소개글 끝에 키워드 줄을 그대로 붙여 두는 경우가 많다.
+   "쌍용동헬스장, 쌍용동pt, 쌍용동24시헬스장, 천안쌍용동헬스장, 봉명동 헬스장"
+   문장이 아니라 나열이고, 지역·업종 말이 반복되는 줄을 찾는다.
+   그런 줄이 없으면 아무것도 만들지 않는다 — 시설 나열을 키워드로 오해하면 안 된다. */
+function keywordsFromIntro(text, hints) {
+  const t = String(text || '');
+  if (!t) return [];
+  const lines = t.split(/\r?\n|·|\||\/{2,}/).map(x => x.trim()).filter(Boolean);
+  let best = null, bestScore = 0;
+
+  for (const ln of lines) {
+    if (ln.length > 200) continue;
+    if (/[.!?]\s*$|습니다|해요|입니다|하세요|드립니다|있어요|주세요/.test(ln)) continue;  // 문장은 제외
+    const parts = ln.replace(/^#/, '').split(/[,#]/).map(x => x.trim()).filter(Boolean);
+    if (parts.length < 3) continue;
+    if (parts.some(p => p.length < 2 || p.length > 22)) continue;
+
+    // 지역·업종 말이 얼마나 겹치는지로 "키워드 줄"인지 가른다
+    const hit = parts.filter(p => hints.some(h => h && p.includes(h))).length;
+    if (hit < Math.ceil(parts.length / 2)) continue;
+    if (hit >= bestScore) { bestScore = hit; best = parts; }   // 같으면 뒤쪽 줄을 택한다
+  }
+  return best || [];
+}
+
+/* 화면의 시설 항목 ← 네이버 편의시설 표기.
+   같은 뜻인데 말이 다르다 (주차 가능 / 무료주차, 락커 / 사물함). */
+const FACILITY_MAP = [
+  ['주차 가능',    ['주차']],
+  ['샤워실',      ['샤워']],
+  ['락커',        ['락커', '라커', '사물함']],
+  ['운동복 대여',  ['운동복', '운동화', '대여']],
+  ['사우나',      ['사우나', '찜질']],
+  ['24시간 운영',  ['24시', '24시간', '연중무휴']],
+  ['여성 전용존',  ['여성', '여성전용']],
+  ['GX 프로그램',  ['GX', '그룹운동', '단체']],
+  ['PT 상담 무료', ['무료상담', '상담무료', '무료 상담']],
+  ['인바디 측정',  ['인바디', '체성분']],
+  ['무인 출입',    ['무인', '키오스크']],
+  ['단백질바',    ['단백질', '헬스보충', '카페']],
+];
+
+function deriveInputs(data, jsons) {
+  const all = Array.isArray(jsons) ? jsons : [jsons];
+  const pick = (...names) => {
+    for (const j of all) for (const nm of names) { const v = harvestList(j, nm); if (v) return v; }
+    return [];
+  };
+  /* 네이버는 대표키워드를 keywordList 라는 이름으로 준다. keywords 만 찾다가
+     "관리자 전용 값이라 자동 수집이 불가능하다"고 잘못 안내하고 있었다.
+     홈·정보 어느 쪽에도 들어 있으므로 이름만 맞추면 그냥 딸려 온다. */
+  const kwList = pick('keywordList', 'keywords', 'repKeywords', 'keywordsForBusiness')
+    .map(k => String(k?.name ?? k?.keyword ?? k).trim()).filter(Boolean);
+  const menus  = pick('menus', 'menuInfo');
+  /* 도로명 주소에는 동이 없는 경우가 많다 ("천안시 서북구 미란7길 26").
+     지번 주소를 같이 봐야 쌍용동이 나온다. 손님은 구가 아니라 동으로 검색한다. */
+  const fromAddr = areaCandidates([data.roadAddress, data.address].filter(Boolean).join(' '));
+
+  // 이미 등록해 둔 대표키워드가 가장 강한 신호다.
+  // 주소는 "어디에 있는가"일 뿐이고, 대표키워드는 "어디로 검색되고 싶은가"다.
+  // 예: 주소는 역삼동이지만 대표키워드가 "강남역헬스장"이면 목표는 강남역이다.
+  const station = kwList.map(k => (k.match(/^(.{2,8}?역)/) || [])[1]).find(Boolean);
+  const areas = [...new Set([station, ...fromAddr].filter(Boolean))];
+
+  /* 등록 대표키워드를 못 받았으면 소개글 끝의 키워드 줄에서 찾아본다 */
+  const fromIntro = kwList.length ? []
+    : keywordsFromIntro(data.description, [...areas, '헬스', 'PT', 'pt', '피트니스', '짐']);
+  const repList = kwList.length ? kwList : fromIntro;
+
+  /* 편의시설은 개수만 세고 이름은 버리고 있었다. 이름이 있으면 화면의 시설 체크를
+     사람이 누를 필요가 없다. 네이버 표기와 우리 항목 이름이 조금씩 다르므로 뜻으로 잇는다. */
+  const convRaw = pick('conveniences', 'amenities', 'facilities', 'options', 'conveniencesInfo')
+    .map(v => String(v?.name ?? v ?? '').trim()).filter(Boolean);
+  /* 네이버 편의시설 목록은 업종 공통 항목이라 헬스장 사정을 다 담지 못한다.
+     실제로 24시간 운영·샤워실·여성전용을 하는데도 목록엔 안 잡히는 곳이 많다.
+     사장님이 직접 쓴 소개글·찾아오는 길·메뉴판에는 그 말이 들어 있으므로 같이 읽는다.
+     사장님이 쓴 글이므로 없는 시설을 지어낼 위험은 없다. */
+  /* data 에는 KEY_FIELDS 만 들어 있어 road·소개글이 빠질 수 있다.
+     아폴로 캐시의 base 노드와 Menu 노드를 직접 읽어 원문을 확보한다. */
+  const baseNodes = all.flatMap(j => nodesOfType(j, 'PlaceDetailBase'));
+  const menuNodes = all.flatMap(j => nodesOfType(j, 'Menu'));
+  const ownText = [
+    data.description, data.road, data.microReview,
+    ...baseNodes.flatMap(b => [b.road, b.description, b.microReview]),
+    ...baseNodes.flatMap(b => (Array.isArray(b.microReviews) ? b.microReviews : [])),
+    ...menus.map(m => String(m?.name ?? '')),
+    ...menuNodes.map(m => String(m?.name ?? '')),
+    ...convRaw,
+  ].filter(Boolean).map(String).join(' ');
+  const facilities = FACILITY_MAP
+    .filter(([ours, res]) => convRaw.some(c => res.some(w => c.includes(w)))
+                          || res.some(w => ownText.includes(w)))
+    .map(([ours]) => ours);
+
+  return {
+    areas,
+    facilities,
+    conveniences: convRaw.slice(0, 30),
+    area:  areas[0] || '',
+    repkwFrom: kwList.length ? '등록값' : (fromIntro.length ? '소개글' : ''),
+    areaFrom: station ? '대표키워드' : (fromAddr.length ? '주소' : ''),
+    type:  guessType(data.category),
+    price: guessPrice(menus),
+    repkw: repList.join(', '),
+    // 목표 키워드 제안: 등록한 대표키워드가 있으면 그것을 그대로 쓴다
+    kwSuggest: repList.slice(0, 3),
+  };
+}
+
+/* ============================================================================
+ * 자가 체크 항목 자동 판정
+ *
+ * 수집한 값으로 확실히 판정되는 것만 true/false 를 낸다.
+ * 근거가 없으면 null 을 반환해 "직접 확인"으로 남긴다.
+ * 애매한 것을 추측으로 채우면 점수가 거짓이 되므로, 모르면 모른다고 한다.
+ * ========================================================================== */
+/* ============================================================================
+ * 목록에서 직접 세기
+ *
+ * 리뷰 답글 비율, 마지막 리뷰 날짜, 마지막 사진 날짜는 "개수" 필드로 오지 않는다.
+ * 목록 안에 날짜와 답글이 들어 있으므로 직접 센다.
+ * 목록을 못 찾으면 아무것도 만들지 않는다 — 없는 것을 추측하지 않기 위해서다.
+ * ========================================================================== */
+
+const DATE_KEYS  = ['created', 'createdAt', 'createdDateTime', 'created_at', 'visited', 'visitDate',
+                    'visitedAt', 'date', 'writtenAt', 'regDate', 'registeredAt', 'updateTime', 'uploadDate'];
+const REPLY_KEYS = ['reply', 'ownerReply', 'authorReply', 'replyBody', 'ownerComment', 'comment', 'replies'];
+
+function parseWhen(v) {
+  if (v == null) return null;
+  if (typeof v === 'number') return v > 1e12 ? v : v * 1000;   // 초/밀리초 둘 다 온다
+  const s = String(v).trim().replace(/\./g, '-').replace(/-+$/, '');
+  const t = Date.parse(/^\d{4}-\d{1,2}-\d{1,2}$/.test(s) ? s + 'T00:00:00' : s);
+  return isFinite(t) ? t : null;
+}
+
+const whenOf = o => { for (const k of DATE_KEYS) { const t = parseWhen(o?.[k]); if (t) return t; } return null; };
+const hasReply = o => REPLY_KEYS.some(k => {
+  const v = o?.[k];
+  return Array.isArray(v) ? v.length > 0 : (v != null && v !== '' && v !== false);
+});
+
+/* 날짜가 들어 있는 객체 목록을 찾는다. 이름을 모르므로 "모양"으로 찾는다. */
+function findDatedList(node, minLen = 3, depth = 0, best = null) {
+  if (!node || typeof node !== 'object' || depth > 12) return best;
+  for (const v of Object.values(node)) {
+    if (Array.isArray(v) && v.length >= minLen) {
+      const dated = v.filter(x => x && typeof x === 'object' && whenOf(x));
+      if (dated.length >= minLen && (!best || dated.length > best.length)) best = dated;
+    }
+    if (v && typeof v === 'object') best = findDatedList(v, minLen, depth + 1, best);
+  }
+  return best;
+}
+
+/* 날짜가 없어도 "몇 장이나 실려 있는지"는 셀 수 있다.
+   네이버가 준 imageCount 가 무엇을 센 값인지 확실하지 않아, 비교 대상으로 쓴다. */
+/* 사진 수 — 이름마다 값이 달라 오래 헷갈렸던 자리다.
+
+   사진 탭에서 "가장 큰 배열"을 사진으로 보고 세던 때가 있었는데, 실측해 보니
+   그 배열이 메뉴 목록이었다. 그래서 19장으로 나왔다. 사진이 아니라 메뉴가 19개였다.
+
+   네이버가 실제로 주는 것은 이렇다.
+     images.totalImages          업체가 직접 올린 사진   <- 우리가 셀 것
+     topPhotos.total             상단 큰 사진 자리에 도는 전체 (업체+동영상+손님 사진 섞임)
+     photoTabInfo.clipTotal      동영상 개수
+     visitorReviewMediasTotal    손님이 리뷰에 올린 사진·영상 (수천 장)
+     imageCount                  1 로 고정 - 대표사진 한 장을 센 값으로 보인다
+
+   점수에 쓰는 것은 업체 사진뿐이다. 손님 사진은 사장님이 늘릴 수 있는 값이 아니고,
+   그걸 섞어 세면 "사진 충분함"으로 보여 정작 채워야 할 자리를 놓친다. */
+function photoCounts(jsons) {
+  const out = { own: null, top: null, clips: null, visitor: null };
+  const walk = (n, d = 0) => {
+    if (!n || typeof n !== 'object' || d > 8) return;
+    if (!Array.isArray(n)) {
+      if (n.__typename === 'PlaceDetailImages') {
+        const v = Number(n.totalImages);
+        if (isFinite(v)) out.own = Math.max(out.own ?? 0, v);
+        else if (Array.isArray(n.images)) out.own = Math.max(out.own ?? 0, n.images.length);
+      }
+      if (n.__typename === 'PlaceDetailTopPhotos' && isFinite(Number(n.total)))
+        out.top = Math.max(out.top ?? 0, Number(n.total));
+      if (n.__typename === 'PhotoTabInfo' && isFinite(Number(n.clipTotal)))
+        out.clips = Math.max(out.clips ?? 0, Number(n.clipTotal));
+      if (isFinite(Number(n.visitorReviewMediasTotal)))
+        out.visitor = Math.max(out.visitor ?? 0, Number(n.visitorReviewMediasTotal));
+    }
+    for (const v of Object.values(n)) if (v && typeof v === 'object') walk(v, d + 1);
+  };
+  jsons.forEach(j => walk(j));
+  return out;
+}
+
+function biggestListLen(jsons) {
+  let best = 0;
+  const walk = (n, d = 0) => {
+    if (!n || typeof n !== 'object' || d > 8) return;
+    for (const v of Object.values(n)) {
+      if (Array.isArray(v)) {
+        const objs = v.filter(x => x && typeof x === 'object').length;
+        if (objs > best) best = objs;
+      }
+      if (v && typeof v === 'object') walk(v, d + 1);
+    }
+  };
+  jsons.forEach(j => walk(j));
+  return best;
+}
+
+function listStats(jsons) {
+  const items = jsons.map(j => findDatedList(j)).filter(Boolean)
+                     .sort((a, b) => b.length - a.length)[0];
+  if (!items) return null;
+  const times = items.map(whenOf).filter(Boolean).sort((a, b) => b - a);
+  if (!times.length) return null;
+  const replied = items.filter(hasReply).length;
+  return {
+    n: items.length,
+    latest: times[0],
+    daysSince: Math.floor((Date.now() - times[0]) / 86400000),
+    replyRate: items.length ? replied / items.length : 0,
+    replied,
+  };
+}
+
+function judgeItems(data, present, userType, extra = {}) {
+  const loose = extra.loose || new Set();
+  const foundBy = extra.foundBy || {};
+  const note = k => loose.has(k) ? ' (가게 정보 밖에서 읽은 값 — 확인해 주세요)'
+                  : foundBy[k]   ? ` (${foundBy[k]} 에서 읽음)` : '';
+  let usedKey = null;   // 방금 n() 이 어떤 필드에서 값을 가져왔는지
+  const n = (...k) => {
+    for (const x of k) { const v = Number(data[x]); if (isFinite(v)) { usedKey = x; return v; } }
+    usedKey = null; return null;
+  };
+  const src = () => note(usedKey);
+  const has = (...k) => k.some(x => present.has(x) || !isEmptyVal(data[x]));
+  /* 무엇을 보고 충족이라 했는지 이름을 돌려준다.
+     '연결됨'만 적어 두면 사장님이 맞는지 틀린지 확인할 방법이 없다. */
+  const which = (...k) => k.filter(x => present.has(x) || !isEmptyVal(data[x]));
+
+  const J = {};
+  const put = (id, ok, evidence) => { J[id] = { ok, evidence }; };
+  // 근거 없음 → 직접 확인으로 남긴다
+  const unknown = (id, why) => { J[id] = { ok: null, evidence: why }; };
+  // 사람이 봐야 아는 것과, 네이버가 아예 공개하지 않는 것은 다르다.
+  // 후자를 '직접 확인'에 섞어두면 영영 끝나지 않는 숙제처럼 보인다.
+  const na = (id, why) => { J[id] = { ok: null, evidence: why, na: true }; };
+
+  // ── 수치가 그대로 있는 항목 ──────────────────────────────
+  /* 사장님이 올린 사진만 센다. 손님이 리뷰에 올린 사진(수천 장)을 섞으면
+     "사진 충분함"으로 보여, 정작 채워야 할 업체 사진 자리를 놓친다. */
+  const pi = extra.photoInfo || {};
+  /* 값이 있는지부터 본다. null 을 Number() 하면 0 이 되고 isFinite(0) 은 참이라,
+     그 0 이 그대로 "사진 0장"으로 화면까지 나간 적이 있다.
+     응답 모양이 가게마다 달라서 순서대로 물러선다. */
+  const photoChain = [
+    ['업체 사진 목록', pi.own],
+    ['totalImages', data.totalImages],
+    ['photoTotal', data.photoTotal], ['imageTotal', data.imageTotal],
+    ['totalImageCount', data.totalImageCount], ['photoCount', data.photoCount],
+    ['imageCount', data.imageCount],
+  ].filter(([, v]) => v != null && isFinite(Number(v)));
+  const photo = photoChain.length ? Number(photoChain[0][1]) : null;
+  const photoCands = photoChain.map(([k, v]) => `${k} ${v}`).join(', ');
+  const photoSide = [
+    pi.top     != null ? `상단 노출 ${pi.top}장(동영상·손님 사진 포함)` : '',
+    pi.clips   ? `동영상 ${pi.clips}개` : '',
+    pi.visitor != null ? `손님이 올린 사진·영상 ${Number(pi.visitor).toLocaleString('ko-KR')}개` : '',
+  ].filter(Boolean).join(', ');
+  photo == null ? unknown('p2', '사진 수를 가져오지 못했습니다')
+                : put('p2', photo >= 30,
+                    `업체 사진 ${photo}장 — 네이버가 준 값: ${photoCands}`
+                    + (photoSide ? ` · 참고: ${photoSide}` : ''));
+
+  const rev = n(...CONCEPTS.visitorReviewCount.alts);
+  rev == null ? unknown('p6', '리뷰 수를 가져오지 못했습니다')
+              : put('p6', rev >= 50, `방문자 리뷰 ${rev.toLocaleString('ko-KR')}개${src()}`);
+
+  const blog = n(...CONCEPTS.blogCafeReviewCount.alts);
+  blog == null ? unknown('p7', '블로그 리뷰 수를 가져오지 못했습니다')
+               : put('p7', blog >= 10, `블로그 리뷰 ${blog}개${src()}`);
+
+  /* 저장수는 네이버가 더 이상 공개하지 않는다 (실측 36개 숫자에 없었다).
+     확인할 수 없는 항목을 남겨두는 대신, 공개되는 평점으로 자리를 바꿨다. */
+  const score = n(...CONCEPTS.visitorReviewsScore.alts);
+  score == null ? unknown('p10', '평점을 가져오지 못했습니다')
+                : put('p10', score >= 4.5, `평점 ${score}점${src()}`);
+
+  // ── 있으면 충족인 항목 ──────────────────────────────────
+  {
+    const w = which('bookingUrl', 'talktalkUrl');
+    put('p11', w.length > 0, w.length ? `예약·톡톡 연결됨 (${w.join(', ')})` : '예약·톡톡 연결 없음');
+  }
+
+  {
+    /* 실제 주소가 있어야 연결된 것이다. 필드만 있는 것은 연결이 아니다. */
+    const found = Object.entries(extra.links || {});
+    const urls = [...new Set(found.flatMap(([, v]) => v))];
+    const shell = which('homepage', 'homepages', 'snsUrl', 'instagramUrl', 'socials');
+    if (urls.length)
+      put('d3', true, `외부 채널 연결됨 — ${urls.slice(0, 2).map(u => u.slice(0, 50)).join(', ')}`);
+    else if (shell.length)
+      put('d3', false, `${shell.join(', ')} 필드는 있으나 실제 주소가 없습니다 — 연결 안 된 것으로 봅니다`);
+    else
+      put('d3', false, '홈페이지·SNS 연결 없음');
+  }
+
+  has('businessHours', 'newBusinessHours', 'businessHoursInfo', 'operationTime')
+    ? put('r8', true, `영업시간 등록됨 (${which('businessHours', 'newBusinessHours', 'businessHoursInfo', 'operationTime').join(', ')})`
+                    + ' — 공휴일 반영 여부는 직접 확인')
+    : unknown('r8', '영업시간 정보를 가져오지 못했습니다');
+
+  /* 개수를 읽었다면 개수를 믿는다. 0개인데 "등록됨"으로 찍으면 점수가 거짓이 된다. */
+  const menuN = n('menus', 'menuImages', 'prices');
+  if (menuN === 0 && !has('menuInfo', 'priceInfo', 'hasMenu'))
+    put('r6', false, '메뉴·가격 등록 0개');
+  else if (menuN != null && menuN > 0)
+    put('r6', true, `메뉴·가격 ${menuN}개 등록`);
+  else if (has('menus', 'menuInfo', 'hasMenu', 'priceInfo', 'prices', 'menuImages'))
+    put('r6', true, '메뉴·가격 정보 등록됨');
+  else
+    unknown('r6', '가격 정보를 확인하지 못했습니다 (등록 안 했거나 수집 실패)');
+
+  const conv = n('conveniences', 'amenities', 'facilities', 'options');
+  conv == null ? unknown('r7', '편의시설 정보를 가져오지 못했습니다')
+               : put('r7', conv >= 4, `편의시설 ${conv}개 등록`);
+
+  /* 스마트플레이스는 사업자 인증을 거쳐야 등록·관리할 수 있다.
+     그러니 사장님이 직접 등록해 둔 흔적(예약·톡톡·대표키워드·소개글)이 있으면
+     인증은 이미 끝난 것으로 본다. 전용 필드만 찾다가 "모른다"고 남기는 건
+     사실과 다른 데다, 사장님에게 확인할 일거리만 늘린다. */
+  const ownerSigns = [
+    has('bookingUrl') && '네이버 예약',
+    has('talktalkUrl') && '톡톡',
+    has('keywords') && '대표키워드',
+    !isEmptyVal(data.description) && '소개글',
+    has('menus', 'menuInfo', 'prices') && '메뉴·가격',
+  ].filter(Boolean);
+
+  if (has('isBusinessRegistered', 'businessRegistration', 'certified', 'isCertified', 'ownerVerified'))
+    put('d2', true, '사업자 인증 확인됨');
+  else if (ownerSigns.length)
+    put('d2', true, `사장님이 직접 등록·운영 중 (${ownerSigns.join('·')} 등록됨)` +
+                    ` — 스마트플레이스 등록 자체가 사업자 인증을 거칩니다`);
+  else
+    unknown('d2', '사장님이 등록한 흔적을 찾지 못했습니다 (미등록 플레이스일 수 있습니다)');
+
+  /* 주소에 건물·층이 들어 있는지. 지도 핀 정확도는 사람만 알 수 있지만
+     주소가 어디까지 적혀 있는지는 글자만 보면 안다. */
+  const addr = String(data.roadAddress || data.address || '');
+  if (!addr) unknown('d4', '주소를 가져오지 못했습니다');
+  else {
+    const detail = /\d+\s*층|\bB\d|\d+\s*호|빌딩|타워|프라자|플라자|센터|스퀘어|아파트|상가/.test(addr);
+    put('d4', detail, detail ? `주소에 건물·층 정보 있음 — ${addr}`
+                             : `건물명·층이 없습니다 — ${addr}`);
+  }
+
+  // ── 카테고리: 주력 업종과 맞는지 ────────────────────────
+  const cat = String(data.category || '');
+  if (!cat) unknown('r2', '카테고리를 가져오지 못했습니다');
+  else {
+    const want = { '헬스장': ['헬스', '피트니스'], 'PT 전문': ['PT', '피티', '퍼스널'],
+                   '헬스+PT': ['헬스', '피트니스', 'PT'], '필라테스': ['필라테스'],
+                   '크로스핏': ['크로스핏'] }[userType] || ['헬스', '피트니스'];
+    const hit = want.some(w => cat.toLowerCase().includes(w.toLowerCase()));
+    put('r2', hit, `카테고리 "${cat}"` + (hit ? ' — 주력 업종과 일치' : ` — 주력(${userType})과 다름`));
+  }
+
+  // ── 소식 ────────────────────────────────────────────────
+  const news = n(...CONCEPTS.newsCount.alts, 'newsList', 'feedList');
+  news == null ? na('p5', '네이버가 소식 개수를 공개하지 않습니다 — 스마트플레이스에서 직접 보셔야 합니다')
+               : put('p5', news > 0, `소식 ${news}건${src()}`);
+
+  /* ── 리뷰 목록을 직접 세서 판정 ─────────────────────────
+     목록을 못 가져오면 예전처럼 직접 확인으로 남긴다.
+     표본은 응답에 실려 온 최근 N개뿐이므로 근거에 그 사실을 적는다. */
+  const rs = extra.reviews;
+  if (rs && rs.n >= 3) {
+    put('p9', rs.daysSince <= 30,
+        `마지막 리뷰 ${rs.daysSince}일 전 (최근 ${rs.n}개 기준)`);
+    /* 0% 는 "답글을 안 단다"일 수도 있고 "응답에 답글 정보가 없다"일 수도 있다.
+       둘을 구분할 방법이 없으므로 단정하지 않고 그 사실을 적는다. */
+    put('p8', rs.replyRate >= 0.9,
+        `최근 리뷰 ${rs.n}개 중 ${rs.replied}개에 답글 (${Math.round(rs.replyRate * 100)}%)`
+        + (rs.replied === 0 ? ' — 실제로는 답글을 다시는데 0%로 나온다면 알려주세요 (수집 실패일 수 있습니다)' : ''));
+  } else {
+    unknown('p9', '리뷰 목록을 가져오지 못했습니다');
+    unknown('p8', '리뷰 목록을 가져오지 못해 답글 비율을 세지 못했습니다');
+  }
+
+  const ps = extra.photos;
+  if (ps && ps.n >= 3) {
+    put('p4', ps.daysSince <= 183, `마지막 사진 ${ps.daysSince}일 전 (최근 ${ps.n}장 기준)`);
+  } else {
+    na('p4', '네이버가 사진 업로드 날짜를 공개하지 않습니다');
+  }
+
+  // ── 사람 눈이 있어야만 아는 것 ──────────────────────────
+  unknown('p1', '대표사진이 시설 전경인지는 사진을 봐야 압니다');
+  unknown('p3', '어느 구역 사진이 있는지는 사진을 봐야 압니다');
+  unknown('d1', '지도를 열어 핀이 우리 건물 위에 있는지만 보시면 됩니다 (10초)');
+
+  return J;
+}
+
+/* deep=true 는 내 가게용. 리뷰·사진 탭까지 반드시 들러 답글 비율과 갱신 시점을 센다.
+   경쟁사 분석에서는 그 항목을 쓰지 않으므로 얕게 훑어 왕복을 줄인다. */
+async function collectPlace(idOrUrl, userType, opts = {}) {
+  const deep = opts.deep !== false;
+  const id = await resolvePlaceId(idOrUrl);
+  const attempts = [];
+  const data = {};
+  const present = new Set();
+  const looseCount = new Set();   // 가게 노드 밖에서 주운 개수 항목
+  const foundBy = {};             // 이름이 아니라 뜻으로 찾은 항목 (target → 실제 키 이름)
+  const numbers = {};             // 가게 노드 안의 숫자 전부 — 못 찾은 값을 추적할 단서
+  const links = {};               // 링크 필드 아래에 실제로 있는 주소
+  const introCands = [];          // 소개글 후보 (리뷰·예약 안내문과 섞여 온다)
+  const jsons = [];
+  const sources = [];
+
+  for (const build of PLACE_STRATEGIES) {
+    const url = build(id);
+    try {
+      const r = await get(url);
+      const json = tryJson(r.text);
+      if (!json) {
+        attempts.push({ url, status: r.status, result: 'JSON/상태객체를 찾지 못함', bytes: r.text.length });
+        continue;
+      }
+      const before = Object.keys(data).length;
+
+      /* 이 가게 노드에서 먼저 줍는다. 개수 항목은 여기서 나온 것만 인정한다.
+         가게 노드를 못 찾았을 때만 트리 전체를 훑는다 (없는 것보단 낫다). */
+      const scoped = scopedNodes(json, id);
+      if (scoped.length) {
+        /* 소개글은 업체 기본 정보 노드(업체명·카테고리가 같이 있는 곳)에만 있다.
+           리뷰 노드에도 description 이라는 이름의 본문이 들어 있어서, 그냥 훑으면
+           손님 리뷰가 소개글 자리에 들어온다. 실제로 그런 일이 있었다.
+           기본 정보 노드를 찾았다면 소개글은 거기서만 가져온다. */
+        /* 소개글 후보를 모아 두고, 어느 것을 쓸지는 전부 모은 뒤에 정한다 */
+        collectIntros(scoped, introCands);
+
+        const noIntro = PLACE_FIELDS.filter(f => !TEXT_FROM_BASE.includes(f));
+        for (const s of scoped) {
+          harvest(s, noIntro, data);
+          harvestPresence(s, noIntro, present);
+        }
+        const fields = noIntro;
+        /* 가게 노드에 없는 값은 바깥에서 보충한다. 버리면 진짜 값까지 잃는다.
+           다만 개수 항목을 바깥에서 주웠다는 사실은 기억해 두고 근거에 밝힌다. */
+        const loose = harvest(json, fields, {});
+        for (const [k, v] of Object.entries(loose)) {
+          if (isEmptyVal(v) || !isEmptyVal(data[k])) continue;
+          data[k] = v;
+          if (COUNT_FIELDS.includes(k)) looseCount.add(k);
+        }
+
+        /* 가게 노드 안의 숫자를 전부 모아 둔다.
+           뜻으로도 못 찾은 값이 있을 때, 어떤 이름으로 오는지 볼 유일한 단서다. */
+        for (const node of scoped) collectNumbers(node, numbers);
+        collectLinks(scoped, links);
+
+        /* 이름으로 못 찾은 개수는 뜻으로 찾아본다. 가게 노드 안에서만 본다. */
+        for (const [target, c] of Object.entries(CONCEPTS)) {
+          if (c.alts.some(a => !isEmptyVal(data[a]))) continue;   // 정확한 이름으로 이미 잡혔다
+          for (const node of scoped) {
+            const hit = scanNumeric(node, c);
+            if (hit) { data[target] = hit.value; foundBy[target] = hit.key; break; }
+          }
+        }
+      } else {
+        harvest(json, PLACE_FIELDS, data);
+        harvestPresence(json, PLACE_FIELDS, present);
+      }
+
+      const gained = Object.keys(data).length - before;
+      if (gained <= 0 && before === 0) {
+        attempts.push({ url, status: r.status, result: '필드를 찾지 못함', bytes: r.text.length });
+        continue;
+      }
+      jsons.push(json);
+      sources.push({ url, gained });
+
+      // 필요한 값이 다 모였으면 남은 주소는 두드리지 않는다.
+      // 다만 깊게 볼 때는 리뷰·사진 탭을 한 번은 들러야 답글·갱신 판정이 산다.
+      const seen = re => sources.some(x => re.test(x.url));
+      const enough = KEY_FIELDS.every(f => (CONCEPTS[f]?.alts || [f]).some(a => !isEmptyVal(data[a])))
+        && (!deep || (seen(/review/) && seen(/photo/) && seen(/news|feed/)));
+      if (enough) break;
+    } catch (e) {
+      attempts.push({ url, result: `요청 실패: ${e.message}` });
+    }
+  }
+
+  /* 후보 중 사장님이 쓴 글로 보이는 것을 고른다. 같은 글이 여러 번 나오므로 중복은 뺀다. */
+  const seenIntro = new Set();
+  const intros = introCands
+    .filter(c => !seenIntro.has(c.text) && seenIntro.add(c.text))
+    .sort((a, b) => b.score - a.score);
+  if (intros.length && intros[0].score > 0) data.description = intros[0].text;
+
+  const found = Object.keys(data).length;
+  if (found < 2) {
+    return { ok: false, placeId: id, attempts,
+      error: '네이버 응답에서 플레이스 정보를 읽지 못했습니다. 구조가 변경되었을 수 있습니다.' };
+  }
+
+  return {
+    ok: true, placeId: id,
+    source: sources[0].url,
+    sources,                       // 어느 주소가 무엇을 보탰는지
+    fields: found, data, attempts,
+    // 개념 단위로 본다. visitorReviewsTotal 이 있으면 visitorReviewCount 가 없어도 있는 것이다.
+    missing: KEY_FIELDS.filter(f =>
+      (CONCEPTS[f]?.alts || [f]).every(a => isEmptyVal(data[a]))),
+    numbers,
+    links,
+    foundBy,
+    // 업체 사진 / 상단 노출 / 동영상 / 손님 사진을 갈라서 넘긴다.
+    photoInfo: photoCounts(jsons),
+    // 어떤 후보들이 있었는지 보여준다. 고른 것이 틀렸으면 사장님이 바꿀 수 있어야 한다.
+    introCandidates: intros.slice(0, 4).map(c => ({ key: c.key, score: Math.round(c.score * 10) / 10,
+                                                    len: c.text.length, text: c.text })),
+    judge: judgeItems(data, present, userType, {
+      loose: looseCount, foundBy, links,
+      reviews: listStats(jsons.filter((_, i) => /review/.test(sources[i]?.url || ''))) || listStats(jsons),
+      photos: listStats(jsons.filter((_, i) => /photo|image/.test(sources[i]?.url || ''))),
+      photoInfo: photoCounts(jsons),
+    }),
+    derived: deriveInputs(data, jsons),
+    material: introMaterial(data, jsons),   // 소개글 8단 구성에 쓸 재료
+  };
+}
+
+/* ============================================================================
+ * 소개글 재료 — 네이버가 이미 갖고 있는 것들
+ *
+ * 좋은 소개글은 "찾아오는 길(랜드마크 + 교통수단별)"과 "실제 리뷰 인용"이
+ * 있어야 한다. 보통은 사장님이 손으로 적어 넣는 항목인데, 네이버 응답 안에
+ * 지하철역·버스정류장·도보 시간·리뷰 본문이 그대로 들어 있다. 긁어서 쓴다.
+ * ========================================================================== */
+
+/* 타입 이름으로 노드를 모은다. 아폴로 캐시는 "SubwayStationInfo:1409" 같은
+   키를 쓰므로 __typename 을 보는 편이 이름 규칙 변화에 강하다. */
+function nodesOfType(node, typeName, out = [], depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return out;
+  if (!Array.isArray(node) && node.__typename === typeName) out.push(node);
+  for (const v of Object.values(node)) if (v && typeof v === 'object') nodesOfType(v, typeName, out, depth + 1);
+  return out;
+}
+
+/* 가까운 순으로, 같은 이름은 하나만 */
+function nearest(list, n) {
+  const seen = new Set();
+  return list
+    .filter(x => x && x.name && !seen.has(x.name) && seen.add(x.name))
+    .sort((a, b) => (a.walkTime ?? 999) - (b.walkTime ?? 999))
+    .slice(0, n);
+}
+
+/* 이벤트로 보이는 메뉴 줄. 사장님이 메뉴판에 걸어 둔 혜택이 곧 방문 유도 재료다. */
+const EVENT_HINT = /(이벤트|무료|할인|증정|특가|오픈|첫 ?방문|체험|혜택|\d+\s*%|\d[\d,.]*\s*(만원|원))/;
+
+/* 리뷰에서 손님의 말을 센다. 은코치는 리뷰 100개를 AI 에게 읽혀 페르소나를 만든다.
+   우리는 AI 없이 단어 빈도로 센다. 정밀도는 낮지만 근거가 눈에 보이고 공짜다.
+   무엇보다 "우리가 정한 페르소나"가 아니라 "손님이 실제로 쓴 말"이 된다. */
+const VOICE_MAP = [
+  ['혼자 조용히',   ['혼자', '조용', '눈치', '시선', '집중']],
+  ['처음 시작',     ['처음', '초보', '입문', '시작', '몰라']],
+  ['가격',         ['가격', '저렴', '합리', '비용', '가성비', '만원']],
+  ['시설·청결',     ['깨끗', '청결', '쾌적', '넓', '시설', '신상', '최신']],
+  ['친절·상담',     ['친절', '상담', '설명', '알려주', '챙겨']],
+  ['시간대',       ['새벽', '야간', '밤', '24시', '아침', '퇴근', '교대']],
+  ['PT·지도',      ['PT', '피티', '트레이너', '선생님', '코치', '자세']],
+  ['샤워·편의',     ['샤워', '락커', '라커', '운동복', '주차']],
+  ['체중·체형',     ['다이어트', '감량', '체중', '체형', '근력', '벌크']],
+];
+
+function reviewVoice(texts) {
+  const body = texts.join(' ');
+  if (!body.trim()) return [];
+  return VOICE_MAP
+    .map(([label, words]) => {
+      let n = 0;
+      for (const w of words) n += body.split(w).length - 1;
+      return { label, n, words: words.filter(w => body.includes(w)) };
+    })
+    .filter(v => v.n > 0)
+    .sort((a, b) => b.n - a.n);
+}
+
+function introMaterial(data, jsons) {
+  const all = Array.isArray(jsons) ? jsons : [jsons];
+  const grab = t => all.flatMap(j => nodesOfType(j, t));
+
+  const sub = nearest(grab('SubwayStationInfo'), 1).map(s => ({
+    name: s.displayName || (s.name ? s.name + '역' : ''),
+    exit: s.nearestExit || '', walkTime: s.walkTime ?? null, distance: s.walkingDistance ?? null,
+  }));
+
+  const bus = nearest(grab('BusStation'), 3).map(b => ({
+    name: b.name, walkTime: b.walkTime ?? null, distance: b.walkingDistance ?? null,
+  }));
+
+  /* 리뷰 본문. 같은 글이 여러 노드에 중복으로 실려 있어 앞부분으로 중복을 제거한다.
+     방문자 리뷰(짧고 직접적)와 블로그 후기(길고 서술적)를 나눠 담는다 —
+     소개글 인용에는 앞쪽이, 페르소나 분석에는 둘 다 쓸모가 있다. */
+  const seen = new Set(), reviews = [], blogs = [];
+  const push = (bag, txt, min, max) => {
+    const t = String(txt || '').trim().replace(/\s+/g, ' ');
+    if (t.length < min || t.length > max) return;
+    const key = t.slice(0, 25);
+    if (seen.has(key)) return;
+    seen.add(key);
+    bag.push(t);
+  };
+  for (const t of ['PlaceDetailTopPhotoItem', 'VisitorReview', 'VisitorReviewItem', 'ReviewItem']) {
+    for (const n of grab(t)) push(reviews, n.description || n.body || n.contents || n.reviewText, 25, 500);
+  }
+  for (const n of grab('FsasReview')) push(blogs, n.contents || n.body || n.description, 120, 3000);
+
+  /* 답글이 아직 안 달린 리뷰. VisitorReview 노드에 reply 가 통째로 실려 있어서
+     본문이 비었는지만 보면 바로 안다(reply 자체는 null 이 아니라 껍데기로 온다).
+     사장님이 네이버를 한 장씩 넘기며 밀린 것을 찾으실 필요가 없다 —
+     이건 도구가 대신할 수 있는 일이고, 실제로 20개 중 4개가 비어 있었다. */
+  const openReviews = grab('VisitorReview')
+    .filter(n => !String(n?.reply?.body || '').trim())
+    .map(n => ({
+      body: String(n?.body || '').replace(/\s+/g, ' ').trim(),
+      rating: Number(n?.rating) || null,
+      date: String(n?.created || n?.visited || '').trim(),
+    }))
+    .filter(x => x.body.length >= 10)
+    .filter((x, i, a) => a.findIndex(y => y.body === x.body) === i)
+    .slice(0, 12);
+
+  /* 블로그 후기의 주소가 여기 그대로 들어 있다. 손으로 붙여넣으실 필요가 없다.
+     본문까지 지금 받아 오면 수집이 그만큼 느려지므로, 주소만 넘기고
+     본문은 화면에서 버튼을 누를 때 받는다. */
+  const blogLinks = grab('FsasReview')
+    .map(n => ({ url: String(n?.url || '').trim(),
+                 title: String(n?.id || '').split('_').slice(3).join('_').trim()
+                        || String(n?.name || '').trim(),
+                 author: String(n?.name || n?.authorName || '').trim() }))
+    .filter(x => /^https?:\/\/\S*blog\.naver\.com/.test(x.url))
+    .filter((x, i, a) => a.findIndex(y => y.url === x.url) === i)
+    .slice(0, 8);
+
+  /* 메뉴는 아폴로 캐시에서 Menu 노드로 흩어져 저장된다. 배열 이름으로 찾으면 안 잡힌다. */
+  const menus = grab('Menu');
+  const events = [...new Set(menus.map(m => String(m?.name || '').trim())
+    .filter(n => n && EVENT_HINT.test(n)))].slice(0, 5);
+
+  /* 메뉴 이름은 사장님이 직접 써 넣은 시설·프로그램 목록이다.
+       여성전용(우먼존) 24시이용권 / 스미스머신 파워렉 6대 / 유산소 머신 21대
+     답글과 소개글에 그대로 쓸 수 있는 사실이 여기 다 있는데,
+     지금까지 "메뉴 19개"라는 숫자만 쓰고 이름은 버렸다.
+     이모지는 네이버 입력칸에서 막히므로 여기서 떼고 넘긴다. */
+  const menuNames = [...new Set(menus
+    .map(m => String(m?.name || '')
+      .replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}]/gu, '')
+      .replace(/\s+/g, ' ').trim())
+    .filter(n => n.length >= 3))].slice(0, 20);
+
+  /* 소식(피드)은 사장님이 직접 쓰신 글이다. 개업 연차나 이번 달 이벤트처럼
+     네이버 기본 필드에도, 메뉴에도 없는 사실이 여기 들어 있다.
+     "쌍용동 헬스장에서 28년째 같은 자리를 지키고 있는" 이 여기서만 나왔다. */
+  const feeds = grab('Feed')
+    .map(n => ({ title: String(n?.title || '').replace(/\s+/g, ' ').trim(),
+                 desc:  String(n?.desc  || '').replace(/\s+/g, ' ').trim().slice(0, 300) }))
+    .filter(x => x.title || x.desc)
+    .slice(0, 6);
+
+  /* 결제·편의시설·찾아오는 길도 같은 이유로 base 노드에서 직접 읽는다.
+     harvest 가 모은 data 에는 KEY_FIELDS 만 들어 있어 여기엔 없다. */
+  const base = grab('PlaceDetailBase')[0] || {};
+  const strList = v => (Array.isArray(v) ? v : []).map(x => String(x?.name ?? x).trim()).filter(Boolean);
+
+  return {
+    subway: sub[0] || null,
+    bus,
+    /* 버스정류장·지하철역 이름은 그 동네 사람만 쓰는 저경쟁 검색어다.
+       "쌍용패션거리" 처럼 상권 이름이 잡히면 소개글에 넣을 값어치가 있다. */
+    landmarks: [...new Set([...(sub[0] ? [sub[0].name] : []), ...bus.map(b => b.name)])],
+    road: String(base.road || data.road || '').trim(),
+    payments: strList(base.paymentInfo),
+    conveniences: strList(base.conveniences),
+    events,
+    menuNames,
+    feeds,
+    blogLinks,
+    reviews: reviews.slice(0, 20),
+    openReviews,
+    blogs: blogs.slice(0, 5),
+    /* 리뷰 문장에서 손님이 실제로 쓴 말을 센다. 프리셋 페르소나 대신
+       "우리 손님이 무엇 때문에 왔다고 쓰는가"를 근거로 쓰기 위해서다. */
+    voice: reviewVoice([...reviews, ...blogs]),
+    booking: base.bookingUrl || data.bookingUrl || null,
+    talktalk: base.talktalkUrl || data.talktalkUrl || null,
+  };
+}
+
+/* ============================================================================
+ * 네이버 검색광고 API — 월 검색량과 연관키워드
+ *
+ * 우리가 은코치에 확실히 진 자리가 여기였다. 키워드를 고르라고 하면서
+ * "그 말을 한 달에 몇 명이 검색하는지"를 못 보여줬다. 근거 없이 고르라는 것과 같다.
+ *
+ * 광고주 가입(무료)만 하면 열리는 API 다. 사장님이 렌더에 값을 넣으시면 그때부터 돈다.
+ * 서명은 HMAC-SHA256 이고, 서명 대상은 "타임스탬프.메서드.경로" 다 (쿼리는 뺀다).
+ * ========================================================================== */
+const SEARCHAD_HOST = 'https://api.searchad.naver.com';
+const searchAdKeys = () => ({
+  key:  String(process.env.NAVER_AD_API_KEY  || '').trim(),
+  sec:  String(process.env.NAVER_AD_SECRET   || '').trim(),
+  cust: String(process.env.NAVER_AD_CUSTOMER || '').trim(),
+});
+/* 값은 내보내지 않는다. 들어왔는지만 알려준다 - 그래야 화면에서 확인할 수 있다. */
+function searchAdStatus() {
+  const k = searchAdKeys();
+  const have = { apiKey: Boolean(k.key), secret: Boolean(k.sec), customer: Boolean(k.cust) };
+  const n = Object.values(have).filter(Boolean).length;
+  return { ...have, ready: n === 3,
+    note: n === 3 ? '세 개 다 들어왔습니다'
+        : n === 0 ? '아직 없습니다'
+        : `${3 - n}개가 빠졌습니다 - 하나라도 없으면 안 돕니다` };
+}
+function searchAdSign(ts, method, p, secret) {
+  return crypto.createHmac('sha256', secret).update(`${ts}.${method}.${p}`).digest('base64');
+}
+async function searchAdGet(p, params) {
+  const k = searchAdKeys();
+  if (!k.key || !k.sec || !k.cust) return { ok: false, error: '검색광고 키가 설정되어 있지 않습니다.' };
+  const ts = String(Date.now());
+  const url = `${SEARCHAD_HOST}${p}?${new URLSearchParams(params)}`;
+  try {
+    const r = await fetch(url, { headers: {
+      'X-Timestamp': ts,
+      'X-API-KEY': k.key,
+      'X-Customer': k.cust,
+      'X-Signature': searchAdSign(ts, 'GET', p, k.sec),
+    } });
+    const body = await r.text();
+    if (!r.ok) {
+      /* 네이버가 주는 오류 메시지를 그대로 돌려주면 무엇이 틀렸는지 사장님이 아신다.
+         다만 우리 키 값은 어디에도 안 싣는다. */
+      let msg = body.slice(0, 200);
+      try { msg = JSON.parse(body).title || JSON.parse(body).message || msg; } catch {}
+      return { ok: false, status: r.status, error: msg };
+    }
+    return { ok: true, data: JSON.parse(body) };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+/* 사장님이 "네가 확인해줘"라고 하셨는데 /api/searchad-test 는 접근 키가 있어야 열린다.
+   그래서 키가 없는 상태에서도 "됐다/안 됐다"만 볼 수 있는 자리를 따로 둔다.
+
+   담는 것은 성공 여부와 오류 코드뿐이다. 검색어도, 검색량 숫자도, 키도 안 싣는다.
+   그것까지 열어 두면 남이 사장님 API 한도를 대신 써 버릴 수 있다.
+   열 번에 한 번씩만 실제로 눌러 본다 - health 는 자주 불리는 자리라 매번 부르면
+   그것만으로 하루 한도를 태운다. */
+let SA_PROBE = { at: 0, val: null };
+const SA_PROBE_TTL = 10 * 60 * 1000;
+async function searchAdProbe() {
+  const st = searchAdStatus();
+  if (!st.ready) return null;
+  if (SA_PROBE.val && Date.now() - SA_PROBE.at < SA_PROBE_TTL) return SA_PROBE.val;
+  const r = await searchAdGet('/keywordstool', { hintKeywords: '헬스장', showDetail: '1' });
+  const net = /allowlist|egress|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|getaddrinfo/i
+    .test(String(r.error || ''));
+  const val = r.ok
+    ? { ok: true, note: '네이버가 받아 줍니다. 검색량을 쓸 수 있습니다.' }
+    : { ok: false, status: r.status || 0, network: net,
+        note: net ? '키 문제가 아니라 서버가 네이버로 나가지 못했습니다.'
+            : r.status === 401 ? '액세스라이선스나 비밀키가 안 맞습니다.'
+            : r.status === 403 ? '고객 ID가 안 맞거나 API 사용 신청이 안 된 상태입니다.'
+            : r.status === 429 ? '오늘 호출 한도를 넘었습니다.'
+            : '알 수 없는 오류입니다.' };
+  SA_PROBE = { at: Date.now(), val };
+  return val;
+}
+
+/* ── 검색어별 월 검색량 ──────────────────────────────────────────────
+   keywordstool 은 힌트 키워드를 최대 5개까지 받고, 그 자신과 연관어를 함께 돌려준다.
+   우리가 알고 싶은 것은 "우리가 고른 그 말"의 검색량이라, 돌려받은 목록에서
+   우리 말과 같은 것을 찾아 짝을 맞춘다. 띄어쓰기는 네이버가 없애서 돌려준다.
+
+   하루치 캐시를 둔다. 검색량은 월 단위 값이라 하루에 여러 번 물어볼 이유가 없고,
+   API 한도는 하루 단위로 걸린다. 사장님이 후보를 몇 번 다시 만드셔도 한도가 안 샌다. */
+const KWVOL_FILE = path.join(DATA_DIR, 'kw-volume.json');
+const kwNorm = k => String(k).replace(/\s+/g, '').toLowerCase();
+/* 네이버는 아주 적은 값을 "< 10" 으로 준다. 실제 숫자를 안 알려주는 것이다.
+   그걸 10 이라고 적으면 우리 화면이 "한 달에 20명이 찾습니다"라고 단정하게 된다 -
+   네이버가 모른다고 한 것을 우리가 아는 척하는 셈이다. 그 사실을 그대로 들고 간다. */
+const kwLt   = v => String(v ?? '').includes('<');
+const kwNum  = v => {
+  const t = String(v ?? '').replace(/[^0-9]/g, '');
+  return t ? Number(t) : 0;
+};
+/* 합계를 낼 때 "< 10" 쪽은 0 으로 센다. 모바일 320 에 PC "< 10" 을 더해 330 으로 적으면
+   실제(320~330)보다 위로 잡은 값인데 화면에는 "330 이상"이라고 나간다 - 거꾸로다.
+   아래로 잡아 두어야 "320 이상"이 사실이 된다. */
+const kwTotal = v => (v.pcLt ? 0 : v.pc) + (v.moLt ? 0 : v.mo);
+function kwVolCache() {
+  try {
+    const v = JSON.parse(fs.readFileSync(KWVOL_FILE, 'utf8'));
+    if (v && v.date === today()) return v;
+  } catch { /* 없으면 오늘 처음 */ }
+  return { date: today(), map: {} };
+}
+function kwVolSave(c) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(KWVOL_FILE, JSON.stringify(c)); }
+  catch { /* 디스크가 없어도 조회는 계속 돌아야 한다 */ }
+}
+async function keywordVolume(list) {
+  const want = [...new Set((list || []).map(x => String(x).trim()).filter(Boolean))].slice(0, 60);
+  if (!want.length) return { ok: true, rows: [] };
+  const st = searchAdStatus();
+  if (!st.ready) return { ok: false, error: '검색광고 키가 설정되어 있지 않습니다.', searchad: st };
+
+  const cache = kwVolCache();
+  const todo = want.filter(k => !cache.map[kwNorm(k)]);
+  let failed = null;
+  /* 한 번에 다섯 개까지. 네이버가 정한 상한이다. */
+  for (let i = 0; i < todo.length; i += 5) {
+    const chunk = todo.slice(i, i + 5);
+    const r = await searchAdGet('/keywordstool',
+      { hintKeywords: chunk.map(kwNorm).join(','), showDetail: '1' });
+    if (!r.ok) { failed = r; break; }
+    for (const x of (r.data?.keywordList || [])) {
+      const n = kwNorm(x.relKeyword);
+      if (cache.map[n]) continue;
+      /* PC 와 모바일을 따로 본다. 한쪽만 "< 10" 인 경우가 많다 -
+         "쌍용동24시헬스장"은 PC 가 "< 10" 이고 모바일이 320 이었다.
+         둘을 묶어서 "거의 없음"으로 적었더니 2위로 잡고 계신 멀쩡한 검색어가
+         화면에서 사라졌다. 둘 다 "< 10" 일 때만 거의 없는 것이다. */
+      cache.map[n] = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
+                       pcLt: kwLt(x.monthlyPcQcCnt), moLt: kwLt(x.monthlyMobileQcCnt),
+                       lt: kwLt(x.monthlyPcQcCnt) && kwLt(x.monthlyMobileQcCnt),
+                       comp: String(x.compIdx || '').trim() };
+    }
+    /* 못 찾은 것은 "0" 이 아니라 "모름" 이다. 둘을 섞으면 판단이 틀어진다. */
+    chunk.forEach(k => { if (!cache.map[kwNorm(k)]) cache.map[kwNorm(k)] = null; });
+  }
+  kwVolSave(cache);
+  const rows = want.map(k => {
+    const v = cache.map[kwNorm(k)];
+    return v ? { keyword: k, ...v, total: kwTotal(v) } : { keyword: k, unknown: true };
+  });
+  return { ok: !failed, rows, ...(failed ? { error: failed.error, status: failed.status } : {}) };
+}
+
+/* ── 연관검색어 ────────────────────────────────────────────────────
+   지금까지 후보는 우리가 조합해서 만들었다. "지역+업종+보조어" 식이다.
+   그래서 "쌍용동헬스장1인", "쌍용동헬스장저렴한" 처럼 아무도 안 치는 말이 섞였다.
+   조회에 3~6초씩 걸리는데 그 시간을 죽은 말에 쓰는 셈이었다.
+
+   네이버가 실제로 사람들이 친 말을 알려준다. 그걸 쓰면 처음부터 살아 있는 말만 남는다.
+
+   다만 플레이스는 가게의 행정구역 안에서만 노출된다. "헬스장" 같은 단독 검색어는
+   전국 검색량이 잡혀서 크게 보이지만 우리 손님이 아니다. 지역이 든 것만 남긴다. */
+async function relatedKeywords(seed, area) {
+  const st = searchAdStatus();
+  if (!st.ready) return { ok: false, error: '검색광고 키가 설정되어 있지 않습니다.', searchad: st };
+  const hint = String(seed || '').replace(/\s+/g, '');
+  if (!hint) return { ok: false, error: '기준이 될 검색어가 필요합니다.' };
+
+  const r = await searchAdGet('/keywordstool', { hintKeywords: hint, showDetail: '1' });
+  if (!r.ok) return { ok: false, error: r.error, status: r.status };
+
+  const A = String(area || '').replace(/\s+/g, '');
+  const cache = kwVolCache();
+  const rows = (r.data?.keywordList || []).map(x => {
+    const k = String(x.relKeyword || '').trim();
+    const v = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
+                pcLt: kwLt(x.monthlyPcQcCnt), moLt: kwLt(x.monthlyMobileQcCnt),
+                lt: kwLt(x.monthlyPcQcCnt) && kwLt(x.monthlyMobileQcCnt),
+                comp: String(x.compIdx || '').trim() };
+    /* 받아 온 김에 캐시에 넣어 둔다. 곧바로 순위 조회로 넘어가는 흐름이라
+       거기서 또 물어볼 이유가 없다. */
+    if (k) cache.map[kwNorm(k)] = v;
+    return { keyword: k, ...v, total: kwTotal(v) };
+  }).filter(x => x.keyword);
+  kwVolSave(cache);
+
+  /* 지역이 든 것을 먼저, 그 안에서 많이 찾는 순. 지역이 없는 것도 버리지는 않는다 -
+     사장님이 보시고 판단하실 수 있게 뒤에 둔다. */
+  const local = rows.filter(x => A && kwNorm(x.keyword).includes(kwNorm(A)));
+  const rest  = rows.filter(x => !local.includes(x));
+  const by = (a, b) => b.total - a.total;
+  return { ok: true, seed: hint, area: A,
+           local: local.sort(by).slice(0, 40),
+           other: rest.sort(by).slice(0, 20),
+           got: rows.length };
+}
+
+/* ── 경쟁사가 다섯 칸에 무엇을 넣었나 ─────────────────────────────────
+   대표키워드는 관리자 화면에서 넣는 값이라 "남의 것은 못 본다"고 생각하기 쉽다.
+   그런데 플레이스 페이지에 keywordList 로 그대로 실려 나온다. 우리 것을 그렇게 읽고 있었으니
+   경쟁사 것도 같은 방법으로 읽힌다.
+
+   순위 조회가 이미 상위 업체의 id 와 이름을 돌려준다. 그 id 로 한 곳씩 들어가
+   다섯 칸을 모으면, "다들 쓰는 말"과 "아무도 안 쓴 빈자리"가 눈에 보인다.
+   4위에서 위로 올라가려면 이게 필요하다 - 지금 우리한테 없던 유일한 자리다. */
+async function rivalKeywords(keyword, myUrl, n) {
+  const kw = String(keyword || '').trim();
+  if (!kw) return { ok: false, error: '검색어가 필요합니다.' };
+  const top = Math.min(Math.max(Number(n) || 5, 1), 10);
+  let myId = null;
+  try { myId = myUrl ? await resolvePlaceId(myUrl) : null; } catch { /* 없어도 돈다 */ }
+
+  const r = await findRank(kw, myId || '0', 2);
+  /* findRank 는 전체 목록을 ranked 로 준다(top5 는 다섯 개로 잘린 것).
+     우리 가게가 6위 밖이면 top5 만 봐서는 비교 대상이 안 잡힌다. */
+  const list = (r.ranked || r.top5 || []).slice(0, top + 3);
+  if (!list.length) return { ok: false, error: r.error || '검색 결과를 읽지 못했습니다.' };
+
+  const rows = [];
+  /* 우리 가게가 상위 목록 밖에 있을 수 있다(지금 4위지만 더 밀릴 수도 있다).
+     그러면 비교 기준이 없어져서 "우리만 없는 말"을 셀 수 없다. 따로 데려온다. */
+  const inList = myId && list.some(x => String(x.id) === String(myId));
+  const queue = (!inList && myId) ? [{ id: myId, name: '(우리 가게)' }, ...list] : list;
+  for (const pl of queue) {
+    if (rows.filter(x => !x.mine).length >= top) break;
+    /* 우리 가게는 경쟁사가 아니다. 다만 비교 기준으로 따로 담는다. */
+    const mine = myId && String(pl.id) === String(myId);
+    try {
+      const c = await collectPlace(pl.id, null, { deep: false });
+      /* deriveInputs 는 다섯 칸을 쉼표 한 줄로 돌려준다("A, B, C"). 갈라서 쓴다.
+         등록값이 아니라 소개글에서 주워 온 것이면 다섯 칸이 아닐 수 있으므로
+         출처도 같이 들고 간다 - 근거가 다른 값을 같은 표에 섞으면 안 된다. */
+      const kws = String(c?.derived?.repkw || '').split(',').map(x => x.trim()).filter(Boolean);
+      const from = c?.derived?.repkwFrom || '';
+      const row = { id: String(pl.id), name: (mine && c?.data?.name) ? c.data.name : pl.name,
+                    rank: rows.filter(x => !x.mine).length + 1, mine, keywords: kws, from };
+      if (mine) { row.rank = r.found ? r.rank : null; rows.unshift(row); } else rows.push(row);
+    } catch (e) {
+      rows.push({ id: String(pl.id), name: pl.name, mine, keywords: [], error: String(e.message || e) });
+    }
+    await sleep(260);   // 연달아 두드리면 막힌다
+  }
+
+  /* 몇 곳이 같은 말을 쓰는지 센다. 여럿이 쓰는 말은 그 동네에서 통하는 말이라는 뜻이고,
+     한 곳만 쓰는 말은 아직 빈자리라는 뜻이다. 둘 다 값어치가 있는데 쓰임이 다르다. */
+  const rivals = rows.filter(x => !x.mine);
+  const counted = rivals.filter(x => x.from === '등록값');
+  const mineRow = rows.find(x => x.mine) || null;
+  const mineSet = new Set((mineRow?.keywords || []).map(kwNorm));
+  const tally = new Map();
+  for (const x of rivals) {
+    /* 소개글 끝줄에서 주워 온 것은 "등록한 다섯 칸"이 아니다. 세면 숫자가 거짓이 된다. */
+    if (x.from !== '등록값') continue;
+    for (const k of new Set(x.keywords.map(y => String(y).trim()).filter(Boolean))) {
+      const n2 = kwNorm(k);
+      if (!tally.has(n2)) tally.set(n2, { keyword: k, n: 0, who: [] });
+      const t = tally.get(n2); t.n++; t.who.push(x.name);
+    }
+  }
+  const all = [...tally.values()].sort((a, b) => b.n - a.n);
+  /* 검색량 칸이 제일 중요한데 처음 눌렀을 때 전부 "—"로 나왔다.
+     "남들이 쓰는 말"만 알고 "그 말을 몇 명이 찾는지"를 모르면 판단을 못 한다.
+     경쟁사 한 곳 여는 데 3~5초씩 걸리는 것에 비하면 이 왕복은 짧다. 받아 온다. */
+  await keywordVolume(all.slice(0, 24).map(x => x.keyword));
+  const cache = kwVolCache();
+  const withVol = x => {
+    const v = cache.map[kwNorm(x.keyword)];
+    return v ? { ...x, pc: v.pc, mo: v.mo, lt: v.lt, pcLt: v.pcLt, moLt: v.moLt,
+                 comp: v.comp, total: kwTotal(v) } : x;
+  };
+  return { ok: true, keyword: kw, checked: rivals.length, counted: counted.length,
+    mine: mineRow ? { name: mineRow.name, keywords: mineRow.keywords } : null,
+    rivals: rows.map(x => ({ ...x, keywords: x.keywords })),
+    /* 여럿이 쓰는데 우리만 없는 말 - 제일 먼저 볼 자리 */
+    missing: all.filter(x => x.n >= 2 && !mineSet.has(kwNorm(x.keyword))).map(withVol),
+    /* 우리도 쓰고 남도 쓰는 말 - 이 자리는 이미 붙어 있다 */
+    shared: all.filter(x => mineSet.has(kwNorm(x.keyword))).map(withVol),
+    /* 한 곳만 쓰는 말 - 아직 빈자리일 수 있다 */
+    rare: all.filter(x => x.n === 1 && !mineSet.has(kwNorm(x.keyword))).map(withVol),
+  };
+}
+
+/* 한 번 눌러 보고 실제로 도는지 알려준다 */
+async function searchAdTest(kw) {
+  const st = searchAdStatus();
+  if (!st.ready) return { ok: false, searchad: st, error: st.note };
+  const r = await searchAdGet('/keywordstool',
+    { hintKeywords: String(kw).replace(/\s+/g, ''), showDetail: '1' });
+  if (!r.ok) {
+    /* 키가 틀린 것과 아예 못 나간 것은 다른 문제다. 둘을 같은 말로 안내하면
+       사장님이 멀쩡한 키를 지우고 다시 발급받으신다. 먼저 갈라 놓는다. */
+    const net = /allowlist|egress|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|getaddrinfo/i
+      .test(String(r.error || ''));
+    const hint = net ? '키 문제가 아니라 서버가 네이버로 나가지 못한 것입니다. 키는 그대로 두세요.'
+               : r.status === 401 ? '액세스라이선스나 비밀키가 안 맞습니다. 앞뒤 공백이 붙었는지도 보세요.'
+               : r.status === 403 ? '고객 ID가 안 맞거나 API 사용 신청이 안 된 상태입니다.'
+               : r.status === 429 ? '오늘 호출 한도를 넘었습니다. 잠시 뒤 다시 해 보세요.'
+               : '';
+    return { ok: false, searchad: st, status: r.status, error: r.error, network: net, hint };
+  }
+  const list = r.data?.keywordList || [];
+  const num = v => Number(String(v).replace(/[^0-9]/g, '')) || 0;
+  const top = list.slice(0, 5).map(x => ({
+    kw: x.relKeyword,
+    pc: num(x.monthlyPcQcCnt), mo: num(x.monthlyMobileQcCnt),
+    comp: x.compIdx || '',
+  }));
+  return { ok: true, searchad: st, asked: kw, got: list.length, top };
+}
+
+/* ============================================================================
+ * 순위 조회
+ * ========================================================================== */
+
+const RANK_STRATEGIES = [
+  (q, p) => `https://m.map.naver.com/search2/searchMore.naver?query=${encodeURIComponent(q)}&type=SITE&page=${p}&displayCount=50`,
+  (q, p) => `https://map.naver.com/p/api/search/allSearch?query=${encodeURIComponent(q)}&type=all&page=${p}`,
+  (q, p) => `https://pcmap.place.naver.com/place/list?query=${encodeURIComponent(q)}&page=${p}`,
+];
+
+async function findRank(keyword, placeId, maxPages = 3) {
+  const attempts = [];
+
+  for (const build of RANK_STRATEGIES) {
+    const collected = [];
+    let usable = false;
+
+    for (let page = 1; page <= maxPages; page++) {
+      const url = build(keyword, page);
+      try {
+        const r = await get(url);
+        const json = tryJson(r.text);
+        /* pcmap 목록은 JSON 이 아니라 HTML 로 온다. 예전에는 여기서 그냥 포기했는데,
+           그 안에 순위 순서가 그대로 들어 있다(businesses.items 가 차례대로 된 배열).
+           네이버가 JSON 주소를 막거나 서버 위치에 따라 그쪽이 안 열릴 때
+           이 경로가 마지막으로 남는 길이다. */
+        const places = json ? harvestPlaces(json) : placesFromListHtml(r.text);
+        if (!places) { attempts.push({ url, status: r.status, result: 'JSON 파싱 실패' }); break; }
+        if (!places.length) { attempts.push({ url, status: r.status, result: '업체 목록 없음' }); break; }
+        usable = true;
+        collected.push(...places);
+        if (places.length < 10) break;   // 마지막 페이지로 판단
+      } catch (e) {
+        attempts.push({ url, result: `요청 실패: ${e.message}` });
+        break;
+      }
+    }
+
+    if (usable && collected.length) {
+      // 중복 제거하며 순서 유지
+      const seen = new Set(), list = [];
+      for (const p of collected) if (!seen.has(p.id)) { seen.add(p.id); list.push(p); }
+
+      const idx = list.findIndex(p => p.id === String(placeId));
+      return {
+        ok: true, keyword, placeId: String(placeId),
+        rank: idx >= 0 ? idx + 1 : null,
+        scanned: list.length,
+        found: idx >= 0,
+        top5: list.slice(0, 5).map((p, i) => ({ rank: i + 1, ...p })),
+        ranked: list.map((p, i) => ({ rank: i + 1, ...p })),   // 경쟁 분석용 전체 목록
+        attempts,
+      };
+    }
+  }
+
+  return { ok: false, keyword, placeId: String(placeId), attempts,
+    error: '검색 결과를 읽지 못했습니다. 네이버 응답 구조가 변경되었을 수 있습니다.' };
+}
+
+/* ============================================================================
+ * 경쟁 분석 — 상위 N곳은 왜 뜨는가
+ *
+ * 핵심 원칙: 알아낸 격차를 "따라잡을 수 있는 것 / 시간이 걸리는 것 /
+ * 못 바꾸는 것" 으로 반드시 나눈다. 섞어서 보여주면 실행할 수 없는 목록이 된다.
+ * ========================================================================== */
+
+/* 헬스장 도메인 어휘.
+   상위권 소개글에 나오는데 우리에겐 없는 표현을 찾아낸다.
+   형태소 분석기 없이도 정확도가 높고, 바로 실행 가능한 결과가 나온다. */
+const GYM_LEXICON = {
+  '시설':   ['무료주차','주차','샤워실','샤워','락커','사물함','운동복','수건','사우나','탈의실',
+             '파우더룸','정수기','인바디','체성분','안마의자','휴게실','냉난방','환기'],
+  '프로그램':['PT','퍼스널트레이닝','개인레슨','그룹운동','GX','필라테스','요가','스피닝','크로스핏',
+             '다이어트','바디프로필','체형교정','재활','근력','유산소','식단'],
+  '운영조건':['24시간','연중무휴','무인','새벽','야간','주말운영','일일권','1일권','단기','환불',
+             '양도','연장','당일등록','무약정'],
+  '대상':   ['초보','입문','여성전용','여성','직장인','학생','시니어','1인'],
+  '기구':   ['프리웨이트','머신','덤벨','바벨','스미스머신','케이블','런닝머신','트레드밀','사이클','로잉'],
+  '신뢰':   ['무료상담','무료체험','체험','상담','경력','자격증','생활스포츠지도사','전문','자세지도'],
+};
+
+/* 두 좌표 사이 거리(m) */
+function distanceM(x1, y1, x2, y2) {
+  const toNum = v => Number(v);
+  [x1, y1, x2, y2] = [x1, y1, x2, y2].map(toNum);
+  if ([x1, y1, x2, y2].some(v => !isFinite(v) || v === 0)) return null;
+  const R = 6371000, rad = d => d * Math.PI / 180;
+  const dLat = rad(y2 - y1), dLon = rad(x2 - x1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(y1)) * Math.cos(rad(y2)) * Math.sin(dLon / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+}
+
+const numOr = (...vals) => { for (const v of vals) { const n = Number(v); if (isFinite(n)) return n; } return null; };
+
+/* 받침 판정 → 조사 선택. 사용자에게 보이는 문장이라 조사가 틀리면 눈에 띈다. */
+const EN_BATCHIM = new Set(['l', 'm', 'n', 'r', 'f', 'h', 's', 'x']);
+function josa(word, pair) {
+  const ch = String(word || '').trim().slice(-1);
+  const set = { '은': ['은', '는'], '이': ['이', '가'], '을': ['을', '를'] };
+  const [withB, noB] = set[pair] || [pair, pair];
+  if (!ch) return noB;
+  const code = ch.charCodeAt(0);
+  let batchim;
+  if (code >= 0xAC00 && code <= 0xD7A3) batchim = (code - 0xAC00) % 28 !== 0;
+  else if (/[a-zA-Z]/.test(ch)) batchim = EN_BATCHIM.has(ch.toLowerCase());
+  else batchim = false;
+  return batchim ? withB : noB;
+}
+
+/* 한 업체의 지표를 표준 형태로 정리 */
+function toMetrics(data = {}) {
+  return {
+    introLen : String(data.description || '').trim().length,
+    review   : numOr(data.visitorReviewCount, data.totalReviewCount),
+    blog     : numOr(data.blogCafeReviewCount),
+    photo    : numOr(data.imageCount, data.photoCount),
+    save     : numOr(data.bookmarkCount),
+    score    : numOr(data.visitorReviewScore),
+    booking  : Boolean(data.bookingUrl || data.talktalkUrl),
+    homepage : Boolean(data.homepage),
+    x        : data.x, y: data.y,
+    intro    : String(data.description || ''),
+    name     : String(data.name || ''),
+    category : String(data.category || ''),
+  };
+}
+
+/* 상위권이 공통으로 쓰는데 우리에겐 없는 표현 */
+function lexiconGap(mineIntro, rivalIntros) {
+  const mine = mineIntro.replace(/\s+/g, '').toLowerCase();
+  const rivals = rivalIntros.map(t => t.replace(/\s+/g, '').toLowerCase());
+  const out = [];
+
+  for (const [cat, terms] of Object.entries(GYM_LEXICON)) {
+    for (const term of terms) {
+      const t = term.toLowerCase();
+      const usedBy = rivals.filter(r => r.includes(t)).length;
+      if (usedBy < 2) continue;                 // 상위권 2곳 이상이 쓸 때만 신호로 본다
+      const inMine = mine.includes(t);
+      out.push({ term, category: cat, usedBy, total: rivals.length, inMine });
+    }
+  }
+  // 부분 문자열 흡수 — "무료주차"가 있으면 "주차"는 버린다.
+  // 긴 표현을 넣으면 짧은 쪽은 자동으로 충족되므로, 둘 다 보여주면 할 일이 부풀려 보인다.
+  const absorbed = out.filter(a =>
+    !out.some(b => b !== a && b.inMine === a.inMine && b.term.length > a.term.length
+                && b.term.toLowerCase().includes(a.term.toLowerCase())));
+
+  // 우리에게 없는 것 먼저, 많이 쓰이는 것 먼저
+  return absorbed.sort((a, b) => (a.inMine - b.inMine) || (b.usedBy - a.usedBy));
+}
+
+/* 지표 비교표 */
+function buildComparison(mine, rivals) {
+  const SPEC = [
+    { key:'introLen', label:'소개글 길이',   unit:'자',  higher:true,  axis:'R' },
+    { key:'review',   label:'방문자 리뷰',   unit:'개',  higher:true,  axis:'P' },
+    { key:'blog',     label:'블로그 리뷰',   unit:'개',  higher:true,  axis:'P' },
+    { key:'photo',    label:'사진',         unit:'장',  higher:true,  axis:'P' },
+    { key:'save',     label:'저장',         unit:'회',  higher:true,  axis:'P' },
+    { key:'score',    label:'평점',         unit:'점',  higher:true,  axis:'P' },
+  ];
+
+  return SPEC.map(s => {
+    const vals = rivals.map(r => r.m[s.key]).filter(v => v != null);
+    if (!vals.length || mine[s.key] == null) {
+      return { ...s, mine: mine[s.key], rivals: rivals.map(r => r.m[s.key]), unknown: true };
+    }
+    const min = Math.min(...vals);           // 3위 안에 들기 위한 최소선
+    const max = Math.max(...vals);
+    const gap = Math.round((min - mine[s.key]) * 10) / 10;
+    return {
+      ...s,
+      mine: mine[s.key],
+      rivals: rivals.map(r => r.m[s.key]),
+      min, max,
+      gap: gap > 0 ? gap : 0,
+      behind: gap > 0,
+    };
+  });
+}
+
+/* 어느 축에서 지고 있는가 */
+function axisVerdict(comparison, distance, kwHit) {
+  const behindIn = ax => comparison.filter(c => c.axis === ax && c.behind).length;
+  const v = {};
+
+  v.R = {
+    name: '적합도',
+    lose: behindIn('R') > 0 || !kwHit,
+    note: !kwHit
+      ? '목표 키워드가 내 소개글에 제대로 안 들어가 있습니다. 상위권과의 격차 이전에 매칭 자체가 안 되는 상태입니다.'
+      : behindIn('R') > 0
+        ? '키워드는 들어가 있지만 소개글 분량이 상위권보다 적습니다. 검색어와 매칭될 표면적이 좁습니다.'
+        : '적합도에서는 상위권과 대등하거나 앞섭니다.',
+  };
+
+  const pBehind = comparison.filter(c => c.axis === 'P' && c.behind);
+  v.P = {
+    name: '인기도',
+    lose: pBehind.length > 0,
+    note: pBehind.length
+      ? `${pBehind.map(c => c.label).join(', ')}에서 상위권에 밀립니다. 이 지표들은 손님이 만드는 결과라 하루아침에 못 뒤집습니다.`
+      : '인기도 지표는 상위권과 대등하거나 앞섭니다.',
+  };
+
+  v.D = {
+    name: '거리',
+    lose: distance.mine != null && distance.rivalAvg != null && distance.mine > distance.rivalAvg * 1.5,
+    note: distance.mine == null
+      ? '좌표를 가져오지 못해 거리 비교를 하지 못했습니다.'
+      : distance.mine > (distance.rivalAvg || 0) * 1.5
+        ? `상위권은 검색 중심에서 평균 ${distance.rivalAvg}m인데 우리는 ${distance.mine}m입니다. 거리는 바꿀 수 없는 조건이라, 이 키워드는 구조적으로 불리합니다.`
+        : `검색 중심에서 ${distance.mine}m로 상위권(평균 ${distance.rivalAvg}m)과 비슷합니다. 거리는 불리하지 않습니다.`,
+  };
+
+  return v;
+}
+
+/* 실행안 — 반드시 실행 가능성으로 나눈다 */
+function buildActions(comparison, gaps, verdict, distance, keyword) {
+  const now = [], slow = [], cant = [];
+
+  const introCmp = comparison.find(c => c.key === 'introLen');
+  if (introCmp?.behind) {
+    now.push(`소개글을 ${introCmp.min}자 이상으로 늘리세요. 상위 3곳 중 가장 짧은 곳이 ${introCmp.min}자입니다 (현재 ${introCmp.mine}자).`);
+  }
+
+  const missing = gaps.filter(g => !g.inMine);
+  if (missing.length) {
+    const top = missing.slice(0, 8);
+    now.push(`상위권이 공통으로 쓰는데 우리 소개글엔 없는 표현 ${missing.length}개를 넣으세요. 우선순위: ${top.map(g => `${g.term}(${g.usedBy}/${g.total}곳)`).join(', ')}`);
+  }
+  if (!verdict.R.lose && !missing.length) {
+    now.push('적합도 쪽은 이미 상위권 수준입니다. 여기서 더 밀어붙이기보다 인기도 쪽에 시간을 쓰세요.');
+  }
+
+  for (const c of comparison.filter(x => x.axis === 'P' && x.behind)) {
+    if (c.key === 'photo') {
+      now.push(`사진을 ${c.gap}장 더 올리세요. 상위권 최소가 ${c.min}장입니다. 사진은 오늘 바로 채울 수 있는 인기도 항목입니다.`);
+    } else if (c.key === 'review' || c.key === 'blog') {
+      slow.push(`${c.label} ${c.gap}개 부족합니다 (상위권 최소 ${c.min}개). 자연 유입으로만 채워야 하므로 몇 달 단위로 봐야 합니다. 구매는 제재 대상입니다.`);
+    } else if (c.key === 'save') {
+      slow.push(`저장 ${c.gap}회 부족합니다. 소식·이벤트를 꾸준히 올려 자연 저장을 늘리는 것 말고 안전한 방법이 없습니다.`);
+    } else if (c.key === 'score') {
+      slow.push(`평점이 상위권보다 ${c.gap}점 낮습니다. 불만 리뷰에 성실히 답하고 실제 불편 요인을 없애는 것 외엔 방법이 없습니다.`);
+    }
+  }
+
+  if (verdict.D.lose) {
+    cant.push(`거리는 바꿀 수 없습니다. 상위권은 검색 중심에서 평균 ${distance.rivalAvg}m인데 우리는 ${distance.mine}m입니다. `
+      + `"${keyword}"${josa(keyword, '은')} 이 위치에서 구조적으로 불리한 키워드라, 다른 항목을 다 채워도 상위권 진입이 어려울 수 있습니다. `
+      + `우리 가게가 중심이 되는 키워드(더 가까운 동네·역 이름)를 1순위로 바꾸는 편이 현실적입니다.`);
+  }
+
+  return { now, slow, cant };
+}
+
+async function analyzeCompetitors(keyword, myUrl, topN = 3) {
+  const myId = await resolvePlaceId(myUrl);
+
+  const rankRes = await findRank(keyword, myId);
+  if (!rankRes.ok) return { ok: false, stage: 'rank', error: rankRes.error, attempts: rankRes.attempts };
+
+  const top = (rankRes.ranked || []).slice(0, topN).filter(p => p.id !== myId);
+  if (!top.length) return { ok: false, stage: 'rank', error: '상위 업체 목록을 얻지 못했습니다.' };
+
+  // 내 정보 + 경쟁사 정보 (네이버에 부담을 주지 않도록 순차 요청)
+  const myPlace = await collectPlace(myId);
+  if (!myPlace.ok) return { ok: false, stage: 'place', error: '내 플레이스 정보를 가져오지 못했습니다.', attempts: myPlace.attempts };
+
+  const rivals = [];
+  for (const p of top) {
+    await new Promise(r => setTimeout(r, 300));
+    const c = await collectPlace(p.id, undefined, { deep: false });
+    rivals.push({ rank: p.rank, id: p.id, name: p.name, ok: c.ok, m: c.ok ? toMetrics(c.data) : {} });
+  }
+
+  const usable = rivals.filter(r => r.ok);
+  if (!usable.length) return { ok: false, stage: 'rivals', error: '상위 업체 정보를 하나도 가져오지 못했습니다.' };
+
+  const mine = toMetrics(myPlace.data);
+
+  // 검색 중심을 상위권 좌표의 중심으로 추정한다.
+  // 네이버의 실제 검색 좌표는 알 수 없지만, 상위권이 몰려 있는 지점이 곧 그 키워드의 중심이다.
+  const pts = usable.filter(r => r.m.x && r.m.y);
+  let distance = { mine: null, rivalAvg: null, rivals: [] };
+  if (pts.length) {
+    const cx = pts.reduce((a, r) => a + Number(r.m.x), 0) / pts.length;
+    const cy = pts.reduce((a, r) => a + Number(r.m.y), 0) / pts.length;
+    distance.rivals = pts.map(r => ({ rank: r.rank, d: distanceM(cx, cy, r.m.x, r.m.y) }));
+    const ds = distance.rivals.map(r => r.d).filter(d => d != null);
+    distance.rivalAvg = ds.length ? Math.round(ds.reduce((a, b) => a + b, 0) / ds.length) : null;
+    distance.mine = distanceM(cx, cy, mine.x, mine.y);
+  }
+
+  const comparison = buildComparison(mine, usable);
+  const gaps = lexiconGap(mine.intro, usable.map(r => r.m.intro));
+
+  const kwNorm = keyword.replace(/\s+/g, '').toLowerCase();
+  const kwHit = mine.intro.replace(/\s+/g, '').toLowerCase().includes(kwNorm);
+
+  const verdict = axisVerdict(comparison, distance, kwHit);
+  const actions = buildActions(comparison, gaps, verdict, distance, keyword);
+
+  return {
+    ok: true, keyword, myRank: rankRes.rank, myId,
+    mine: { name: mine.name, category: mine.category, ...comparison.reduce((o, c) => (o[c.key] = c.mine, o), {}) },
+    rivals: usable.map(r => ({
+      rank: r.rank, name: r.name, category: r.m.category,
+      introLen: r.m.introLen, review: r.m.review, blog: r.m.blog,
+      photo: r.m.photo, save: r.m.save, score: r.m.score,
+      booking: r.m.booking, homepage: r.m.homepage,
+    })),
+    comparison, gaps, distance, verdict, actions,
+    failedRivals: rivals.filter(r => !r.ok).map(r => ({ rank: r.rank, name: r.name })),
+  };
+}
+
+/* ============================================================================
+ * 순위 기록 저장
+ * ========================================================================== */
+
+function readHistory() {
+  try { return JSON.parse(fs.readFileSync(HISTORY, 'utf8')); }
+  catch { return { records: [] }; }
+}
+
+/* 저장소에 올려 둔 기록을 가져와 로컬과 합친다.
+
+   렌더 무료 요금제는 배포할 때마다 디스크를 지운다. 그래서 서버가 자기 파일만
+   보고 있으면, 배포 한 번에 그동안의 순위 기록이 통째로 없어진 화면이 된다.
+   실제로 그렇게 지워지고 있었고, 그 바람에 "이 도구를 써서 순위가 올랐는가"를
+   물어볼 근거가 하나도 남아 있지 않았다.
+
+   진짜 기록은 깃허브에 있다(매일 액션이 재서 커밋한다). 여기서는 그걸 받아
+   로컬에 있는 것과 합쳐 보여 준다. 못 받아 오면 있는 것만 보여 준다 -
+   못 물어본 것을 "기록 없음"으로 만들지 않는다. */
+const HIST_RAW = process.env.HISTORY_URL
+  || 'https://raw.githubusercontent.com/byeolhaye0117/naver_place/'
+   + 'claude/webpage-dev-analysis-1rmgca/data/rank-history.json';
+let histCache = { at: 0, records: null };
+
+async function readHistoryMerged() {
+  const local = readHistory().records || [];
+  let remote = [];
+  const fresh = Date.now() - histCache.at < 10 * 60 * 1000;   // 10분이면 충분하다
+  if (fresh && histCache.records) {
+    remote = histCache.records;
+  } else {
+    try {
+      const r = await get(HIST_RAW);
+      const j = r.ok ? tryJson(r.text) : null;
+      remote = (j && Array.isArray(j.records)) ? j.records : [];
+      histCache = { at: Date.now(), records: remote };
+    } catch { remote = histCache.records || []; }
+  }
+  /* 같은 시각·같은 키워드는 한 번만. 액션이 잰 것과 화면에서 조회한 것이 겹칠 수 있다. */
+  const seen = new Set(), out = [];
+  for (const rec of [...remote, ...local]) {
+    const k = `${rec.ts}|${rec.keyword}|${rec.placeId}`;
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(rec);
+  }
+  out.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  return out;
+}
+
+function appendHistory(rec) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const h = readHistory();
+  h.records.push({ ts: new Date().toISOString(), ...rec });
+  // 최근 2000건만 유지
+  if (h.records.length > 2000) h.records = h.records.slice(-2000);
+  fs.writeFileSync(HISTORY, JSON.stringify(h, null, 2));
+  return h.records.length;
+}
+
+/* ============================================================================
+ * Claude API 프록시 — 키를 브라우저에 노출하지 않는다
+ * ========================================================================== */
+
+/* ── AI 중계 ────────────────────────────────────────────────────────────────
+ *
+ * 예전에는 받은 요청을 그대로 Anthropic 에 흘려보냈다. 그러면 이 주소를 아는
+ * 사람이 model 과 max_tokens 를 마음대로 바꿔 보낼 수 있다. 제일 비싼 모델로
+ * 최대 길이를 계속 때리면 몇 분 만에 몇만 원이 나간다. 접속 키만으로는 못 막는다.
+ *
+ * 그래서 서버가 요청을 다시 짓는다. 클라이언트가 정할 수 있는 것은 "무슨 일인지"
+ * (tier) 와 "무엇을 쓸지"(prompt) 뿐이다. 모델과 길이는 여기서 정한다.
+ * 하루 호출 횟수도 여기서 센다 - 최악의 사고도 하루 한도 안에서 끝나야 한다.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* 일마다 모델을 나눈다. 답글에 제일 비싼 모델을 쓸 이유가 없다.
+   (2026-07 기준 100만 토큰당) haiku $1/$5 · opus $5/$25 - 다섯 배 차이다. */
+const AI_TIERS = {
+  // price 는 100만 토큰당 달러 (2026-07 기준). 오늘 얼마 썼는지 세는 데만 쓴다.
+  fast: { model: 'claude-haiku-4-5', max: 2000, price: { in: 1, out: 5  } },
+  good: { model: 'claude-opus-5',    max: 4000, price: { in: 5, out: 25 } },
+};
+/* 환율은 그때그때 다르다. 화면에 "약"이라고 적고, 필요하면 환경변수로 바꾼다. */
+const USD_KRW = Math.max(1, Number(process.env.USD_KRW || 1450));
+const AI_DAILY_CAP = Math.max(1, Number(process.env.AI_DAILY_CAP || 40));
+const AI_PROMPT_MAX = 20000;   // 글자. 이보다 긴 지시문은 우리가 만들 일이 없다
+const AI_USAGE = path.join(DATA_DIR, 'ai-usage.json');
+
+function today() { return new Date().toISOString().slice(0, 10); }
+
+function readAiUsage() {
+  try {
+    const v = JSON.parse(fs.readFileSync(AI_USAGE, 'utf8'));
+    if (v && v.date === today()) return v;
+  } catch { /* 없으면 오늘 처음 */ }
+  return { date: today(), calls: 0, inTokens: 0, outTokens: 0, usd: 0 };
+}
+function writeAiUsage(v) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(AI_USAGE, JSON.stringify(v)); }
+  catch { /* 디스크가 없어도 중계는 계속 돌아야 한다 */ }
+}
+function aiStatus() {
+  const u = readAiUsage();
+  return { on: Boolean(process.env.ANTHROPIC_API_KEY), used: u.calls,
+           cap: AI_DAILY_CAP, left: Math.max(0, AI_DAILY_CAP - u.calls),
+           /* 횟수만 세면 비싼 모델을 골랐을 때 얼마나 나가는지 알 수 없다.
+              같은 10회라도 모델에 따라 다섯 배 차이다. 금액도 같이 센다. */
+           krw: Math.round((u.usd || 0) * USD_KRW) };
+}
+
+/* 한도·모델 판정은 한 군데서만 한다. 스트리밍이든 아니든 같은 잣대라야
+   한쪽으로 한도를 우회할 수 없다. 클라이언트가 보낸 model / max_tokens 는 읽지 않는다. */
+function aiGuard(body) {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return { status: 503, message: 'AI 키가 설정되어 있지 않습니다. 무료 지시문 방식을 쓰세요.' };
+  const tier = AI_TIERS[body?.tier] || AI_TIERS.fast;
+  const prompt = String(body?.prompt ?? '').trim();
+  if (!prompt) return { status: 400, message: '보낼 내용이 비어 있습니다.' };
+  if (prompt.length > AI_PROMPT_MAX)
+    return { status: 400, message: `지시문이 너무 깁니다 (${prompt.length}자 / 최대 ${AI_PROMPT_MAX}자)` };
+  if (readAiUsage().calls >= AI_DAILY_CAP)
+    return { status: 429, message: `오늘 AI 사용 한도(${AI_DAILY_CAP}회)를 다 썼습니다. 내일 다시 쓰거나 무료 지시문 방식을 쓰세요.` };
+  return { ok: true, key, tier, prompt };
+}
+
+/* 쓴 만큼 적어 둔다. 화면에서 오늘 쓴 금액을 보여주는 근거가 된다. */
+function aiSpend(tier, inT, outT) {
+  if (!inT && !outT) return;
+  const u = readAiUsage();
+  u.inTokens  += inT;
+  u.outTokens += outT;
+  u.usd = (u.usd || 0) + (inT * tier.price.in + outT * tier.price.out) / 1e6;
+  writeAiUsage(u);
+}
+
+async function aiProxy(body) {
+  const g = aiGuard(body);
+  if (!g.ok) return { status: g.status,
+    text: JSON.stringify({ error: { message: g.message }, ai: aiStatus() }) };
+  const { key, tier, prompt } = g;
+
+  /* 세고 나서 부른다. 실패해도 센 것을 되돌리지 않는다 -
+     되돌리면 계속 실패하는 요청으로 한도를 무한히 우회할 수 있다. */
+  const usage = readAiUsage();
+  usage.calls += 1;
+  writeAiUsage(usage);
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: tier.model,
+      max_tokens: tier.max,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  const text = await res.text();
+  try {
+    const j = JSON.parse(text);
+    if (j?.usage) aiSpend(tier, Number(j.usage.input_tokens || 0), Number(j.usage.output_tokens || 0));
+  } catch { /* 응답이 JSON 이 아니어도 중계 결과는 그대로 넘긴다 */ }
+
+  return { status: res.status, text };
+}
+
+/* ── 스트리밍 ────────────────────────────────────────────────
+   지금은 AI 가 다 쓸 때까지 5~10초 동안 화면이 조용하다. 사장님이 멈춘 줄 알고
+   버튼을 다시 누르면 한도만 두 번 깎인다. 글자가 나오는 대로 뿌린다.
+   ─────────────────────────────────────────────────────────── */
+async function aiStream(body, res) {
+  const g = aiGuard(body);
+  if (!g.ok) {
+    res.writeHead(g.status, { 'content-type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ error: { message: g.message }, ai: aiStatus() }));
+  }
+  const usage = readAiUsage();
+  usage.calls += 1;
+  writeAiUsage(usage);
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    'connection': 'keep-alive',
+    /* 중간 프록시가 모아서 한 번에 내보내면 스트리밍이 아니게 된다 */
+    'x-accel-buffering': 'no',
+  });
+  const send = (ev, data) => { try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch {} };
+
+  let up;
+  try {
+    up = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': g.key,
+                 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: g.tier.model, max_tokens: g.tier.max, stream: true,
+                             messages: [{ role: 'user', content: g.prompt }] }),
+    });
+  } catch (e) {
+    send('error', { message: `AI 서버에 연결하지 못했습니다. ${e.message}` });
+    return res.end();
+  }
+  if (!up.ok || !up.body) {
+    let msg = `AI 서버가 ${up.status} 를 돌려주었습니다.`;
+    try { const j = JSON.parse(await up.text()); if (j?.error?.message) msg = j.error.message; } catch {}
+    send('error', { message: msg });
+    return res.end();
+  }
+
+  const reader = up.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', inT = 0, outT = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      /* SSE 덩어리는 빈 줄로 끊긴다. 끝나지 않은 덩어리는 다음 회차로 넘긴다 -
+         반토막 난 JSON 을 파싱하면 글자가 통째로 사라진다. */
+      const chunks = buf.split('\n\n');
+      buf = chunks.pop();
+      for (const c of chunks) {
+        const line = c.split('\n').find(x => x.startsWith('data:'));
+        if (!line) continue;
+        let j; try { j = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (j.type === 'content_block_delta' && j.delta?.text) send('text', { t: j.delta.text });
+        else if (j.type === 'message_start') inT = Number(j.message?.usage?.input_tokens || 0);
+        else if (j.type === 'message_delta') outT = Number(j.usage?.output_tokens || outT);
+        else if (j.type === 'error') send('error', { message: j.error?.message || 'AI 오류' });
+      }
+    }
+  } catch (e) {
+    send('error', { message: `받는 중에 끊겼습니다. ${e.message}` });
+  }
+
+  aiSpend(g.tier, inT, outT);
+  send('done', { ai: aiStatus() });
+  res.end();
+}
+
+/* ============================================================================
+ * 블로그 후기 본문 가져오기
+ *
+ * 플레이스 페이지에 실린 블로그 후기는 앞부분만 온다. 사장님이 링크를 알고 있는
+ * 후기는 본문을 통째로 읽을 수 있고, 거기에는 기구 이름이나 동선처럼
+ * 네이버 기본 필드에 없는 사실이 적혀 있다.
+ * 네이버 블로그는 본문이 iframe 안에 있어서, 겉 주소를 그대로 읽으면 빈 껍데기만 온다.
+ * ========================================================================== */
+
+/* blog.naver.com/아이디/글번호  →  PostView (본문이 실제로 있는 주소) */
+function blogRealUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  let m = s.match(/blog\.naver\.com\/([\w-]+)\/(\d{5,})/);
+  if (m) return `https://blog.naver.com/PostView.naver?blogId=${m[1]}&logNo=${m[2]}`;
+  m = s.match(/blogId=([\w-]+)[\s\S]*?logNo=(\d{5,})/);
+  if (m) return `https://blog.naver.com/PostView.naver?blogId=${m[1]}&logNo=${m[2]}`;
+  if (/^https?:\/\//.test(s)) return s;      // 다른 블로그도 그냥 읽어 본다
+  return null;
+}
+
+const HTML_ENT = { '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
+
+/* 본문 영역만 남기고 태그를 걷어낸다. 스마트에디터(se-main-container)가 요즘 것,
+   postViewArea 가 옛날 것이다. 둘 다 없으면 body 를 통째로 훑는다. */
+function blogText(html) {
+  const h = String(html || '');
+  const pick = h.match(/<div[^>]*class="[^"]*se-main-container[^"]*"[\s\S]*?<\/div>\s*(?:<\/div>)*/i)
+            || h.match(/<div[^>]*id="postViewArea"[\s\S]*?<\/div>/i)
+            || h.match(/<body[\s\S]*<\/body>/i);
+  let t = pick ? pick[0] : h;
+  t = t.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, ' ')
+       .replace(/<br\s*\/?>/gi, '\n')
+       .replace(/<\/(p|div|h[1-6]|li)>/gi, '\n')
+       .replace(/<[^>]+>/g, ' ');
+  t = t.replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;/g, m => HTML_ENT[m] || ' ')
+       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+  return t.split('\n').map(x => x.replace(/[ \t ]+/g, ' ').trim())
+          .filter(Boolean).join('\n').slice(0, 4000);
+}
+
+async function fetchBlog(rawUrl) {
+  const url = blogRealUrl(rawUrl);
+  if (!url) return { ok: false, error: '블로그 주소를 알아보지 못했습니다. blog.naver.com 으로 시작하는 주소를 넣어 주세요.' };
+  let r;
+  try { r = await get(url); }
+  catch (e) { return { ok: false, error: `블로그를 열지 못했습니다. ${e.message}` }; }
+  if (!r || r.status >= 400) return { ok: false, error: `블로그가 ${r?.status} 를 돌려주었습니다. 비공개 글이거나 주소가 틀렸을 수 있습니다.` };
+  const text = blogText(r.text);
+  if (text.length < 80) return { ok: false, error: '본문을 찾지 못했습니다. 비공개 글이거나 본문이 사진뿐일 수 있습니다.', url };
+  const title = (r.text.match(/<meta property="og:title" content="([^"]*)"/i) || [])[1] || '';
+  return { ok: true, url, title: title.trim().slice(0, 120), text, chars: text.length };
+}
+
+/* ============================================================================
+ * 서버
+ * ========================================================================== */
+
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+               '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+               '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+
+function sendJson(res, code, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8',
+                        'content-length': Buffer.byteLength(body) });
+  res.end(body);
+}
+
+function readSaves() {
+  try { const v = JSON.parse(fs.readFileSync(SAVES, 'utf8')); return Array.isArray(v) ? v : []; }
+  catch { return []; }
+}
+function writeSaves(list) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(SAVES, JSON.stringify(list));
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let d = '';
+    req.on('data', c => { d += c; if (d.length > 5e6) reject(new Error('요청이 너무 큽니다')); });
+    req.on('end', () => resolve(d));
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const u = new URL(req.url, `http://localhost:${PORT}`);
+  const q = u.searchParams;
+
+  try {
+    /* ---- API ---- */
+    // 외부 기기(휴대폰 등)는 접근 키가 있어야 API를 쓸 수 있다. 이 PC에서는 그냥 통과.
+    /* 상태 점검만은 키 없이 연다. 렌더 같은 호스팅이 이 경로로 서버가 살아 있는지
+       확인하는데, 점검기는 키를 모른다. 401 을 받으면 서버가 죽은 줄 알고
+       트래픽을 끊는다 — 실제로 그렇게 페이지가 통째로 안 열렸다.
+       대신 이 응답에는 키도 내부 주소도 담지 않는다(위 lanUrl 참고). */
+    if (u.pathname.startsWith('/api/') && u.pathname !== '/api/health' && !isLocal(req)) {
+      const given = q.get('k') || req.headers['x-access-key'] || cookieKey(req);
+      if (given !== KEY) {
+        return sendJson(res, 401, { ok: false, error: '접근 키가 없거나 틀렸습니다. PC 화면에 표시된 주소로 다시 접속하세요.' });
+      }
+      /* 통과했으면 이 기기에 1년짜리로 다시 심는다. 한 번 넣으면 그 뒤로는
+         브라우저가 알아서 들고 다니므로 배포를 몇 번 하든 다시 안 묻는다. */
+      plantKey(req, res);
+    }
+
+    if (u.pathname === '/api/health') {
+      const ip = lanIp();
+      /* 화면이 어느 판인지 알 수 있어야 한다. "안 바뀌었다"가 배포가 안 된 것인지
+         캐시인지 진짜 버그인지, 이 값 하나로 갈린다. */
+      let built = '';
+      try { built = fs.statSync(path.join(ROOT, 'index.html')).mtime.toISOString().slice(0, 16).replace('T', ' '); } catch {}
+      return sendJson(res, 200, {
+        ok: true, version: 2, built,
+        /* 값이 아니라 출처만. env 가 아니면 배포할 때마다 키가 바뀐다. */
+        keySource: KEY_SOURCE,
+        ai: Boolean(process.env.ANTHROPIC_API_KEY),
+        aiStatus: aiStatus(),   // 오늘 몇 번 썼는지 - 화면에 보여준다
+        /* 검색광고 키가 들어왔는지. 값은 절대 내보내지 않는다 - 있는지 없는지만.
+           세 개가 다 있어야 쓸 수 있어서 하나씩 표시한다. 하나만 빠져도 안 돈다. */
+        searchad: { ...searchAdStatus(), live: await searchAdProbe() },
+        /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —
+           키를 알려주면 키를 두는 의미가 없다. 이 PC 화면에서만 보인다. */
+        lanUrl: (ip && isLocal(req)) ? `http://${ip}:${PORT}/#k=${KEY}` : null,
+      });
+    }
+
+    /* 넣으신 키가 실제로 도는지 한 번 눌러 본다. "환경변수에 들어갔다"와
+       "네이버가 받아 준다"는 다른 얘기다 - 오타 하나면 조용히 안 돈다.
+       응답에 키 값은 한 글자도 담지 않는다. 됐는지 여부와 받아온 개수만. */
+    if (u.pathname === '/api/searchad-test') {
+      return sendJson(res, 200, await searchAdTest(q.get('kw') || '헬스장'));
+    }
+
+    if (u.pathname === '/api/rivals') {
+      return sendJson(res, 200, await rivalKeywords(q.get('keyword'), q.get('url'), q.get('n')));
+    }
+
+    if (u.pathname === '/api/kw-related') {
+      return sendJson(res, 200, await relatedKeywords(q.get('seed'), q.get('area')));
+    }
+
+    if (u.pathname === '/api/kw-volume') {
+      const list = String(q.get('keywords') || '').split(',').map(x => x.trim()).filter(Boolean);
+      return sendJson(res, 200, await keywordVolume(list));
+    }
+
+    if (u.pathname === '/api/place') {
+      const target = q.get('url');
+      if (!target) return sendJson(res, 400, { ok: false, error: 'url 파라미터가 필요합니다.' });
+      return sendJson(res, 200, await collectPlace(target, q.get('type')));
+    }
+
+    if (u.pathname === '/api/rank') {
+      const kw = q.get('keyword'), target = q.get('url');
+      if (!kw || !target) return sendJson(res, 400, { ok: false, error: 'keyword, url 파라미터가 필요합니다.' });
+      const placeId = await resolvePlaceId(target);
+      const r = await findRank(kw, placeId, Number(q.get('pages') || 3));
+      if (r.ok && q.get('save') !== '0') {
+        appendHistory({ keyword: kw, placeId, rank: r.rank, scanned: r.scanned });
+      }
+      return sendJson(res, 200, r);
+    }
+
+    /* 키워드 발굴 — 후보를 한꺼번에 순위 조회한다.
+       "월 검색량"은 광고 API 없이는 못 보지만, "이 검색어로 우리가 지금 몇 위인가"는
+       우리가 직접 잴 수 있다. 그리고 무엇을 먼저 공략할지 정할 때는 이쪽이 더 곧다. */
+    if (u.pathname === '/api/rank-batch') {
+      const target = q.get('url');
+      const list = (q.get('keywords') || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 14);
+      if (!target || !list.length) {
+        return sendJson(res, 400, { ok: false, error: 'keywords, url 파라미터가 필요합니다.' });
+      }
+      const placeId = await resolvePlaceId(target);
+      const pages = Number(q.get('pages') || 2);
+      const rows = [];
+      for (const kw of list) {
+        try {
+          const r = await findRank(kw, placeId, pages);
+          rows.push({ keyword: kw, ok: r.ok, found: r.found, rank: r.rank ?? null,
+                      scanned: r.scanned ?? null, top: (r.top || []).slice(0, 3) });
+        } catch (e) {
+          rows.push({ keyword: kw, ok: false, error: String(e.message || e) });
+        }
+        await sleep(220);   // 연속 요청으로 막히지 않게 사이를 둔다
+      }
+      return sendJson(res, 200, { ok: true, placeId, rows });
+    }
+
+    if (u.pathname === '/api/competitors') {
+      const kw = q.get('keyword'), target = q.get('url');
+      if (!kw || !target) return sendJson(res, 400, { ok: false, error: 'keyword, url 파라미터가 필요합니다.' });
+      return sendJson(res, 200, await analyzeCompetitors(kw, target, Number(q.get('top') || 3)));
+    }
+
+    if (u.pathname === '/api/history') {
+      const kw = q.get('keyword');
+      const all = await readHistoryMerged();
+      return sendJson(res, 200, { ok: true, records: kw ? all.filter(r => r.keyword === kw) : all });
+    }
+
+    /* ---- 기기 사이 공유 저장 ----
+       체크·대표키워드·개선 기록을 서버에 둔다. 그래야 폰에서 체크한 것이
+       PC 에서도 그대로 보인다.
+
+       무료 요금제는 배포할 때마다 디스크가 지워진다. 그래서 서버를 유일한
+       원본으로 삼지 않는다. 각 기기도 자기 사본을 갖고 있다가, 서버 것이
+       사라졌으면 다시 올려 준다. 어느 쪽이 최신인지는 저장 시각으로 가른다. */
+    if (u.pathname === '/api/state') {
+      if (req.method === 'GET') {
+        try { return sendJson(res, 200, { ok: true, state: JSON.parse(fs.readFileSync(STATE, 'utf8')) }); }
+        catch { return sendJson(res, 200, { ok: true, state: null }); }
+      }
+      if (req.method === 'PUT') {
+        const body = JSON.parse(await readBody(req));
+        if (!body || typeof body !== 'object') return sendJson(res, 400, { ok: false, error: '형식 오류' });
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(STATE, JSON.stringify(body));
+        return sendJson(res, 200, { ok: true, at: body.at || null });
+      }
+      if (req.method === 'DELETE') {
+        try { fs.unlinkSync(STATE); } catch {}
+        return sendJson(res, 200, { ok: true });
+      }
+    }
+
+    /* ---- 저장 내역 ----
+       지금 상태 하나만 이어 쓰는 것과, 시점을 남겨 두고 되돌아가는 것은 다른 일이다.
+       소개글을 고치기 전 상태, 사진을 올리기 전 상태를 남겨 두면 무엇이 달라졌는지 본다. */
+    if (u.pathname === '/api/saves') {
+      const list = readSaves();
+      if (req.method === 'GET') {
+        const id = q.get('id');
+        if (id) {
+          const hit = list.find(x => x.id === id);
+          return hit ? sendJson(res, 200, { ok: true, save: hit })
+                     : sendJson(res, 404, { ok: false, error: '없는 기록입니다' });
+        }
+        // 목록에는 본문을 빼고 보낸다 — 개수가 쌓여도 가볍게
+        return sendJson(res, 200, { ok: true,
+          saves: list.map(({ snap, ...meta }) => meta).reverse() });
+      }
+      if (req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        if (!body || !body.snap) return sendJson(res, 400, { ok: false, error: '내용이 없습니다' });
+        const entry = {
+          id: 's' + Date.now().toString(36),
+          place: String(body.place || '').slice(0, 40),   // 같은 가게를 알아보는 열쇠
+          name: String(body.name || '').slice(0, 60) || '이름 없음',
+          at: body.at || new Date().toISOString(),
+          score: Number.isFinite(Number(body.score)) ? Number(body.score) : null,
+          keyword: String(body.keyword || '').slice(0, 60),
+          snap: body.snap,
+        };
+        /* 같은 가게는 가장 최근 것 하나만 남긴다. 시점별 비교는 순위 기록과
+           개선 기록이 따로 담당하므로, 여기에 같은 가게가 쌓이면 찾기만 어려워진다. */
+        const key = entry.place || entry.name;
+        const kept = list.filter(x => (x.place || x.name) !== key);
+        writeSaves([...kept, entry].slice(-50));
+        return sendJson(res, 200, { ok: true, id: entry.id });
+      }
+      if (req.method === 'DELETE') {
+        const id = q.get('id');
+        writeSaves(list.filter(x => x.id !== id));
+        return sendJson(res, 200, { ok: true });
+      }
+    }
+
+    if (u.pathname === '/api/ai' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); }
+      catch { return sendJson(res, 400, { error: { message: '요청을 읽지 못했습니다.' } }); }
+      const out = await aiProxy(body);
+      res.writeHead(out.status, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end(out.text);
+    }
+    if (u.pathname === '/api/ai-stream' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); }
+      catch { return sendJson(res, 400, { error: { message: '요청을 읽지 못했습니다.' } }); }
+      return aiStream(body, res);
+    }
+    if (u.pathname === '/api/ai-status') return sendJson(res, 200, aiStatus());
+
+    if (u.pathname === '/api/blog') {
+      const target = u.searchParams.get('url');
+      if (!target) return sendJson(res, 400, { ok: false, error: 'url 파라미터가 필요합니다.' });
+      return sendJson(res, 200, await fetchBlog(target));
+    }
+
+    /* ---- 정적 파일 ---- */
+    let rel = u.pathname === '/' ? '/index.html' : u.pathname;
+    const file = path.join(ROOT, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
+    if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end('forbidden'); }
+    if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end('not found'); }
+
+    /* 캐시를 두면 새로 배포해도 옛 화면이 계속 보인다.
+       파일이 작아 매번 받아도 부담이 없으므로 아예 저장하지 않게 한다. */
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+      'cache-control': 'no-store, must-revalidate',
+    });
+    fs.createReadStream(file).pipe(res);
+
+  } catch (e) {
+    sendJson(res, 500, { ok: false, error: e.message });
+  }
+});
+
+/* ============================================================================
+ * --probe : 네이버 응답이 아직 살아있는지 점검
+ * ========================================================================== */
+
+async function probe(keyword, placeUrl) {
+  const line = s => console.log(s);
+
+  /* URL이 없으면 점검할 게 없다. 조용히 빈 결과를 내지 말고 이유를 말한다. */
+  if (!placeUrl) {
+    console.error('\n❌ 플레이스 URL을 받지 못했습니다. 점검할 대상이 없어 아무것도 실행하지 않았습니다.\n');
+    console.error('  사용법  node server.js --probe "키워드" "플레이스URL"');
+    console.error('  예시    node server.js --probe "쌍용동 헬스장" "https://naver.me/xq3KrZES"\n');
+    console.error('  ⚠ 키워드와 URL 사이에 공백을 반드시 넣으세요.');
+    console.error('     "키워드""URL" 처럼 붙여 쓰면 PowerShell이 둘을 한 덩어리로 합칩니다.');
+    if (keyword) console.error(`\n  이번에 받은 값: ${JSON.stringify(keyword)}`);
+    console.error('');
+    process.exitCode = 1;
+    return;
+  }
+
+  line('\n네이버 응답 점검\n' + '='.repeat(56));
+  line(`  대상 URL : ${placeUrl}`);
+  line(`  키워드   : ${keyword || '(없음 — 순위 조회는 건너뜁니다)'}`);
+
+  /* ID 확인을 따로 떼어 놓는다. 여기서 막히면 뒤 단계는 의미가 없고,
+     단축링크가 안 열린 것과 네이버가 응답을 바꾼 것은 완전히 다른 문제다. */
+  line('\n[0] 플레이스 ID 확인');
+  let id;
+  try {
+    id = await resolvePlaceId(placeUrl);
+    line(`  ✅ ${id}`);
+  } catch (e) {
+    line(`  ❌ ${e.message}`);
+    if (/naver\.me/.test(placeUrl)) {
+      try {
+        const r = await get(placeUrl);
+        line(`     단축링크 응답: HTTP ${r.status} → ${r.url}`);
+      } catch (e2) {
+        line(`     단축링크 요청 자체가 실패: ${e2.message}`);
+      }
+      line('     👉 단축링크(naver.me)가 실제 주소로 넘어가지 않았습니다.');
+      line('        네이버 지도에서 내 가게를 열고, 브라우저 주소창의 긴 주소를');
+      line('        (map.naver.com/p/entry/place/숫자) 그대로 넣어 다시 실행해 보세요.');
+    }
+    line('\n' + '='.repeat(56) + '\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  {
+    line('\n[1] 플레이스 정보 수집');
+    const r = await collectPlace(id);
+    if (r.ok) {
+      line(`  ✅ 성공 — ${r.source}`);
+      line(`  수집 필드 ${r.fields}개:`);
+      for (const [k, v] of Object.entries(r.data)) {
+        line(`     ${k.padEnd(22)} ${String(v).slice(0, 60)}`);
+      }
+    } else {
+      line(`  ❌ 실패 — ${r.error}`);
+    }
+    if (r.attempts.length) {
+      line('  시도 내역:');
+      r.attempts.forEach(a => line(`     ${a.result} ← ${a.url || ''} ${a.status ? '(HTTP ' + a.status + ')' : ''}`));
+    }
+    /* 못 가져온 값이 있으면, 네이버가 준 숫자를 전부 보여준다.
+       그 안에 다른 이름으로 들어 있을 수 있고, 그게 이름을 맞출 유일한 단서다. */
+    if (r.ok && r.missing?.length) {
+      line(`  ⚠ 못 가져온 값: ${r.missing.join(', ')}`);
+      const nums = Object.entries(r.numbers || {});
+      if (nums.length) {
+        line(`  네이버가 준 숫자 ${nums.length}개 (이 중에 있을 수 있습니다):`);
+        nums.sort(([a], [b]) => a.localeCompare(b))
+            .forEach(([k, v]) => line(`     ${k.padEnd(28)} ${v}`));
+      }
+    }
+  }
+
+  if (keyword) {
+    line(`\n[2] 순위 조회 — "${keyword}"`);
+    const r = await findRank(keyword, id);
+    if (r.ok) {
+      line(`  ✅ 성공 — ${r.scanned}개 업체 스캔`);
+      line(r.found ? `  내 순위: ${r.rank}위` : '  내 가게가 스캔 범위 안에 없습니다 (더 뒤에 있거나 노출 제외)');
+      line('  상위 5곳:');
+      r.top5.forEach(p => line(`     ${String(p.rank).padStart(2)}. ${p.name}`));
+    } else {
+      line(`  ❌ 실패 — ${r.error}`);
+    }
+    if (r.attempts.length) {
+      line('  시도 내역:');
+      r.attempts.forEach(a => line(`     ${a.result} ← ${a.url || ''} ${a.status ? '(HTTP ' + a.status + ')' : ''}`));
+    }
+  }
+
+  line('\n' + '='.repeat(56));
+  line('실패했다면 위 "시도 내역"을 그대로 알려주시면 파서를 맞춰 드립니다.\n');
+}
+
+/* ============================================================================
+ * --dump : 응답 안에 실제로 무엇이 들어있는지 지문을 뜬다
+ *
+ * --probe 는 "못 읽었다"까지만 알려준다. 왜 못 읽었는지는 응답 본문을 봐야 하는데,
+ * 본문은 수십만 자라서 그대로 옮길 수가 없다. 그래서 판단에 필요한 것만 추린다.
+ * 전문은 data/dump/ 에 저장하니 필요하면 파일로 보내면 된다.
+ * ========================================================================== */
+
+const DUMP_DIR = path.join(DATA_DIR, 'dump');
+
+function fingerprint(label, url, r) {
+  const t = r.text || '';
+  const line = s => console.log(s);
+  line(`\n${label}  ${url}`);
+  line(`   HTTP ${r.status} · ${t.length.toLocaleString('en-US')}자`);
+
+  if (!t.length) { line('   ⚠ 본문이 비어 있습니다'); return; }
+
+  // 로봇 차단 페이지인지
+  const blocked = /captcha|자동입력|로봇이 아닙니다|비정상적인 접근|접근이 차단/i.test(t);
+  if (blocked) line('   🚫 차단/캡차 문구가 보입니다');
+
+  // 어떤 상태 변수를 쓰고 있나
+  const vars = [...new Set([...t.matchAll(/window\.__([A-Z0-9_]+)__\s*=/g)].map(m => m[1]))];
+  line(`   window.__변수__ : ${vars.length ? vars.join(', ') : '없음'}`);
+
+  const ids = [...new Set([...t.matchAll(/<script[^>]*\bid=["']([^"']+)["']/g)].map(m => m[1]))];
+  line(`   <script id>     : ${ids.length ? ids.slice(0, 8).join(', ') : '없음'}`);
+
+  const jsonTags = (t.match(/<script[^>]*type=["']application\/json["']/g) || []).length;
+  line(`   JSON script 태그: ${jsonTags}개`);
+
+  // 우리 파서가 지금 성공하는지
+  const json = tryJson(t);
+  if (json) {
+    const got = harvest(json, PLACE_FIELDS);
+    line(`   ✅ 파서 추출 성공 — 필드 ${Object.keys(got).length}개: ${Object.keys(got).join(', ') || '(없음)'}`);
+  } else {
+    line('   ❌ 파서 추출 실패');
+  }
+
+  // 파서와 무관하게, 필드 이름이 본문에 원문으로 있는지
+  // 있다면 컨테이너만 못 찾는 것이고, 없다면 데이터가 애초에 이 응답에 없다는 뜻이다
+  const hits = [];
+  for (const f of ['name', 'description', 'visitorReviewCount', 'blogCafeReviewCount',
+                   'imageCount', 'bookmarkCount', 'roadAddress', 'category', 'keywords']) {
+    const n = (t.match(new RegExp(`["']${f}["']`, 'g')) || []).length;
+    if (n) hits.push(`${f}(${n})`);
+  }
+  line(`   필드명 원문 등장 : ${hits.length ? hits.join(' ') : '없음 — 이 응답에는 데이터가 없습니다'}`);
+
+  const sample = t.slice(0, 160).replace(/\s+/g, ' ');
+  line(`   앞부분          : ${sample}`);
+
+  try {
+    fs.mkdirSync(DUMP_DIR, { recursive: true });
+    const safe = label.replace(/[^\w가-힣]/g, '') + '-' + new URL(url).hostname + '.txt';
+    fs.writeFileSync(path.join(DUMP_DIR, safe), t);
+    line(`   전문 저장       : data/dump/${safe}`);
+  } catch (e) {
+    line(`   전문 저장 실패   : ${e.message}`);
+  }
+}
+
+async function dump(keyword, placeUrl) {
+  if (!placeUrl) {
+    console.error('\n사용법  node server.js --dump "키워드" "플레이스URL"\n');
+    process.exitCode = 1;
+    return;
+  }
+  console.log('\n네이버 응답 지문\n' + '='.repeat(56));
+
+  let id;
+  try { id = await resolvePlaceId(placeUrl); }
+  catch (e) { console.error(`\n❌ 플레이스 ID 확인 실패 — ${e.message}\n`); process.exitCode = 1; return; }
+  console.log(`  플레이스 ID : ${id}`);
+
+  console.log('\n── 플레이스 정보 ' + '─'.repeat(40));
+  for (let i = 0; i < PLACE_STRATEGIES.length; i++) {
+    const url = PLACE_STRATEGIES[i](id);
+    try { fingerprint(`정보${i + 1}`, url, await get(url)); }
+    catch (e) { console.log(`\n정보${i + 1}  ${url}\n   ❌ 요청 실패 — ${e.message}`); }
+  }
+
+  if (keyword) {
+    console.log('\n── 검색 결과 ' + '─'.repeat(43));
+    for (let i = 0; i < RANK_STRATEGIES.length; i++) {
+      const url = RANK_STRATEGIES[i](keyword, 1);
+      try { fingerprint(`검색${i + 1}`, url, await get(url)); }
+      catch (e) { console.log(`\n검색${i + 1}  ${url}\n   ❌ 요청 실패 — ${e.message}`); }
+    }
+  }
+
+  console.log('\n' + '='.repeat(56));
+  console.log('위 지문을 그대로 알려주시면 파서를 응답 구조에 맞춰 고칠 수 있습니다.');
+  console.log('전문은 data/dump/ 에 저장되어 있습니다 (git 에 올라가지 않습니다).\n');
+}
+
+/* ============================================================================
+ * 진입점
+ * ========================================================================== */
+
+/* --track "키워드" <URL> : 순위만 한 번 기록하고 끝낸다.
+   윈도우 작업 스케줄러나 macOS cron 에 걸어두면 매일 알아서 쌓인다. */
+async function track(keyword, url) {
+  const id = await resolvePlaceId(url);
+  const r = await findRank(keyword, id);
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  if (!r.ok) { console.error(`[${stamp}] 실패 — ${r.error}`); process.exit(1); }
+  appendHistory({ keyword, placeId: id, rank: r.rank, scanned: r.scanned });
+  console.log(`[${stamp}] "${keyword}" → ${r.found ? r.rank + '위' : `${r.scanned}위 밖`}`);
+}
+
+/* --track-all : rank-targets.json 을 읽어 한 번에 여러 개를 잰다.
+   GitHub Actions 가 매일 이걸 부르고, 쌓인 기록을 저장소에 도로 올린다.
+   렌더 무료 요금제는 배포할 때마다 디스크를 지운다. 서버가 스스로 쌓아 봐야
+   다음 배포에 없어지므로, 기록을 남길 곳을 서버 바깥에 둔 것이다. */
+async function trackAll() {
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'rank-targets.json'), 'utf8')); }
+  catch (e) { console.error('rank-targets.json 을 읽지 못했습니다:', e.message); process.exit(1); }
+
+  const url = String(cfg.place || '').trim();
+  const list = (cfg.keywords || []).map(k => String(k).trim()).filter(Boolean);
+  if (!url || !list.length) { console.error('rank-targets.json 에 place 와 keywords 가 있어야 합니다.'); process.exit(1); }
+
+  const id = await resolvePlaceId(url);
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  let done = 0;
+  for (const keyword of list) {
+    try {
+      const r = await findRank(keyword, id);
+      if (!r.ok) { console.error(`  ✗ "${keyword}" — ${r.error}`); continue; }
+      appendHistory({ keyword, placeId: id, rank: r.rank, scanned: r.scanned });
+      done++;
+      console.log(`  ✓ "${keyword}" → ${r.found ? r.rank + '위' : `${r.scanned}위 밖`}`);
+    } catch (e) { console.error(`  ✗ "${keyword}" — ${e.message}`); }
+    await new Promise(r => setTimeout(r, 1500));   // 네이버에 몰아치지 않는다
+  }
+  console.log(`[${stamp}] ${done}/${list.length}개 기록`);
+  /* 하나도 못 쟀으면 실패로 끝낸다 - 빈 기록을 커밋해서 "쟀는데 결과가 없다"로
+     보이게 두면, 나중에 그래프가 끊긴 이유를 알 수 없게 된다. */
+  if (!done) process.exit(1);
+}
+
+/* PowerShell에서 "키워드""URL" 처럼 공백 없이 붙여 넣으면 셸이 둘을 한 인자로 합친다.
+   흔한 실수라서, 붙은 자리를 찾아 갈라 주고 그렇게 했다고 알려 준다. */
+function splitArgs(rest) {
+  const parts = rest.map(a => String(a)).filter(a => a.trim() !== '');
+  if (parts.length >= 2) return { keyword: parts[0].trim(), url: parts[1].trim() };
+
+  const one = parts[0] || '';
+  const at = one.search(/https?:\/\/|naver\.me|map\.naver\.com/);
+  if (at > 0) {
+    const split = { keyword: one.slice(0, at).trim(), url: one.slice(at).trim() };
+    console.error(`\n⚠ 키워드와 URL이 공백 없이 붙어 있었습니다. 이렇게 나눠서 진행합니다:`);
+    console.error(`   키워드 ${JSON.stringify(split.keyword)}`);
+    console.error(`   URL    ${JSON.stringify(split.url)}`);
+    return split;
+  }
+  return { keyword: one.trim(), url: '' };
+}
+
+const argv = process.argv;
+if (argv.includes('--probe')) {
+  const a = splitArgs(argv.slice(argv.indexOf('--probe') + 1));
+  probe(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
+
+} else if (argv.includes('--dump')) {
+  const a = splitArgs(argv.slice(argv.indexOf('--dump') + 1));
+  dump(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
+
+} else if (argv.includes('--track-all')) {
+  trackAll().catch(e => { console.error('오류:', e.message); process.exit(1); });
+
+} else if (argv.includes('--track')) {
+  const a = splitArgs(argv.slice(argv.indexOf('--track') + 1));
+  if (!a.keyword || !a.url) { console.error('사용법: node server.js --track "키워드" "플레이스URL"'); process.exit(1); }
+  track(a.keyword, a.url).catch(e => { console.error('오류:', e.message); process.exit(1); });
+
+} else {
+  server.listen(PORT, HOST, () => {
+    const ip = lanIp();
+    console.log(`\n  헬스장 플레이스 진단 서버\n`);
+    console.log(`  이 PC에서       http://localhost:${PORT}`);
+    if (ip) {
+      console.log(`  휴대폰에서      http://${ip}:${PORT}/#k=${KEY}`);
+      console.log(`                  (같은 와이파이에 연결한 뒤 위 주소로 접속 → 북마크해두면 끝)`);
+    } else {
+      console.log(`  휴대폰 접속용 주소를 찾지 못했습니다 (네트워크 연결을 확인하세요)`);
+    }
+    console.log(`\n  AI 프록시       ${process.env.ANTHROPIC_API_KEY ? '사용 가능' : '꺼짐 (ANTHROPIC_API_KEY 미설정)'}`);
+    console.log(`  순위 기록       ${HISTORY}`);
+    console.log(`\n  응답 점검       node server.js --probe "강남역 헬스장" <플레이스URL>`);
+    console.log(`  순위만 기록     node server.js --track "강남역 헬스장" <플레이스URL>`);
+    console.log(`\n  종료하려면 Ctrl+C\n`);
+  });
+}

@@ -1,0 +1,13 @@
+{
+  "name": "gym-place-check",
+  "version": "1.0.0",
+  "private": true,
+  "description": "헬스장 네이버 플레이스 진단 도구 (의존성 없음)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
