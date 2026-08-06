@@ -510,6 +510,12 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .v.soon{background:var(--acc-bg);color:var(--acc-fg)}
 .v.later{background:var(--track);color:var(--muted)}
 .kwf-h{margin:0 0 4px;font-size:13.5px;font-weight:800}
+/* 표를 주고 "이제 판단하세요"로 끝내면 안 된다. 오늘 할 일 한 줄을 크게 적는다. */
+.kwf-do{background:var(--ok-bg);border:1px solid var(--ok-line,var(--line));border-radius:10px;
+  padding:13px 15px;margin:0 0 14px;font-size:13px;line-height:1.7}
+.kwf-do>b{display:block;font-size:14px;margin-bottom:6px;color:var(--ok-fg)}
+.kwf-do p{margin:0 0 7px}
+.kwf-do p:last-child{margin-bottom:0}
 .kwf-note{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.75}
 .kwf-use{margin-top:12px}
 
@@ -2817,7 +2823,7 @@ function buildKeywords(o){
   const volTail = k => {
     const v = kwVolOf(k);
     if(!v || v.unknown) return hasVol ? " · 검색량 모름" : "";
-    if(v.lt) return ` · 찾는 사람 거의 없음(10 미만)${v.comp ? ` · 경쟁 ${v.comp}` : ""}`;
+    if(v.lt) return ` · 찾는 사람 거의 없음(PC·모바일 둘 다 10 미만)${v.comp ? ` · 경쟁 ${v.comp}` : ""}`;
     return ` · 한 달 ${v.total.toLocaleString("ko-KR")}명${v.comp ? ` · 경쟁 ${v.comp}` : ""}`;
   };
   const body = picked.map((k,i)=>{
@@ -3303,6 +3309,15 @@ function hasJong(s){
   return true;
 }
 const eulReul = s => hasJong(s) ? "을" : "를";
+/* "쌍용동헬스장로 1~3위 하는 가게" 가 나왔다. "으로/로"는 받침 유무만으로 안 갈린다 -
+   ㄹ 받침은 받침이 있는데도 "로"다(서울로, 쌍용동헬스장으로, 1위로). */
+function euRo(s){
+  const ch = String(s).trim().slice(-1);
+  const c  = ch.charCodeAt(0) - 0xAC00;
+  if(c >= 0 && c < 11172){ const j = c % 28; return (j === 0 || j === 8) ? "로" : "으로"; }
+  if(/[lL178]/.test(ch)) return "로";       // 엘, 일, 칠, 팔 - 모두 ㄹ 받침
+  return hasJong(s) ? "으로" : "로";
+}
 /* 한 답글에 사실이 둘 이상 들어가면 같은 틀이 반복된다 -
    "21대라 기다렸다가 쓰시는 일은 거의 없으실 거예요. 6대라 기다렸다가 쓰시는 일은…"
    좋은 점은 그대로 두고 말하는 방식만 바꾼다. */
@@ -4977,7 +4992,8 @@ function renderCandidates(list){
     /* 후보 칩에 검색량을 같이 적는다. 무엇을 고를지 여기서 이미 갈린다 -
        조회에 하나당 3~6초씩 걸리므로, 죽은 말을 고르시게 두면 그 시간이 통째로 샌다. */
     const tail = (v && !v.unknown)
-      ? `<i>${v.lt ? "10 미만" : v.total.toLocaleString("ko-KR")}</i>` : "";
+      ? `<i>${v.lt ? "10 미만"
+           : v.total.toLocaleString("ko-KR") + ((v.pcLt || v.moLt) ? "+" : "")}</i>` : "";
     return `<span data-kw="${k}" class="${KF_PICK.includes(k) ? "" : "off"}">${k}${tail}</span>`;
   }).join("") || `<span class="kwf-none">지역과 업종을 먼저 채워 주세요.</span>`;
 }
@@ -5047,7 +5063,9 @@ $("kf-rivals")?.addEventListener("click", async ()=>{
     if(!r.ok){ $("kf-out").innerHTML = srvError("상위 가게 조회 실패", r); return; }
     const cell = x => {
       if(x.lt) return `거의 없음`;
-      return (x.total != null) ? `${x.total.toLocaleString("ko-KR")}명` : "—";
+      if(x.total == null) return "—";
+      /* 한쪽만 "< 10" 이면 합계는 아래로 치우친 값이다. 그 사실을 "이상"으로 적는다 */
+      return `${x.total.toLocaleString("ko-KR")}명${(x.pcLt || x.moLt) ? " 이상" : ""}`;
     };
     /* 두 곳이 쓴다고 다 따라 할 일이 아니다. "쌍용동다이어트"를 두 곳이 넣었는데
        한 달 검색량이 0이면 그건 그 두 곳이 잘못 넣은 것이다.
@@ -5117,13 +5135,16 @@ $("kf-rivals")?.addEventListener("click", async ()=>{
       </tr>`).join("")}
       </tbody></table></div>
       ${(()=>{ const go = (r.missing||[]).filter(x=>!x.lt && x.total >= 300);
-        const bad = (r.missing||[]).filter(x=>x.total === 0);
+        /* "< 10" 짜리도 여기 들어온다. 그걸 "검색량이 0입니다"라고 적으면
+           네이버가 모른다고 한 것을 우리가 0 이라고 단정하는 것이다. */
+        const bad = (r.missing||[]).filter(x=>x.lt || x.total === 0);
         return `<div class="kwf-note">
         ${go.length ? `<b>지금 채울 것 ${go.length}개</b> — ${go.slice(0,3).map(
             x=>`${x.keyword}(${x.total.toLocaleString("ko-KR")}명 · ${x.n}곳)`).join(", ")}.
           여럿이 쓰는데 우리만 없고, 실제로 찾는 사람도 많습니다.<br>` : ""}
         ${bad.length ? `<b>따라 하면 안 되는 것 ${bad.length}개</b> — ${bad.map(x=>x.keyword).join(", ")}.
-          여러 곳이 넣었지만 한 달 검색량이 0입니다. <b>저기도 한 칸을 버리고 있는 겁니다.</b><br>` : ""}
+          여러 곳이 넣었지만 한 달에 찾는 사람이 열 명도 안 됩니다.
+          <b>저기도 한 칸을 버리고 있는 겁니다.</b><br>` : ""}
         순위는 조회 시점 기준입니다. 남의 다섯 칸을 그대로 베끼지 마세요 —
         같은 말에 다 몰려 있으면 그 안에서 또 순위 싸움입니다.
         <b>우리가 실제로 하는 것</b>부터 채우세요.</div>`; })()}
@@ -5150,11 +5171,16 @@ function volCell(v){
   /* 네이버가 "< 10" 으로 준 것을 숫자로 적으면 우리가 아는 척하는 것이 된다.
      실제로 8개가 전부 "20 · PC 10 · 모바일 10" 으로 똑같이 나왔는데,
      그건 측정값이 아니라 "열 미만"이라는 답을 우리가 10 으로 바꿔 적은 것이었다. */
+  /* 둘 다 "< 10" 일 때만 거의 없는 것이다. 한쪽만 그런 경우가 흔한데
+     그걸 뭉개면 멀쩡한 검색어가 화면에서 사라진다 - 실제로 그렇게 지워 놓았었다. */
   if(v.lt) return `<b>거의 없음</b><i style="font-style:normal;color:var(--muted);font-size:11px"> `
-    + `네이버가 "10 미만"이라고만 알려줍니다</i>`;
+    + `PC·모바일 둘 다 10 미만</i>`;
+  const some = v.pcLt || v.moLt;
   const t = (v.total ?? 0).toLocaleString("ko-KR");
-  return `<b>${t}</b><i style="font-style:normal;color:var(--muted);font-size:11px"> `
-    + `PC ${(v.pc||0).toLocaleString("ko-KR")} · 모바일 ${(v.mo||0).toLocaleString("ko-KR")}</i>`;
+  const one = x => x ? "10 미만" : null;
+  return `<b>${t}${some ? " 이상" : ""}</b><i style="font-style:normal;color:var(--muted);font-size:11px"> `
+    + `PC ${one(v.pcLt) || (v.pc||0).toLocaleString("ko-KR")} · `
+    + `모바일 ${one(v.moLt) || (v.mo||0).toLocaleString("ko-KR")}</i>`;
 }
 
 /* 줄마다 "그래서 뭘 하면 되나"를 적는다.
@@ -5174,16 +5200,18 @@ function kfAction(x, o){
   /* 검색량을 알게 되면서 판단이 통째로 달라지는 자리가 생겼다.
      한 달에 아무도 안 찾는 말에서 3위인 것은 값어치가 없다. 그런데 예전 화면은
      그걸 "이미 잡았습니다"라고 칭찬하고 있었다. 순위보다 이게 먼저다. */
+  /* "< 10" 을 숫자로 단정하지 않는다. 네이버가 모른다고 한 것이다.
+     0 보다 이걸 먼저 본다 - 양쪽 다 "< 10" 이면 합계를 0 으로 세어 두었기 때문에,
+     순서가 바뀌면 "찾는 사람이 없습니다"로 나간다. 없는 것과 열 명 미만은 다르다. */
+  if(v && v.lt){
+    return rank != null && rank <= 10
+      ? "순위는 높지만 PC·모바일 둘 다 한 달 10명 미만입니다. 그대로 두시고 다른 말에 힘을 쓰세요."
+      : "PC·모바일 둘 다 한 달 10명 미만입니다. 뒤로 미루세요.";
+  }
   if(v && v.total === 0){
     return rank != null && rank <= 10
       ? "순위는 높지만 한 달에 찾는 사람이 없습니다. 잡아 둬도 손님이 안 옵니다 - 다른 말로 옮기세요."
       : "한 달에 찾는 사람이 없는 말입니다. 순위와 상관없이 버리세요.";
-  }
-  /* "< 10" 을 숫자로 단정하지 않는다. 네이버가 모른다고 한 것이다. */
-  if(v && v.lt){
-    return rank != null && rank <= 10
-      ? "순위는 높지만 찾는 사람이 거의 없습니다(네이버가 10 미만이라고만 알려줍니다). 그대로 두시고 다른 말에 힘을 쓰세요."
-      : "찾는 사람이 거의 없는 말입니다(네이버가 10 미만이라고만 알려줍니다). 뒤로 미루세요.";
   }
   if(v && v.total < 30 && (rank == null || rank > 30)){
     return `한 달에 ${v.total}명이 찾습니다. 잡아도 손님 수가 거의 안 달라집니다. 뒤로 미루세요.`;
@@ -5261,12 +5289,18 @@ $("kf-rank")?.addEventListener("click", async ()=>{
     const hasVol = rows.some(x => x.vol && !x.vol.unknown);
     window.__kfRows = rows;
 
-    /* 검색량 0 인 말은 공략 대상에서 뺀다. 표에서는 "버리세요"라고 해 놓고
-       아래 요약에서는 "먼저 공략하세요"라고 하던 자리다 - 한 화면에서 두 말을 했다.
-       순위가 22위든 3위든, 한 달에 아무도 안 찾으면 잡을 이유가 없다. */
-    const alive = x => !(x.vol && !x.vol.unknown && x.vol.total === 0);
+    /* 검색량이 없는 말은 공략 대상에서 뺀다. 표에서는 "뒤로 미루세요"라고 해 놓고
+       아래 요약에서는 "여기에 자원을 모으세요"라고 하던 자리다 - 한 화면에서 두 말을 했다.
+       순위가 22위든 3위든, 한 달에 찾는 사람이 없으면 잡을 이유가 없다.
+       0 만 빼면 모자란다. "PC·모바일 둘 다 10 미만"도 똑같이 없는 말이다 -
+       실제로 "쌍용동헬스(20명), 여기에 자원을 모으세요"가 나왔는데
+       그 20 은 측정값이 아니라 "< 10" 두 개를 우리가 10 씩으로 세어 만든 숫자였다. */
+    const alive = x => !(x.vol && !x.vol.unknown && (x.vol.total === 0 || x.vol.lt));
+    window.__kfAlive = alive;
     const soon = rows.filter(x=>x.v.cls==="soon" && alive(x));
     const now  = rows.filter(x=>x.v.cls==="now"  && alive(x));
+    /* 검색량이 실제로 잡히는 말들. 맨 위 "오늘 할 일"이 이걸 보고 하나를 고른다. */
+    const live = hasVol ? rows.filter(alive).filter(x=>x.vol && !x.vol.unknown) : [];
     $("kf-out").innerHTML = `<div class="srv-res">
       <h5>조회 결과 ${rows.length}개</h5>
       <p class="hint" style="margin:0 0 10px">
@@ -5277,6 +5311,47 @@ $("kf-rank")?.addEventListener("click", async ()=>{
         <b>월 검색량</b>은 네이버 검색광고가 알려주는 한 달 조회수입니다(PC + 모바일).
         플레이스는 우리 행정구역 안에서만 노출되므로 절대치보다 <b>후보끼리의 크기 비교</b>로 보세요.
         <b>0</b>은 아무도 안 찾는 말이고, <b>—</b>는 네이버가 값을 안 준 것입니다. 둘은 다릅니다.</p>` : ""}
+      ${(()=>{
+        /* 표 열두 줄을 주고 "알아서 판단하세요"로 끝내면 그건 도구가 아니라 자료다.
+           검색량이 실제로 잡히는 말만 모아서, 제일 큰 것 하나를 이름으로 부르고
+           오늘 무엇을 하라는 문장 하나를 만든다. 나머지는 그 다음이다. */
+        if(!live.length) return "";
+        const sum = live.reduce((a,x)=>a + x.vol.total, 0);
+        const s   = live.slice().sort((a,b)=> b.vol.total - a.vol.total);
+        const big = s[0], second = s[1];
+        const share = sum ? Math.round(big.vol.total / sum * 100) : 0;
+        const n = v => v.toLocaleString("ko-KR");
+        const at = big.found ? `${big.rank}위` : "아직 50위 밖";
+
+        /* 자리에 따라 할 일이 다르다. 4위인 사람에게 "노출부터 시키세요"는 헛말이고,
+           1위인 사람에게 "여기 붙으세요"는 이미 끝난 얘기다. */
+        let todo;
+        if(!big.found || big.rank > 10)
+          todo = `지금 <b>${at}</b>이라 손님 눈에 안 보입니다. 다른 말 다 접어두고
+                  이 말 하나만 보세요. 소개글·메뉴 이름·소식 제목에 <b>${big.keyword}</b>가
+                  그대로 들어가 있는지부터 확인하세요.`;
+        else if(big.rank > 2)
+          todo = `지금 <b>${big.rank}위</b>입니다. ${big.rank}위와 1위 사이가
+                  이 가게에서 제일 큰 돈입니다. 다른 어떤 키워드보다 여기서 한 칸 올리는 게 큽니다.`;
+        else
+          todo = `지금 <b>${big.rank}위</b>. 이미 거의 다 잡으셨습니다. 여기는 <b>지키는</b> 자리이고,
+                  새로 미실 곳은 ${second ? `<b>${second.keyword}</b>(${n(second.vol.total)}명)` : "다음으로 큰 말"}입니다.`;
+
+        const dead = rows.filter(x => x.vol && !x.vol.unknown && (x.vol.lt || x.vol.total === 0));
+
+        return `<div class="kwf-do">
+          <b>오늘 할 일은 하나입니다</b>
+          <p><b>${big.keyword}</b> — 한 달 <b>${n(big.vol.total)}명</b>. ${live.length > 1
+             ? `값이 잡히는 검색어 ${live.length}개를 다 합쳐도 이 말 하나가 <b>${share}%</b>입니다.`
+             : `조회한 것 중 검색량이 잡히는 말은 이 하나뿐입니다.`} (현재 ${at})</p>
+          <p>${todo}</p>
+          ${(!big.found || big.rank > 2) ? `<p>그 다음 순서는 정해져 있습니다.
+             아래 <b>경쟁사 대표키워드</b> 버튼을 눌러 <b>${big.keyword}</b>${euRo(big.keyword)} 1~3위 하는 가게들이
+             대표키워드 다섯 칸에 무엇을 넣었는지 보세요. 우리만 빠진 말이 바로 손댈 곳입니다.</p>` : ""}
+          ${dead.length ? `<p>나머지 <b>${dead.length}개</b>는 한 달에 찾는 사람이 열 명도 안 됩니다.
+             거기서 1위를 해도 손님은 안 옵니다. 쓰시는 시간이 그대로 버려집니다.</p>` : ""}
+        </div>`;
+      })()}
       <div class="kwf-scroll"><table class="kwf"><thead><tr><th>키워드</th>${
         hasVol ? "<th>월 검색량</th><th>경쟁</th>" : ""}<th>내 순위</th><th>판정</th><th>무엇을 하면 되나</th></tr></thead><tbody>
       ${rows.map(x=>`<tr>
@@ -5288,15 +5363,25 @@ $("kf-rank")?.addEventListener("click", async ()=>{
         <td class="act">${x.act}</td></tr>`).join("")}
       </tbody></table></div>
       <div class="kwf-note">
-        <b>1페이지 ${now.length}개 · 한 발 남음 ${soon.length}개 · 아직 밖 ${
-          rows.length - now.length - soon.length}개</b><br>
+        ${(()=>{
+          /* 셈의 바탕을 표와 맞춘다. 예전엔 아래 두 칸만 검색량으로 걸러 놓고
+             "아직 밖"은 전체에서 뺀 나머지로 적어서, 12위·22위·38위인 말이
+             전부 "아직 밖"으로 뭉뚱그려졌다. 한 화면에서 또 두 말을 한 것이다. */
+          const base = live.length ? live : rows;
+          const out  = base.length - now.length - soon.length;
+          return `<b>1페이지 ${now.length}개 · 한 발 남음 ${soon.length}개 · 아직 밖 ${out}개</b>`
+            + (live.length && rows.length > live.length
+               ? ` <span style="font-weight:400">— 찾는 사람이 있는 말 ${live.length}개만 센 것입니다.
+                   나머지 ${rows.length - live.length}개는 검색량이 없어 셈에서 뺐습니다.</span>` : "")
+            + "<br>"; })()}
         ${(()=>{ if(!hasVol) return "";
+          /* 맨 위 "오늘 할 일" 칸이 이미 제일 큰 말과 버릴 말을 말했다.
+             그게 떴으면 여기서 또 세지 않는다 - 같은 얘기를 숫자만 다르게 두 번 하면
+             사장님은 어느 쪽을 믿어야 할지 몰라진다. */
+          if(live.length) return "";
           const dead = rows.filter(x=>x.vol && !x.vol.unknown && x.vol.total === 0);
-          const big  = rows.filter(x=>x.vol && x.vol.total >= 500);
-          return (dead.length ? `<b>한 달에 찾는 사람이 0명인 말 ${dead.length}개</b> — ${
-              dead.slice(0,4).map(x=>x.keyword).join(", ")}. 잡아도 손님이 안 옵니다. 후보에서 빼세요.<br>` : "")
-            + (big.length ? `<b>제일 값어치가 큰 말</b> — ${big.slice(0,3).map(
-                x=>`${x.keyword}(${x.vol.total.toLocaleString("ko-KR")}명)`).join(", ")}.<br>` : ""); })()}
+          return dead.length ? `<b>한 달에 찾는 사람이 0명인 말 ${dead.length}개</b> — ${
+              dead.slice(0,4).map(x=>x.keyword).join(", ")}. 잡아도 손님이 안 옵니다. 후보에서 빼세요.<br>` : ""; })()}
         ${soon.length
           ? `<b>먼저 공략할 키워드 ${soon.length}개</b> — ${soon.slice(0,3).map(
               x=>`${x.keyword}${x.vol && !x.vol.unknown ? `(${x.vol.total.toLocaleString("ko-KR")}명)` : ""}`).join(", ")}.
@@ -5324,7 +5409,9 @@ $("kf-rank")?.addEventListener("click", async ()=>{
 /* 찾은 키워드를 목표 키워드 칸에 넣는다 — 진단·소개글이 그 값을 바로 쓴다 */
 document.addEventListener("click", e=>{
   if(!e.target.closest("#kf-apply")) return;
-  const soon = (window.__kfRows || []).filter(x=>x.v?.cls === "soon").slice(0,3);
+  /* 표에서 뺀 말을 버튼은 그대로 목표 칸에 넣던 자리다 - 같은 잣대를 쓴다 */
+  const ok = window.__kfAlive || (()=>true);
+  const soon = (window.__kfRows || []).filter(x=>x.v?.cls === "soon" && ok(x)).slice(0,3);
   if(!soon.length) return;
   ["i-kw1","i-kw2","i-kw3"].forEach((id,i)=>{ if(soon[i]) $(id).value = soon[i].keyword; });
   save();

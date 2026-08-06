@@ -1389,6 +1389,10 @@ const kwNum  = v => {
   const t = String(v ?? '').replace(/[^0-9]/g, '');
   return t ? Number(t) : 0;
 };
+/* 합계를 낼 때 "< 10" 쪽은 0 으로 센다. 모바일 320 에 PC "< 10" 을 더해 330 으로 적으면
+   실제(320~330)보다 위로 잡은 값인데 화면에는 "330 이상"이라고 나간다 - 거꾸로다.
+   아래로 잡아 두어야 "320 이상"이 사실이 된다. */
+const kwTotal = v => (v.pcLt ? 0 : v.pc) + (v.moLt ? 0 : v.mo);
 function kwVolCache() {
   try {
     const v = JSON.parse(fs.readFileSync(KWVOL_FILE, 'utf8'));
@@ -1418,8 +1422,13 @@ async function keywordVolume(list) {
     for (const x of (r.data?.keywordList || [])) {
       const n = kwNorm(x.relKeyword);
       if (cache.map[n]) continue;
+      /* PC 와 모바일을 따로 본다. 한쪽만 "< 10" 인 경우가 많다 -
+         "쌍용동24시헬스장"은 PC 가 "< 10" 이고 모바일이 320 이었다.
+         둘을 묶어서 "거의 없음"으로 적었더니 2위로 잡고 계신 멀쩡한 검색어가
+         화면에서 사라졌다. 둘 다 "< 10" 일 때만 거의 없는 것이다. */
       cache.map[n] = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
-                       lt: kwLt(x.monthlyPcQcCnt) || kwLt(x.monthlyMobileQcCnt),
+                       pcLt: kwLt(x.monthlyPcQcCnt), moLt: kwLt(x.monthlyMobileQcCnt),
+                       lt: kwLt(x.monthlyPcQcCnt) && kwLt(x.monthlyMobileQcCnt),
                        comp: String(x.compIdx || '').trim() };
     }
     /* 못 찾은 것은 "0" 이 아니라 "모름" 이다. 둘을 섞으면 판단이 틀어진다. */
@@ -1428,7 +1437,7 @@ async function keywordVolume(list) {
   kwVolSave(cache);
   const rows = want.map(k => {
     const v = cache.map[kwNorm(k)];
-    return v ? { keyword: k, ...v, total: v.pc + v.mo } : { keyword: k, unknown: true };
+    return v ? { keyword: k, ...v, total: kwTotal(v) } : { keyword: k, unknown: true };
   });
   return { ok: !failed, rows, ...(failed ? { error: failed.error, status: failed.status } : {}) };
 }
@@ -1456,12 +1465,13 @@ async function relatedKeywords(seed, area) {
   const rows = (r.data?.keywordList || []).map(x => {
     const k = String(x.relKeyword || '').trim();
     const v = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
-                lt: kwLt(x.monthlyPcQcCnt) || kwLt(x.monthlyMobileQcCnt),
+                pcLt: kwLt(x.monthlyPcQcCnt), moLt: kwLt(x.monthlyMobileQcCnt),
+                lt: kwLt(x.monthlyPcQcCnt) && kwLt(x.monthlyMobileQcCnt),
                 comp: String(x.compIdx || '').trim() };
     /* 받아 온 김에 캐시에 넣어 둔다. 곧바로 순위 조회로 넘어가는 흐름이라
        거기서 또 물어볼 이유가 없다. */
     if (k) cache.map[kwNorm(k)] = v;
-    return { keyword: k, ...v, total: v.pc + v.mo };
+    return { keyword: k, ...v, total: kwTotal(v) };
   }).filter(x => x.keyword);
   kwVolSave(cache);
 
@@ -1546,7 +1556,8 @@ async function rivalKeywords(keyword, myUrl, n) {
   const cache = kwVolCache();
   const withVol = x => {
     const v = cache.map[kwNorm(x.keyword)];
-    return v ? { ...x, pc: v.pc, mo: v.mo, lt: v.lt, comp: v.comp, total: v.pc + v.mo } : x;
+    return v ? { ...x, pc: v.pc, mo: v.mo, lt: v.lt, pcLt: v.pcLt, moLt: v.moLt,
+                 comp: v.comp, total: kwTotal(v) } : x;
   };
   return { ok: true, keyword: kw, checked: rivals.length, counted: counted.length,
     mine: mineRow ? { name: mineRow.name, keywords: mineRow.keywords } : null,
