@@ -1429,6 +1429,48 @@ async function keywordVolume(list) {
   return { ok: !failed, rows, ...(failed ? { error: failed.error, status: failed.status } : {}) };
 }
 
+/* ── 연관검색어 ────────────────────────────────────────────────────
+   지금까지 후보는 우리가 조합해서 만들었다. "지역+업종+보조어" 식이다.
+   그래서 "쌍용동헬스장1인", "쌍용동헬스장저렴한" 처럼 아무도 안 치는 말이 섞였다.
+   조회에 3~6초씩 걸리는데 그 시간을 죽은 말에 쓰는 셈이었다.
+
+   네이버가 실제로 사람들이 친 말을 알려준다. 그걸 쓰면 처음부터 살아 있는 말만 남는다.
+
+   다만 플레이스는 가게의 행정구역 안에서만 노출된다. "헬스장" 같은 단독 검색어는
+   전국 검색량이 잡혀서 크게 보이지만 우리 손님이 아니다. 지역이 든 것만 남긴다. */
+async function relatedKeywords(seed, area) {
+  const st = searchAdStatus();
+  if (!st.ready) return { ok: false, error: '검색광고 키가 설정되어 있지 않습니다.', searchad: st };
+  const hint = String(seed || '').replace(/\s+/g, '');
+  if (!hint) return { ok: false, error: '기준이 될 검색어가 필요합니다.' };
+
+  const r = await searchAdGet('/keywordstool', { hintKeywords: hint, showDetail: '1' });
+  if (!r.ok) return { ok: false, error: r.error, status: r.status };
+
+  const A = String(area || '').replace(/\s+/g, '');
+  const cache = kwVolCache();
+  const rows = (r.data?.keywordList || []).map(x => {
+    const k = String(x.relKeyword || '').trim();
+    const v = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
+                comp: String(x.compIdx || '').trim() };
+    /* 받아 온 김에 캐시에 넣어 둔다. 곧바로 순위 조회로 넘어가는 흐름이라
+       거기서 또 물어볼 이유가 없다. */
+    if (k) cache.map[kwNorm(k)] = v;
+    return { keyword: k, ...v, total: v.pc + v.mo };
+  }).filter(x => x.keyword);
+  kwVolSave(cache);
+
+  /* 지역이 든 것을 먼저, 그 안에서 많이 찾는 순. 지역이 없는 것도 버리지는 않는다 -
+     사장님이 보시고 판단하실 수 있게 뒤에 둔다. */
+  const local = rows.filter(x => A && kwNorm(x.keyword).includes(kwNorm(A)));
+  const rest  = rows.filter(x => !local.includes(x));
+  const by = (a, b) => b.total - a.total;
+  return { ok: true, seed: hint, area: A,
+           local: local.sort(by).slice(0, 40),
+           other: rest.sort(by).slice(0, 20),
+           got: rows.length };
+}
+
 /* 한 번 눌러 보고 실제로 도는지 알려준다 */
 async function searchAdTest(kw) {
   const st = searchAdStatus();
@@ -2110,6 +2152,10 @@ const server = http.createServer(async (req, res) => {
        응답에 키 값은 한 글자도 담지 않는다. 됐는지 여부와 받아온 개수만. */
     if (u.pathname === '/api/searchad-test') {
       return sendJson(res, 200, await searchAdTest(q.get('kw') || '헬스장'));
+    }
+
+    if (u.pathname === '/api/kw-related') {
+      return sendJson(res, 200, await relatedKeywords(q.get('seed'), q.get('area')));
     }
 
     if (u.pathname === '/api/kw-volume') {

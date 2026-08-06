@@ -488,6 +488,7 @@ label.f > span i{font-style:normal;color:var(--accent)}
 .kwf-row{display:grid;gap:12px;margin-top:16px}
 @media(min-width:620px){.kwf-row{grid-template-columns:2fr 1fr}}
 .kwf-cand{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.kwf-cand span i{font-style:normal;opacity:.62;font-size:10.5px;margin-left:5px}
 .kwf-cand span{font-size:12.5px;padding:5px 11px;border-radius:8px;border:1px solid var(--line);
   background:var(--surface-2);cursor:pointer;user-select:none}
 .kwf-cand span.off{opacity:.4;text-decoration:line-through}
@@ -1297,6 +1298,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <label class="f"><span>조회할 개수</span>
         <select id="kf-n"><option value="8">8개 (약 1분)</option><option value="12" selected>12개 (약 2분)</option></select></label>
     </div>
+    <p class="hint" id="kf-src" style="margin:0 0 8px"></p>
     <div id="kf-cand" class="kwf-cand"></div>
     <div class="btn-row">
       <button class="btn ghost" id="kf-make" type="button">후보 만들기</button>
@@ -4958,18 +4960,55 @@ function kfCandidates(){
 }
 
 let KF_PICK = [];
-function renderCandidates(){
+/* 개수를 바꾸실 때 다시 그리려면 무엇으로 만든 목록인지 들고 있어야 한다 */
+let KF_ALL = null;
+function renderCandidates(list){
   const box = $("kf-cand"); if(!box) return;
   const n = Number($("kf-n")?.value || 12);
-  const all = kfCandidates();
+  const all = list && list.length ? list : (KF_ALL || kfCandidates());
+  KF_ALL = all;
   KF_PICK = all.slice(0, n);
-  box.innerHTML = all.slice(0, Math.max(n + 8, 20)).map(k=>
-    `<span data-kw="${k}" class="${KF_PICK.includes(k) ? "" : "off"}">${k}</span>`).join("")
-    || `<span class="kwf-none">지역과 업종을 먼저 채워 주세요.</span>`;
+  box.innerHTML = all.slice(0, Math.max(n + 8, 24)).map(k=>{
+    const v = kwVolOf(k);
+    /* 후보 칩에 검색량을 같이 적는다. 무엇을 고를지 여기서 이미 갈린다 -
+       조회에 하나당 3~6초씩 걸리므로, 죽은 말을 고르시게 두면 그 시간이 통째로 샌다. */
+    const tail = (v && !v.unknown) ? `<i>${v.total.toLocaleString("ko-KR")}</i>` : "";
+    return `<span data-kw="${k}" class="${KF_PICK.includes(k) ? "" : "off"}">${k}${tail}</span>`;
+  }).join("") || `<span class="kwf-none">지역과 업종을 먼저 채워 주세요.</span>`;
 }
 
-$("kf-make")?.addEventListener("click", renderCandidates);
-$("kf-n")?.addEventListener("change", renderCandidates);
+/* 후보를 네이버가 주는 실제 연관검색어로 만든다.
+   예전에는 우리가 "지역+업종+보조어"로 조합했다. 그래서 "쌍용동헬스장1인",
+   "쌍용동헬스장저렴한" 같은 아무도 안 치는 말이 후보에 섞였고, 순위 조회는
+   하나에 3~6초씩 걸리므로 그 시간을 죽은 말에 쓰고 있었다.
+   검색광고 키가 없으면 예전 조합 그대로 돈다. */
+async function makeCandidates(){
+  const box = $("kf-cand");
+  KF_ALL = null;
+  const src = $("kf-src"); if(src) src.textContent = "";
+  if(!SERVER?.searchad?.ready){ renderCandidates(); return; }
+  const o = getInfo();
+  const seed = (o.keywords[0] || `${o.area} ${SERVICE_WORD[o.type] || "헬스장"}`).trim();
+  if(!seed.trim()){ renderCandidates(); return; }
+  if(box) box.innerHTML = `<span class="kwf-none">네이버에서 실제 검색어를 받아오는 중…</span>`;
+  try{
+    const r = await (await fetch(apiUrl(
+      `/api/kw-related?seed=${encodeURIComponent(seed)}&area=${encodeURIComponent(o.area||"")}`))).json();
+    if(!r.ok || !(r.local||[]).length){ renderCandidates(); return; }
+    [...(r.local||[]), ...(r.other||[])].forEach(x => { KW_VOL[norm(x.keyword)] = x; });
+    /* 지역이 든 것만 후보로 쓴다. 플레이스는 우리 행정구역 안에서만 노출되므로
+       "헬스장" 같은 단독 검색어는 전국 숫자라 크게 보여도 우리 손님이 아니다.
+       한 달에 아무도 안 찾는 말도 뺀다 - 조회할 이유가 없다. */
+    const list = r.local.filter(x => x.total > 0).map(x => x.keyword);
+    renderCandidates(list);
+    const note = $("kf-src");
+    if(note) note.innerHTML = `네이버가 알려준 실제 검색어 <b>${r.got}개</b> 중 `
+      + `<b>${o.area}</b>이 든 것 ${r.local.length}개를 후보로 놓았습니다. 숫자는 월 검색량입니다.`;
+  }catch{ renderCandidates(); }
+}
+
+$("kf-make")?.addEventListener("click", makeCandidates);
+$("kf-n")?.addEventListener("change", ()=>renderCandidates(KF_ALL));
 $("kf-cand")?.addEventListener("click", e=>{
   const el = e.target.closest("[data-kw]"); if(!el) return;
   const k = el.dataset.kw, on = KF_PICK.includes(k);
