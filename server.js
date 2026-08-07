@@ -1402,8 +1402,18 @@ async function searchAdProbe() {
   const r = await searchAdGet('/keywordstool', { hintKeywords: '헬스장', showDetail: '1' });
   const net = /allowlist|egress|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|getaddrinfo/i
     .test(String(r.error || ''));
+  /* 네이버가 실제로 어떤 칸을 돌려주는지 이름만 적어 둔다.
+
+     클릭수·클릭률은 검색량과 같은 응답에 실려 오는데 우리는 그동안 버리고 있었다.
+     그런데 이 서버 밖에서는 키가 없어 확인할 방법이 없었다 - 화면에 칸을 만들어 놓고
+     값이 안 오면 그때야 알게 된다. 그래서 여기서 칸 이름만 밝힌다.
+     값은 담지 않는다. 이름은 비밀이 아니고, 값은 우리가 확인할 이유가 없다. */
+  const seen = (() => {
+    const row = ((r.data && r.data.keywordList) || [])[0];
+    return row ? Object.keys(row).sort() : [];
+  })();
   const val = r.ok
-    ? { ok: true, note: '네이버가 받아 줍니다. 검색량을 쓸 수 있습니다.' }
+    ? { ok: true, note: '네이버가 받아 줍니다. 검색량을 쓸 수 있습니다.', fields: seen }
     : { ok: false, status: r.status || 0, network: net,
         note: net ? '키 문제가 아니라 서버가 네이버로 나가지 못했습니다.'
             : r.status === 401 ? '액세스라이선스나 비밀키가 안 맞습니다.'
@@ -1435,6 +1445,26 @@ const kwNum  = v => {
    실제(320~330)보다 위로 잡은 값인데 화면에는 "330 이상"이라고 나간다 - 거꾸로다.
    아래로 잡아 두어야 "320 이상"이 사실이 된다. */
 const kwTotal = v => (v.pcLt ? 0 : v.pc) + (v.moLt ? 0 : v.mo);
+
+/* 네이버 응답 한 줄을 우리 모양으로 바꾼다.
+
+   검색량만 읽고 나머지를 버리고 있었다. 같은 응답에 클릭수·클릭률·광고 노출 깊이가
+   같이 실려 온다. 검색량이 많아도 아무도 안 누르는 말이 있는데, 그걸 못 보고
+   "1,480명이 찾습니다"만 보고 고르시게 두었다.
+
+   없는 칸은 null 로 둔다. 0 으로 채우면 "아무도 안 누른다"는 거짓말이 된다. */
+function kwRow(x) {
+  const opt = v => (v == null || v === '' || !isFinite(Number(v))) ? null : Number(v);
+  return {
+    pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
+    pcLt: kwLt(x.monthlyPcQcCnt), moLt: kwLt(x.monthlyMobileQcCnt),
+    lt: kwLt(x.monthlyPcQcCnt) && kwLt(x.monthlyMobileQcCnt),
+    comp: String(x.compIdx || '').trim(),
+    clkPc: opt(x.monthlyAvePcClkCnt),   clkMo: opt(x.monthlyAveMobileClkCnt),
+    ctrPc: opt(x.monthlyAvePcCtr),      ctrMo: opt(x.monthlyAveMobileCtr),
+    adDepth: opt(x.plAvgDepth),
+  };
+}
 function kwVolCache() {
   try {
     const v = JSON.parse(fs.readFileSync(KWVOL_FILE, 'utf8'));
@@ -1468,10 +1498,7 @@ async function keywordVolume(list) {
          "쌍용동24시헬스장"은 PC 가 "< 10" 이고 모바일이 320 이었다.
          둘을 묶어서 "거의 없음"으로 적었더니 2위로 잡고 계신 멀쩡한 검색어가
          화면에서 사라졌다. 둘 다 "< 10" 일 때만 거의 없는 것이다. */
-      cache.map[n] = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
-                       pcLt: kwLt(x.monthlyPcQcCnt), moLt: kwLt(x.monthlyMobileQcCnt),
-                       lt: kwLt(x.monthlyPcQcCnt) && kwLt(x.monthlyMobileQcCnt),
-                       comp: String(x.compIdx || '').trim() };
+      cache.map[n] = { ...kwRow(x) };
     }
     /* 못 찾은 것은 "0" 이 아니라 "모름" 이다. 둘을 섞으면 판단이 틀어진다. */
     chunk.forEach(k => { if (!cache.map[kwNorm(k)]) cache.map[kwNorm(k)] = null; });
@@ -1506,10 +1533,7 @@ async function relatedKeywords(seed, area) {
   const cache = kwVolCache();
   const rows = (r.data?.keywordList || []).map(x => {
     const k = String(x.relKeyword || '').trim();
-    const v = { pc: kwNum(x.monthlyPcQcCnt), mo: kwNum(x.monthlyMobileQcCnt),
-                pcLt: kwLt(x.monthlyPcQcCnt), moLt: kwLt(x.monthlyMobileQcCnt),
-                lt: kwLt(x.monthlyPcQcCnt) && kwLt(x.monthlyMobileQcCnt),
-                comp: String(x.compIdx || '').trim() };
+    const v = kwRow(x);
     /* 받아 온 김에 캐시에 넣어 둔다. 곧바로 순위 조회로 넘어가는 흐름이라
        거기서 또 물어볼 이유가 없다. */
     if (k) cache.map[kwNorm(k)] = v;
@@ -1598,8 +1622,7 @@ async function rivalKeywords(keyword, myUrl, n) {
   const cache = kwVolCache();
   const withVol = x => {
     const v = cache.map[kwNorm(x.keyword)];
-    return v ? { ...x, pc: v.pc, mo: v.mo, lt: v.lt, pcLt: v.pcLt, moLt: v.moLt,
-                 comp: v.comp, total: kwTotal(v) } : x;
+    return v ? { ...x, ...v, total: kwTotal(v) } : x;
   };
   return { ok: true, keyword: kw, checked: rivals.length, counted: counted.length,
     mine: mineRow ? { name: mineRow.name, keywords: mineRow.keywords } : null,

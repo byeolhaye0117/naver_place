@@ -5227,6 +5227,27 @@ function volCell(v){
     + `모바일 ${one(v.moLt) || (v.mo||0).toLocaleString("ko-KR")}</i>`;
 }
 
+/* 검색량 옆에 "그래서 실제로 몇 명이 눌러 들어오나"를 적는다.
+
+   검색광고는 검색량과 클릭수를 같은 응답에 실어 보내는데 우리는 검색량만 읽고
+   나머지를 버리고 있었다. 그래서 "한 달 1,480명이 찾습니다"만 보고 고르시게 두었다.
+   찾기만 하고 아무도 안 누르는 말이 있다 - 그건 잡아도 손님이 안 온다.
+
+   네이버가 안 준 칸은 "—" 로 둔다. 0 으로 채우면 "아무도 안 누른다"는 거짓말이 된다. */
+function clickCell(v){
+  if(!v || v.unknown) return "—";
+  const pc = v.clkPc, mo = v.clkMo;
+  if(pc == null && mo == null) return "—";
+  const n = (pc || 0) + (mo || 0);
+  const ctr = [v.ctrPc, v.ctrMo].filter(x=>x!=null);
+  const rate = ctr.length ? ` <i style="font-style:normal;color:var(--muted);font-size:11px">`
+    + `${(Math.max(...ctr)).toFixed(1)}%</i>` : "";
+  /* 찾는 사람은 있는데 누르는 사람이 없는 말. 여기가 함정이다. */
+  const total = v.total ?? 0;
+  const dead = total >= 100 && n < total * 0.02;
+  return `<b${dead ? ' style="color:var(--bad-fg)"' : ''}>${n.toLocaleString("ko-KR")}</b>${rate}`;
+}
+
 /* 줄마다 "그래서 뭘 하면 되나"를 적는다.
 
    순위만 늘어놓으면 사장님은 그 표를 보고 할 일을 못 정한다. 특히 "아직 밖"이
@@ -5259,6 +5280,15 @@ function kfAction(x, o){
   }
   if(v && v.total < 30 && (rank == null || rank > 30)){
     return `한 달에 ${v.total}명이 찾습니다. 잡아도 손님 수가 거의 안 달라집니다. 뒤로 미루세요.`;
+  }
+  /* 찾기는 하는데 아무도 안 누르는 말. 검색량만 보면 못 걸러지는 함정이다.
+     보통 답을 화면에서 바로 얻고 끝나는 말(가격·시간 같은)이 여기 걸린다. */
+  if(v && v.clkPc != null && v.total >= 100){
+    const clicks = (v.clkPc || 0) + (v.clkMo || 0);
+    if(clicks < v.total * 0.02){
+      return `한 달 ${v.total.toLocaleString("ko-KR")}명이 찾지만 실제로 눌러 들어오는 사람은 `
+        + `${clicks.toLocaleString("ko-KR")}명뿐입니다. 검색량만 보면 커 보이는데 손님으로 안 이어집니다. 뒤로 미루세요.`;
+    }
   }
 
   /* 이 검색어를 다른 검색어와 가르는 말 — 지역과 업종어를 뺀 나머지 */
@@ -5400,10 +5430,11 @@ $("kf-rank")?.addEventListener("click", async ()=>{
         </div>`;
       })()}
       <div class="kwf-scroll"><table class="kwf"><thead><tr><th>키워드</th>${
-        hasVol ? "<th>월 검색량</th><th>경쟁</th>" : ""}<th>내 순위</th><th>판정</th><th>무엇을 하면 되나</th></tr></thead><tbody>
+        hasVol ? "<th>월 검색량</th><th>눌러서 들어옴</th><th>경쟁</th>" : ""}<th>내 순위</th><th>판정</th><th>무엇을 하면 되나</th></tr></thead><tbody>
       ${rows.map(x=>`<tr>
         <td>${x.keyword}</td>
         ${hasVol ? `<td class="r">${volCell(x.vol)}</td>
+        <td class="r">${clickCell(x.vol)}</td>
         <td class="r">${x.vol && x.vol.comp ? x.vol.comp : "—"}</td>` : ""}
         <td class="r">${x.found ? x.rank + "위" : "—"}</td>
         <td><span class="v ${x.v.cls}">${x.v.t}</span></td>
