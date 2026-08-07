@@ -29,7 +29,15 @@ const PORT     = Number(process.env.PORT || 5173);
 const HOST     = process.env.HOST || '0.0.0.0';   // 같은 와이파이의 휴대폰에서도 붙을 수 있게
 const ROOT     = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
-const HISTORY  = path.join(DATA_DIR, 'rank-history.json');
+/* 순위 기록만 data/ 밖에 둔다. data/ 는 시험이 돌 때마다 통째로 지워지는 자리라,
+   거기 두면 저장소에 올린 기록이 자꾸 '삭제됨'으로 잡힌다. 한 번 실수로 커밋되면
+   그동안 쌓은 것이 통째로 없어진다. 지워지지 않는 자리로 옮겼다.
+
+   대신 시험이 이 파일에 쓰면 가짜 순위가 진짜 기록에 섞인다 - 실제로 섞였다
+   ("강남역 헬스장 1234567890"). 그래서 HISTORY_FILE 로 자리를 바꿀 수 있게 두고,
+   시험 묶음은 임시 자리를 가리킨다. */
+const HISTORY  = process.env.HISTORY_FILE
+  || path.join(ROOT, 'rank-log', 'history.json');
 const KEYFILE  = path.join(DATA_DIR, 'access-key.txt');
 const STATE    = path.join(DATA_DIR, 'state.json');   // 기기 사이 공유 저장
 const SAVES    = path.join(DATA_DIR, 'saves.json');   // 저장 내역
@@ -2001,7 +2009,7 @@ function readHistory() {
    못 물어본 것을 "기록 없음"으로 만들지 않는다. */
 const HIST_RAW = process.env.HISTORY_URL
   || 'https://raw.githubusercontent.com/byeolhaye0117/naver_place/'
-   + 'claude/webpage-dev-analysis-1rmgca/data/rank-history.json';
+   + 'main/rank-log/history.json';
 let histCache = { at: 0, records: null };
 
 async function readHistoryMerged() {
@@ -2030,7 +2038,7 @@ async function readHistoryMerged() {
 }
 
 function appendHistory(rec) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(HISTORY), { recursive: true });
   const h = readHistory();
   h.records.push({ ts: new Date().toISOString(), ...rec });
   // 최근 2000건만 유지

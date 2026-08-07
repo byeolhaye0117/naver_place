@@ -37,13 +37,13 @@ jobs:
 
       - name: 기록 올리기
         run: |
-          if git diff --quiet -- data/rank-history.json; then
+          if git diff --quiet -- rank-log/history.json; then
             echo "달라진 것이 없습니다. 올리지 않습니다."
             exit 0
           fi
           git config user.name  "rank-bot"
           git config user.email "rank-bot@users.noreply.github.com"
-          git add data/rank-history.json
+          git add rank-log/history.json
           git commit -m "순위 기록 $(date -u +'%Y-%m-%d')"
           # 그 사이 다른 커밋이 올라왔을 수 있다. 한 번 당겨서 얹고 민다.
           for i in 1 2 3; do
