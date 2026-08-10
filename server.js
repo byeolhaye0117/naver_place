@@ -1460,6 +1460,21 @@ function blogStatus() {
    호출이 거절된다. 그 차이를 화면에서 알 수 있어야 사장님이 무엇을 고칠지 안다.
    접근 키 없이도 보이는 자리에 둔다 - 성공 여부와 네이버가 준 사유만 담고,
    검색어도 결과도 키도 싣지 않는다. */
+/* 값을 안 보고도 "어떤 종류의 키인지"만 말한다.
+
+   024 가 떴을 때 사장님께 "값을 다시 보세요"라고만 하면 같은 값을 다시 넣으시게 된다.
+   실제로 필요한 말은 "그건 다른 키입니다"인데, 그러려면 값을 봐야 한다 - 볼 수 없다.
+   그래서 값 대신 모양만 본다. 글자는 하나도 내보내지 않는다. */
+function idShape(v) {
+  const t = String(v || '');
+  if (!t) return 'empty';
+  if (t !== t.trim()) return 'space';                  // 앞뒤 공백이 붙어 왔다
+  if (/^ncp[_-]/i.test(t)) return 'ncloud';            // 클라우드 액세스키
+  if (/^0100000000/.test(t)) return 'searchad';        // 검색광고 액세스라이선스
+  if (/^[A-Za-z0-9_]{8,40}$/.test(t)) return 'looks-ok';
+  return 'unexpected';
+}
+
 let BLOG_PROBE = { at: 0, val: null };
 /* 10분 캐시. health 는 자주 불리는 자리라 매번 네이버를 두드리면 한도만 태운다.
    시험에서는 0 으로 두어 상태가 바뀌는 것을 바로 볼 수 있게 한다. */
@@ -1482,9 +1497,15 @@ async function blogProbe() {
       let why = ''; let code = '';
       try { const j = JSON.parse(body); why = j.errorMessage || ''; code = j.errorCode || ''; } catch {}
       /* 네이버가 주는 사유는 영어다. 그대로 내보내면 사장님은 무엇을 고칠지 모르신다.
-         무엇이 틀렸는지가 아니라 무엇을 하면 되는지로 바꿔 적는다. */
-      val = { ok: false, status: r.status, code,
-        note: /Client ID/i.test(why) ? '아이디가 안 맞습니다. NAVER_CLIENT_ID 값을 다시 확인하세요.'
+         무엇이 틀렸는지가 아니라 무엇을 하면 되는지로 바꿔 적는다.
+
+         024 는 "값이 틀렸다"가 아니라 "그런 아이디가 없다"이다. 둘은 고치는 방법이
+         다르다 - 앞엣것은 다시 복사하면 되고, 뒤엣것은 애초에 다른 종류의 키를
+         넣은 것이다(클라우드 액세스키·검색광고 키를 넣으면 여기 걸린다). */
+      val = { ok: false, status: r.status, code, shape: idShape(k.id),
+        note: code === '024' || /Not Exist Client ID/i.test(why)
+              ? '네이버에 그런 아이디가 없습니다. 값이 틀린 게 아니라 다른 종류의 키일 수 있습니다 - '
+                + '검색광고 키나 클라우드 액세스키가 아니라, developers.naver.com 내 애플리케이션의 Client ID 여야 합니다.'
             : /Secret/i.test(why) ? '시크릿이 안 맞습니다. NAVER_CLIENT_SECRET 값을 다시 확인하세요.'
             : r.status === 401 ? '아이디나 시크릿이 안 맞습니다. 두 값을 다시 확인하세요 (앞뒤 공백도 확인).'
             : r.status === 403 ? '키는 맞는데 그 앱에 "검색" API 가 안 붙어 있습니다 - 내 애플리케이션 > API 설정에서 검색을 추가하세요.'
