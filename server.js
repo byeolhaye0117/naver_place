@@ -1431,6 +1431,91 @@ async function searchAdProbe() {
 
    하루치 캐시를 둔다. 검색량은 월 단위 값이라 하루에 여러 번 물어볼 이유가 없고,
    API 한도는 하루 단위로 걸린다. 사장님이 후보를 몇 번 다시 만드셔도 한도가 안 샌다. */
+/* ── 블로그 공급량 ──────────────────────────────────────────────────
+   은코치와 붙여 보니 우리에게 없는 각도가 있었다 - "찾는 사람은 많은데 글이 적은 자리".
+   검색량만 보면 큰 말은 다 경쟁이 심해 보이는데, 그 안에도 아직 아무도 안 쓴 말이 있다.
+
+   블로그 글 수를 세는 공짜 길을 두 개 찾아봤지만 둘 다 못 쓴다.
+     section.blog.naver.com  totalCount 가 1000 에서 잘린다. 뜻 없는 말도 150 이 나온다.
+     search.naver.com        "약 N건" 표시를 네이버가 없앴다.
+   상한에 걸린 값을 화면에 적으면 그건 측정한 척하는 것이다. 그래서 안 쓴다.
+
+   네이버 검색 오픈 API 는 상한 없는 total 을 준다. 키 두 개가 필요하고,
+   없으면 이 기능만 조용히 꺼진다 - 나머지는 그대로 돈다. */
+const NAVER_SEARCH_HOST = 'https://openapi.naver.com/v1/search/blog.json';
+const blogKeys = () => ({
+  id:  String(process.env.NAVER_CLIENT_ID     || '').trim(),
+  sec: String(process.env.NAVER_CLIENT_SECRET || '').trim(),
+});
+function blogStatus() {
+  const k = blogKeys();
+  const have = { clientId: Boolean(k.id), clientSecret: Boolean(k.sec) };
+  const n = Object.values(have).filter(Boolean).length;
+  return { ...have, ready: n === 2,
+    note: n === 2 ? '두 개 다 들어왔습니다'
+        : n === 0 ? '아직 없습니다 - 블로그 공급량 칸만 꺼집니다'
+        : '하나가 빠졌습니다 - 둘 다 있어야 돕니다' };
+}
+const BLOG_FILE = path.join(DATA_DIR, 'blog-count.json');
+function blogCache() {
+  try {
+    const v = JSON.parse(fs.readFileSync(BLOG_FILE, 'utf8'));
+    if (v && v.date === today()) return v;
+  } catch { /* 없으면 오늘 처음 */ }
+  return { date: today(), map: {} };
+}
+function blogSave(c) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(BLOG_FILE, JSON.stringify(c)); }
+  catch { /* 못 써도 조회는 된다 */ }
+}
+/* 검색어마다 블로그에 글이 몇 편 있는지. 하루치만 캐시한다. */
+async function blogCounts(list) {
+  const k = blogKeys();
+  const want = [...new Set((list || []).map(x => String(x).trim()).filter(Boolean))];
+  if (!want.length) return { ok: true, rows: [] };
+  if (!k.id || !k.sec) return { ok: false, off: true, error: '네이버 검색 API 키가 없습니다.', rows: [] };
+
+  const cache = blogCache();
+  let failed = null;
+  for (const kw of want) {
+    const n = kwNorm(kw);
+    if (cache.map[n] != null) continue;
+    try {
+      const r = await fetch(`${NAVER_SEARCH_HOST}?query=${encodeURIComponent(kw)}&display=1`, {
+        headers: { 'X-Naver-Client-Id': k.id, 'X-Naver-Client-Secret': k.sec },
+      });
+      const body = await r.text();
+      if (!r.ok) {
+        let msg = body.slice(0, 160);
+        try { msg = JSON.parse(body).errorMessage || msg; } catch {}
+        failed = { status: r.status, error: msg };
+        break;                       /* 키가 틀렸으면 나머지도 다 틀린다 */
+      }
+      const t = Number(JSON.parse(body).total);
+      cache.map[n] = isFinite(t) ? t : null;
+    } catch (e) { failed = { error: String(e.message || e) }; break; }
+    await sleep(120);                /* 몰아치지 않는다 */
+  }
+  blogSave(cache);
+  const rows = want.map(kw => {
+    const v = cache.map[kwNorm(kw)];
+    return v == null ? { keyword: kw, unknown: true } : { keyword: kw, blogN: v };
+  });
+  return { ok: !failed, rows, ...(failed || {}) };
+}
+
+/* 찾는 사람 대비 글이 얼마나 적은가.
+   은코치는 "검색량 500 이상 + 블로그 글이 검색량의 10% 미만"을 빈자리로 본다.
+   같은 잣대를 쓰되, 어느 쪽이든 값을 모르면 판정하지 않는다. */
+function blogGap(total, blogN) {
+  if (total == null || blogN == null || !isFinite(total) || !isFinite(blogN)) return null;
+  if (total < 100) return null;      /* 애초에 작은 말은 빈자리든 아니든 의미가 없다 */
+  const ratio = blogN / total;
+  return { ratio,
+    open: total >= 500 && ratio < 0.10,
+    tight: ratio >= 0.5 };
+}
+
 const KWVOL_FILE = path.join(DATA_DIR, 'kw-volume.json');
 const kwNorm = k => String(k).replace(/\s+/g, '').toLowerCase();
 /* 네이버는 아주 적은 값을 "< 10" 으로 준다. 실제 숫자를 안 알려주는 것이다.
@@ -2377,6 +2462,8 @@ const server = http.createServer(async (req, res) => {
         /* 검색광고 키가 들어왔는지. 값은 절대 내보내지 않는다 - 있는지 없는지만.
            세 개가 다 있어야 쓸 수 있어서 하나씩 표시한다. 하나만 빠져도 안 돈다. */
         searchad: { ...searchAdStatus(), live: await searchAdProbe() },
+        /* 블로그 공급량용 검색 API 키. 마찬가지로 있는지만 알려준다. */
+        blogapi: blogStatus(),
         /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —
            키를 알려주면 키를 두는 의미가 없다. 이 PC 화면에서만 보인다. */
         lanUrl: (ip && isLocal(req)) ? `http://${ip}:${PORT}/#k=${KEY}` : null,
@@ -2400,7 +2487,18 @@ const server = http.createServer(async (req, res) => {
 
     if (u.pathname === '/api/kw-volume') {
       const list = String(q.get('keywords') || '').split(',').map(x => x.trim()).filter(Boolean);
-      return sendJson(res, 200, await keywordVolume(list));
+      const v = await keywordVolume(list);
+      /* 블로그 공급량을 같이 실어 보낸다. 키가 없으면 이 부분만 빠지고 검색량은 그대로 간다 -
+         화면이 두 번 물어보지 않게 하려는 것이고, 없다고 검색량까지 죽이지 않으려는 것이다. */
+      const bl = await blogCounts(list);
+      const bm = Object.fromEntries((bl.rows || []).map(x => [kwNorm(x.keyword), x]));
+      v.rows = (v.rows || []).map(r => {
+        const b = bm[kwNorm(r.keyword)];
+        if (!b || b.unknown) return r;
+        return { ...r, blogN: b.blogN, gap: blogGap(r.total, b.blogN) };
+      });
+      v.blog = bl.off ? { off: true } : { ok: bl.ok, ...(bl.error ? { error: bl.error } : {}) };
+      return sendJson(res, 200, v);
     }
 
     if (u.pathname === '/api/place') {

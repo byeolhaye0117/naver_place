@@ -5248,6 +5248,22 @@ function clickCell(v){
   return `<b${dead ? ' style="color:var(--bad-fg)"' : ''}>${n.toLocaleString("ko-KR")}</b>${rate}`;
 }
 
+/* 찾는 사람 대비 블로그 글이 몇 편인가.
+
+   검색량만 보면 큰 말은 전부 경쟁이 심해 보인다. 그런데 그중에도
+   "찾는 사람은 많은데 아직 아무도 안 쓴 말"이 있다. 거기가 제일 싼 자리다.
+   은코치에는 이 각도가 있고 우리에겐 없었다. */
+function blogCell(v){
+  if(!v || v.blogN == null) return "—";
+  const n = v.blogN.toLocaleString("ko-KR");
+  const g = v.gap;
+  if(!g) return `<b>${n}</b>`;
+  if(g.open) return `<b style="color:var(--ok-fg)">${n}</b>`
+    + `<i style="font-style:normal;color:var(--ok-fg);font-size:11px"> 빈자리</i>`;
+  if(g.tight) return `<b>${n}</b><i style="font-style:normal;color:var(--muted);font-size:11px"> 포화</i>`;
+  return `<b>${n}</b>`;
+}
+
 /* 줄마다 "그래서 뭘 하면 되나"를 적는다.
 
    순위만 늘어놓으면 사장님은 그 표를 보고 할 일을 못 정한다. 특히 "아직 밖"이
@@ -5280,6 +5296,13 @@ function kfAction(x, o){
   }
   if(v && v.total < 30 && (rank == null || rank > 30)){
     return `한 달에 ${v.total}명이 찾습니다. 잡아도 손님 수가 거의 안 달라집니다. 뒤로 미루세요.`;
+  }
+  /* 찾는 사람은 많은데 글이 적은 자리. 여기가 제일 싸게 올라가는 칸이다.
+     순위 얘기보다 먼저 말한다 - 아직 안 잡은 말이면 이게 첫 이유가 된다. */
+  if(v && v.gap && v.gap.open && (rank == null || rank > 5)){
+    return `한 달 ${v.total.toLocaleString("ko-KR")}명이 찾는데 블로그 글은 `
+      + `${v.blogN.toLocaleString("ko-KR")}편뿐입니다. 찾는 사람에 비해 글이 적은 자리라 `
+      + `소식이나 블로그로 먼저 채우면 싸게 올라갑니다.`;
   }
   /* 찾기는 하는데 아무도 안 누르는 말. 검색량만 보면 못 걸러지는 함정이다.
      보통 답을 화면에서 바로 얻고 끝나는 말(가격·시간 같은)이 여기 걸린다. */
@@ -5364,6 +5387,9 @@ $("kf-rank")?.addEventListener("click", async ()=>{
       || ((b.vol?.total ?? -1) - (a.vol?.total ?? -1))
       || ((a.rank ?? 999)-(b.rank ?? 999)));
     const hasVol = rows.some(x => x.vol && !x.vol.unknown);
+    /* 블로그 공급량은 검색 API 키가 있어야 온다. 없으면 칸 자체를 안 만든다 -
+       빈 칸을 줄줄이 세워 두면 그것대로 "뭔가 고장났나" 싶어진다. */
+    const hasBlog = rows.some(x => x.vol && x.vol.blogN != null);
     window.__kfRows = rows;
 
     /* 검색량이 없는 말은 공략 대상에서 뺀다. 표에서는 "뒤로 미루세요"라고 해 놓고
@@ -5430,12 +5456,14 @@ $("kf-rank")?.addEventListener("click", async ()=>{
         </div>`;
       })()}
       <div class="kwf-scroll"><table class="kwf"><thead><tr><th>키워드</th>${
-        hasVol ? "<th>월 검색량</th><th>눌러서 들어옴</th><th>경쟁</th>" : ""}<th>내 순위</th><th>판정</th><th>무엇을 하면 되나</th></tr></thead><tbody>
+        hasVol ? "<th>월 검색량</th><th>눌러서 들어옴</th><th>경쟁</th>" : ""}${
+        hasBlog ? "<th>블로그 글</th>" : ""}<th>내 순위</th><th>판정</th><th>무엇을 하면 되나</th></tr></thead><tbody>
       ${rows.map(x=>`<tr>
         <td>${x.keyword}</td>
         ${hasVol ? `<td class="r">${volCell(x.vol)}</td>
         <td class="r">${clickCell(x.vol)}</td>
         <td class="r">${x.vol && x.vol.comp ? x.vol.comp : "—"}</td>` : ""}
+        ${hasBlog ? `<td class="r">${blogCell(x.vol)}</td>` : ""}
         <td class="r">${x.found ? x.rank + "위" : "—"}</td>
         <td><span class="v ${x.v.cls}">${x.v.t}</span></td>
         <td class="act">${x.act}</td></tr>`).join("")}
