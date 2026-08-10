@@ -1456,6 +1456,48 @@ function blogStatus() {
         : n === 0 ? '아직 없습니다 - 블로그 공급량 칸만 꺼집니다'
         : '하나가 빠졌습니다 - 둘 다 있어야 돕니다' };
 }
+/* 키가 들어왔는지만으로는 모자란다. 앱에 "검색"이 안 붙어 있으면 키는 멀쩡한데
+   호출이 거절된다. 그 차이를 화면에서 알 수 있어야 사장님이 무엇을 고칠지 안다.
+   접근 키 없이도 보이는 자리에 둔다 - 성공 여부와 네이버가 준 사유만 담고,
+   검색어도 결과도 키도 싣지 않는다. */
+let BLOG_PROBE = { at: 0, val: null };
+/* 10분 캐시. health 는 자주 불리는 자리라 매번 네이버를 두드리면 한도만 태운다.
+   시험에서는 0 으로 두어 상태가 바뀌는 것을 바로 볼 수 있게 한다. */
+const BLOG_PROBE_TTL = process.env.BLOG_PROBE_TTL != null
+  ? Number(process.env.BLOG_PROBE_TTL) : 10 * 60 * 1000;
+async function blogProbe() {
+  const k = blogKeys();
+  if (!k.id || !k.sec) return null;
+  if (BLOG_PROBE.val && Date.now() - BLOG_PROBE.at < BLOG_PROBE_TTL) return BLOG_PROBE.val;
+  let val;
+  try {
+    const r = await fetch(`${NAVER_SEARCH_HOST}?query=${encodeURIComponent('헬스장')}&display=1`, {
+      headers: { 'X-Naver-Client-Id': k.id, 'X-Naver-Client-Secret': k.sec },
+    });
+    const body = await r.text();
+    if (r.ok) {
+      const t = Number(JSON.parse(body).total);
+      val = { ok: true, note: `네이버가 받아 줍니다. "헬스장" 글 ${isFinite(t) ? t.toLocaleString('ko-KR') : '?'}편으로 셉니다.` };
+    } else {
+      let why = ''; let code = '';
+      try { const j = JSON.parse(body); why = j.errorMessage || ''; code = j.errorCode || ''; } catch {}
+      /* 네이버가 주는 사유는 영어다. 그대로 내보내면 사장님은 무엇을 고칠지 모르신다.
+         무엇이 틀렸는지가 아니라 무엇을 하면 되는지로 바꿔 적는다. */
+      val = { ok: false, status: r.status, code,
+        note: /Client ID/i.test(why) ? '아이디가 안 맞습니다. NAVER_CLIENT_ID 값을 다시 확인하세요.'
+            : /Secret/i.test(why) ? '시크릿이 안 맞습니다. NAVER_CLIENT_SECRET 값을 다시 확인하세요.'
+            : r.status === 401 ? '아이디나 시크릿이 안 맞습니다. 두 값을 다시 확인하세요 (앞뒤 공백도 확인).'
+            : r.status === 403 ? '키는 맞는데 그 앱에 "검색" API 가 안 붙어 있습니다 - 내 애플리케이션 > API 설정에서 검색을 추가하세요.'
+            : r.status === 429 ? '오늘 호출 한도(25,000)를 넘었습니다. 내일 다시 됩니다.'
+            : `네이버가 거절했습니다 (${r.status}). ${(why || '').slice(0, 90)}`.trim() };
+    }
+  } catch (e) {
+    val = { ok: false, note: '서버가 네이버로 나가지 못했습니다.', network: true };
+  }
+  BLOG_PROBE = { at: Date.now(), val };
+  return val;
+}
+
 const BLOG_FILE = path.join(DATA_DIR, 'blog-count.json');
 function blogCache() {
   try {
@@ -2463,7 +2505,7 @@ const server = http.createServer(async (req, res) => {
            세 개가 다 있어야 쓸 수 있어서 하나씩 표시한다. 하나만 빠져도 안 돈다. */
         searchad: { ...searchAdStatus(), live: await searchAdProbe() },
         /* 블로그 공급량용 검색 API 키. 마찬가지로 있는지만 알려준다. */
-        blogapi: blogStatus(),
+        blogapi: { ...blogStatus(), live: await blogProbe() },
         /* 이 주소에는 접근 키가 들어 있다. 인터넷에서 물어보는 상대에게는 주지 않는다 —
            키를 알려주면 키를 두는 의미가 없다. 이 PC 화면에서만 보인다. */
         lanUrl: (ip && isLocal(req)) ? `http://${ip}:${PORT}/#k=${KEY}` : null,
