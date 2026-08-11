@@ -517,6 +517,20 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .kwf-do p{margin:0 0 7px}
 .kwf-do p:last-child{margin-bottom:0}
 .kwf-note{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.75}
+/* 어떤 손님이 오시나 — 센 것과 그 근거를 나란히 */
+.gs-lead{background:var(--ok-bg);border:1px solid var(--ok-line);border-radius:10px;
+  padding:12px 14px;margin:0 0 14px;font-size:13px;line-height:1.7}
+.gs-lead b{color:var(--ok-fg)} .gs-lead span{display:block;margin-top:5px;color:var(--fg)}
+.gs-h{margin:16px 0 6px;font-size:13px;font-weight:800}
+.gs-rows{display:flex;flex-direction:column;gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.gs-row{background:var(--card);padding:8px 11px;display:grid;
+  grid-template-columns:3.2rem 6.5rem 1fr;gap:2px 10px;align-items:baseline;font-size:12.5px}
+.gs-row b{font-variant-numeric:tabular-nums;font-weight:800}
+.gs-l{font-weight:700}
+.gs-row i{font-style:normal;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+@media(max-width:560px){ .gs-row{grid-template-columns:3.2rem 1fr} .gs-row i{grid-column:1/-1} }
+.gs-note{font-size:11.5px;color:var(--muted);line-height:1.7;margin:12px 0 0}
 /* 낡은 화면 알림 띠 - 화면 맨 아래에 붙어서 가리는 것 없이 눈에만 띈다 */
 .stale-bar{position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;
   background:var(--warn-bg,#FFF4E5);border:1px solid var(--warn-line,#F0C089);
@@ -1313,6 +1327,8 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <span>4주치 미리 잡아 둡니다</span></div>
     <div class="tcard" data-tcard="copy"><i>✂️</i><b>짧은 문구 모음</b>
       <span>쿠폰·톡톡·광고 문구</span><u>글자수 자동 판정</u></div>
+    <div class="tcard" data-tcard="guests"><i>👥</i><b>어떤 손님이 오시나</b>
+      <span>리뷰에서 세어 봅니다</span><u>지어내지 않음</u></div>
     <div class="tcard" data-tcard="prompt"><i>🤖</i><b>AI 지시문</b>
       <span>쓰시는 AI 채팅에 붙여넣기</span><u>API 키 불필요</u></div>
   </div>
@@ -1420,6 +1436,9 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
         <h4 style="margin-top:18px">수집한 리뷰로 만든 답글</h4>
         <div class="box" id="o-reply"><button class="btn sm ghost copy" data-t="o-reply">복사</button></div></div>
+      <div class="out" data-tool="guests"><h4>어떤 손님이 오시나</h4>
+        <div id="o-guests"></div></div>
+
       <div class="out" data-tool="news"><h4>소식 글감 4주치</h4>
         <div class="box" id="o-news"><button class="btn sm ghost copy" data-t="o-news">복사</button></div></div>
 
@@ -4613,6 +4632,7 @@ function buildWriter(o){
   if($("rp-out")?.innerHTML.trim() && $("rp-paste")?.value.trim()){ try{ makePastedReply(); }catch{} }
   setBox("o-news", naverSafe(buildNews(o)));
   renderSnips(o);
+  renderGuests();
 }
 
 function renderPersonaPicker(o){
@@ -4741,6 +4761,7 @@ const TOOL_META = {
   reply: { t:"리뷰 답글",       d:"수집한 실제 리뷰에 맞춰 만듭니다. 답글은 그 답글을 읽는 다음 손님을 위한 것입니다." },
   news:  { t:"소식 글감 4주치",  d:"월 1회 이상이면 충분합니다. 중요한 건 빈도보다 꾸준함입니다." },
   copy:  { t:"짧은 문구 모음",   d:"쿠폰·소식 제목·톡톡·플레이스광고·파워링크. 칸마다 다른 글자수 제한을 세어서 판정합니다." },
+  guests:{ t:"어떤 손님이 오시나", d:"수집한 리뷰에서 셉니다. 손님이 실제로 쓴 문장만 근거로 씁니다 - 짐작해서 적지 않습니다." },
   prompt:{ t:"AI 지시문",       d:"진단으로 알아낸 값을 전부 담아, 쓰시는 AI 채팅에 붙여넣을 지시문을 만듭니다." },
 };
 const TOOL_KEY = "np_tool_v1";
@@ -5246,6 +5267,107 @@ function clickCell(v){
   const total = v.total ?? 0;
   const dead = total >= 100 && n < total * 0.02;
   return `<b${dead ? ' style="color:var(--bad-fg)"' : ''}>${n.toLocaleString("ko-KR")}</b>${rate}`;
+}
+
+/* ============================================================
+   어떤 손님이 오시나 — 리뷰에서 센다
+
+   아래 PERSONAS 와 헷갈리지 말 것. 그건 "글을 누구에게 쓸까"를 고르는 칸이고,
+   이건 "실제로 누가 왔나"를 리뷰에서 세는 일이다. 하나는 고르는 것, 하나는 세는 것.
+
+   은코치에도 "페르소나 분석기"가 있다. 다만 그쪽은 사장님이 손님이 누구인지를
+   직접 적어 넣으셔야 한다. 적어 넣은 만큼만 나온다.
+
+   우리는 리뷰를 이미 긁어 온다. 손님이 직접 쓴 말이 있는데 사장님께 물어볼 이유가 없다.
+   "왜 왔는지"와 "무엇이 걱정이었는지"가 리뷰 첫 문장에 거의 다 적혀 있다.
+
+   지어내지 않는다. 센 것만 말하고, 셀 때마다 실제 문장을 하나씩 물고 온다.
+   근거 없이 "우리 손님은 30대 직장인입니다"라고 적으면 그건 점집이다.
+   ============================================================ */
+const GUEST_SIGNS = {
+  why: { t:"왜 왔는가", rows:[
+    ["살을 빼려고",        /다이어트|살\s*빼|감량|체중/],
+    ["몸이 상해서",        /어깨|허리|목\s*디스크|체형|자세|아파|안좋아|건강\s*관리|체력/],
+    ["출산 뒤",            /산후|출산/],
+    ["근육을 키우려고",    /벌크|근육|바디\s*프로필|대회/],
+    ["다시 시작하려고",    /다시\s*시작|재등록|쉬다가|오랜만/],
+  ]},
+  worry: { t:"무엇이 걱정이었나", rows:[
+    ["남 눈치",            /혼자|조용히|눈치|시선|부담\s*없이|편하게/],
+    ["돈",                 /가격|합리|저렴|부담\s*없는\s*가격|비싸|가성비|회원권/],
+    ["기구가 모자랄까",    /기구|머신|웨이트|종류|대기|기다/],
+    ["시간이 안 맞을까",   /24시|새벽|퇴근|출근|교대|시간대|늦게/],
+    ["멀까",               /집\s*근처|가까|거리|위치|주차/],
+    ["처음이라",           /초보|처음|입문|배우|피티|상담|알려주/],
+  ]},
+  who: { t:"누구인가", rows:[
+    ["직장인",             /직장|회사|퇴근|출근|근무|교대/],
+    ["여성",               /여성\s*전용|우먼|여자|산후/],
+    ["가족·지인과",        /가족|지인|친구|같이|함께|추천으로/],
+  ]},
+};
+
+/* 리뷰 한 묶음에서 센다. 문장은 자르되 말이 끊기지 않게 자른다. */
+function readGuests(reviews){
+  const list = (reviews || []).map(x => String(x || "").trim()).filter(Boolean);
+  if(list.length < 3) return null;      /* 서넛으로는 경향이라고 부를 수 없다 */
+
+  const pick = (re) => {
+    const hits = list.filter(t => re.test(t));
+    if(!hits.length) return null;
+    /* 근거로 물고 올 문장 - 그 말이 나온 자리를 중심으로 잘라 온다 */
+    const t = hits[0];
+    const m = t.match(re);
+    const at = m ? t.indexOf(m[0]) : 0;
+    const from = Math.max(0, at - 22);
+    let q = t.slice(from, from + 58).trim();
+    if(from > 0) q = "…" + q;
+    if(from + 58 < t.length) q = q + "…";
+    return { n: hits.length, quote: q };
+  };
+
+  const out = {};
+  for(const [key, spec] of Object.entries(GUEST_SIGNS)){
+    const found = spec.rows.map(([label, re]) => {
+      const r = pick(re);
+      return r ? { label, ...r } : null;
+    }).filter(Boolean).sort((a,b)=> b.n - a.n);
+    out[key] = { t: spec.t, found };
+  }
+  out.total = list.length;
+  return out;
+}
+
+/* 센 것을 화면에 적는다.
+
+   숫자만 늘어놓으면 또 "이걸 보고 어떻게 하라는 거냐"가 된다. 제일 많이 나온 걱정을
+   먼저 한 줄로 말하고, 그게 소개글·답글 어디에 쓰이는지까지 적는다. */
+function renderGuests(){
+  const box = $("o-guests"); if(!box) return;
+  const g = readGuests(window.__place?.material?.reviews);
+  if(!g){
+    box.innerHTML = `<div class="trend">리뷰를 아직 못 가져왔습니다.
+      위 검색줄에 플레이스 주소를 넣고 <b>수집</b>을 누르면 여기서 세어 드립니다.
+      (리뷰가 3개는 있어야 경향이라고 말할 수 있습니다.)</div>`;
+    return;
+  }
+  const top = g.worry.found[0];
+  const why = g.why.found[0];
+
+  const group = (sec) => !sec.found.length ? "" : `
+    <h5 class="gs-h">${sec.t}</h5>
+    <div class="gs-rows">${sec.found.map(x=>`
+      <div class="gs-row"><b>${x.n}명</b><span class="gs-l">${escH(x.label)}</span>
+        <i>"${escH(x.quote)}"</i></div>`).join("")}</div>`;
+
+  box.innerHTML = `
+    ${top ? `<div class="gs-lead"><b>손님이 제일 걱정한 건 "${escH(top.label)}"입니다 — 리뷰 ${g.total}개 중 ${top.n}개.</b>
+      <span>${why ? `오시는 이유로는 <b>${escH(why.label)}</b>가 제일 많았습니다(${why.n}명). ` : ""}
+      소개글과 답글에서 <b>이 걱정부터</b> 지워 주세요. 시설 자랑보다 이게 먼저 읽힙니다.</span></div>` : ""}
+    ${group(g.why)}${group(g.worry)}${group(g.who)}
+    <p class="gs-note">리뷰 ${g.total}개에서 센 것입니다. 짐작해서 적은 항목은 없고,
+      숫자마다 그 말이 나온 실제 문장을 하나씩 붙였습니다.
+      리뷰가 쌓이면 숫자도 바뀝니다 - 수집을 다시 하시면 다시 셉니다.</p>`;
 }
 
 /* 줄마다 "그래서 뭘 하면 되나"를 적는다.
