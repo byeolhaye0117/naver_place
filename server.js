@@ -1471,7 +1471,9 @@ async function searchBlogTotal(kw) {
   const order = SEARCH_GATE
     ? [SEARCH_GATES.find(g => g.name === SEARCH_GATE), ...SEARCH_GATES.filter(g => g.name !== SEARCH_GATE)]
     : SEARCH_GATES;
-  let last = null;
+  /* 문마다 뭐라고 거절했는지 다 들고 나온다. 마지막 것만 남기면
+     "어느 문이 왜 안 열렸나"를 모른 채 사장님께 되물어야 한다. */
+  const tried = [];
   for (const g of order.filter(Boolean)) {
     try {
       const r = await fetch(g.url(kw), { headers: g.head(k) });
@@ -1479,18 +1481,21 @@ async function searchBlogTotal(kw) {
       if (r.ok) {
         SEARCH_GATE = g.name;
         const t = Number(JSON.parse(body).total);
-        return { ok: true, gate: g.name, total: isFinite(t) ? t : null };
+        return { ok: true, gate: g.name, total: isFinite(t) ? t : null, tried };
       }
       let why = '', code = '';
       try {
         const j = JSON.parse(body);
-        why = j.errorMessage || j.error?.message || j.error?.details || '';
-        code = j.errorCode || j.error?.errorCode || '';
+        why = j.errorMessage || (j.error && (j.error.message || j.error.details)) || '';
+        code = j.errorCode || (j.error && j.error.errorCode) || '';
       } catch {}
-      last = { ok: false, gate: g.name, status: r.status, code, why };
-    } catch (e) { last = { ok: false, gate: g.name, error: String(e.message || e) }; }
+      tried.push({ gate: g.name, status: r.status, code, why: String(why).slice(0, 90) });
+    } catch (e) {
+      tried.push({ gate: g.name, error: String(e.message || e).slice(0, 90) });
+    }
   }
-  return last || { ok: false, error: '두 관문 모두 응답이 없습니다.' };
+  const last = tried[tried.length - 1] || {};
+  return { ok: false, ...last, tried };
 }
 const blogKeys = () => ({
   id:  String(process.env.NAVER_CLIENT_ID     || '').trim(),
@@ -1549,7 +1554,7 @@ async function blogProbe() {
          024 는 "값이 틀렸다"가 아니라 "그런 아이디가 없다"이다. 둘은 고치는 방법이
          다르다 - 앞엣것은 다시 복사하면 되고, 뒤엣것은 애초에 다른 종류의 키를
          넣은 것이다(클라우드 액세스키·검색광고 키를 넣으면 여기 걸린다). */
-      val = { ok: false, status: r.status, code, gate: r.gate, shape: idShape(k.id),
+      val = { ok: false, status: r.status, code, gate: r.gate, tried: r.tried, shape: idShape(k.id),
         note: code === '024' || /Not Exist Client ID/i.test(why)
               ? '네이버에 그런 아이디가 없습니다. 값이 틀린 게 아니라 다른 종류의 키일 수 있습니다 - '
                 + '검색광고 키나 클라우드 액세스키가 아니라, developers.naver.com 내 애플리케이션의 Client ID 여야 합니다.'
