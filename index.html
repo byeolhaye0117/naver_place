@@ -517,6 +517,21 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .kwf-do p{margin:0 0 7px}
 .kwf-do p:last-child{margin-bottom:0}
 .kwf-note{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.75}
+.gs-warn{background:var(--warn-bg);border-color:var(--warn-line)}
+.gs-warn>b{color:var(--warn-fg)}
+.mn-row{background:var(--card);padding:9px 11px;display:grid;
+  grid-template-columns:1fr auto;gap:3px 10px;align-items:center;font-size:12.5px}
+.mn-row i{font-style:normal;color:var(--muted);grid-column:1/-1;font-size:11.5px}
+.mn-row b{font-weight:700;min-width:0;overflow-wrap:anywhere}
+.mn-row u{text-decoration:none;color:var(--muted);font-size:11px;white-space:nowrap}
+.mn-row.stale u{color:var(--warn-fg)}
+.cc-list{display:flex;flex-direction:column;gap:10px;margin:12px 0 0}
+.cc{border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:var(--card);
+  display:grid;gap:3px;position:relative}
+.cc b{font-size:14px;font-weight:800;padding-right:56px}
+.cc i{font-style:normal;font-size:12px;color:var(--muted)}
+.cc u{text-decoration:none;font-size:11.5px;color:var(--accent)}
+.cc .copy{position:absolute;top:9px;right:10px}
 /* 어떤 손님이 오시나 — 센 것과 그 근거를 나란히 */
 .gs-lead{background:var(--ok-bg);border:1px solid var(--ok-line);border-radius:10px;
   padding:12px 14px;margin:0 0 14px;font-size:13px;line-height:1.7}
@@ -1327,6 +1342,10 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <span>4주치 미리 잡아 둡니다</span></div>
     <div class="tcard" data-tcard="copy"><i>✂️</i><b>짧은 문구 모음</b>
       <span>쿠폰·톡톡·광고 문구</span><u>글자수 자동 판정</u></div>
+    <div class="tcard" data-tcard="menu"><i>🍽️</i><b>메뉴 이름 다시 짓기</b>
+      <span>네이버가 읽는 칸입니다</span><u>철 지난 것도 짚음</u></div>
+    <div class="tcard" data-tcard="concept"><i>✨</i><b>매장 컨셉 한 줄</b>
+      <span>손님 걱정에 대한 답으로</span><u>리뷰 근거</u></div>
     <div class="tcard" data-tcard="guests"><i>👥</i><b>어떤 손님이 오시나</b>
       <span>리뷰에서 세어 봅니다</span><u>지어내지 않음</u></div>
     <div class="tcard" data-tcard="prompt"><i>🤖</i><b>AI 지시문</b>
@@ -1436,6 +1455,12 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
 
         <h4 style="margin-top:18px">수집한 리뷰로 만든 답글</h4>
         <div class="box" id="o-reply"><button class="btn sm ghost copy" data-t="o-reply">복사</button></div></div>
+      <div class="out" data-tool="menu"><h4>메뉴 이름 다시 짓기</h4>
+        <div id="o-menu"></div></div>
+
+      <div class="out" data-tool="concept"><h4>매장 컨셉 한 줄</h4>
+        <div id="o-concept"></div></div>
+
       <div class="out" data-tool="guests"><h4>어떤 손님이 오시나</h4>
         <div id="o-guests"></div></div>
 
@@ -4633,6 +4658,8 @@ function buildWriter(o){
   setBox("o-news", naverSafe(buildNews(o)));
   renderSnips(o);
   renderGuests();
+  renderMenuNames(o);
+  renderConcept(o);
 }
 
 function renderPersonaPicker(o){
@@ -4761,6 +4788,8 @@ const TOOL_META = {
   reply: { t:"리뷰 답글",       d:"수집한 실제 리뷰에 맞춰 만듭니다. 답글은 그 답글을 읽는 다음 손님을 위한 것입니다." },
   news:  { t:"소식 글감 4주치",  d:"월 1회 이상이면 충분합니다. 중요한 건 빈도보다 꾸준함입니다." },
   copy:  { t:"짧은 문구 모음",   d:"쿠폰·소식 제목·톡톡·플레이스광고·파워링크. 칸마다 다른 글자수 제한을 세어서 판정합니다." },
+  menu:  { t:"메뉴 이름 다시 짓기", d:"메뉴 이름은 네이버가 읽는 칸입니다. 지역이 든 이름이 몇 개인지 세고, 철 지난 이름을 짚습니다." },
+  concept:{ t:"매장 컨셉 한 줄",   d:"자랑이 아니라 손님 걱정에 대한 답으로 만듭니다. 리뷰에서 센 걱정과 실제 메뉴만 씁니다." },
   guests:{ t:"어떤 손님이 오시나", d:"수집한 리뷰에서 셉니다. 손님이 실제로 쓴 문장만 근거로 씁니다 - 짐작해서 적지 않습니다." },
   prompt:{ t:"AI 지시문",       d:"진단으로 알아낸 값을 전부 담아, 쓰시는 AI 채팅에 붙여넣을 지시문을 만듭니다." },
 };
@@ -5270,6 +5299,105 @@ function clickCell(v){
 }
 
 /* ============================================================
+   메뉴 이름 다시 짓기
+
+   메뉴 이름은 네이버가 읽는 칸이다. 그런데 사장님 메뉴 19개를 세어 보니
+   지역 이름이 든 것이 하나도 없었다. "3개월 9.9만원"은 천안 어느 헬스장에
+   갖다 붙여도 맞는 이름이다.
+
+   다만 열아홉 개에 전부 "쌍용동"을 박으면 그건 도배다. 몇 개만, 그리고
+   원래 뜻이 안 상하는 것만 고른다. 억지로 넣어 이상해진 이름은 손님이 먼저 안다.
+
+   그리고 철 지난 메뉴를 짚는다. "광복절 기념 8월무료"는 9월이 되면 거짓말이 된다.
+   소개글에서 이벤트를 뺀 것과 같은 이유다 - 오래 남는 칸에 날짜를 박으면 안 된다.
+   ============================================================ */
+const MENU_MAX = 40;                       /* 네이버 메뉴 이름 칸 */
+/* 철이 박힌 말. 이 달만 맞고 다음 달엔 틀리는 이름이다. */
+const MENU_STALE = /광복절|설날|추석|크리스마스|신년|새해|\d+월\s*무료|여름|겨울|장마|에어컨|난방|선풍기|이번\s*달|한정|마감\s*임박/;
+/* 값이 아니라 조건이 붙은 말 - 이름만 보고 오해하기 쉬운 것 */
+const MENU_PRICEY = /\d[\d,.]*\s*(원|만원|만\b)/;
+
+function menuRename(o){
+  const raw = (window.__place?.material?.menuNames || [])
+    .map(x => String(x || "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim())
+    .filter(Boolean);
+  if(!raw.length) return null;
+
+  const area = String(o?.area || "").trim();
+  const biz  = String(o?.type || "헬스장").trim();
+  const has  = t => area && t.replace(/\s+/g, "").includes(area.replace(/\s+/g, ""));
+
+  const withArea = raw.filter(has);
+  const stale    = raw.filter(t => MENU_STALE.test(t));
+
+  /* 지역을 얹을 만한 것 — 이용권·PT 처럼 손님이 검색해서 찾는 이름 위주.
+     시설 나열("스미스머신 파워렉 6대")에 지역을 박으면 어색하기만 하다. */
+  const SELLABLE = /이용권|회원권|프리패스|PT|피티|무제한|개월|주간|일권|무료/i;
+  const pick = raw.filter(t => !has(t) && SELLABLE.test(t) && !MENU_STALE.test(t)).slice(0, 4);
+
+  const suggest = pick.map(t => {
+    /* 원래 이름을 지우지 않는다. 앞에 지역+업종만 얹는다 - 뜻이 안 상한다. */
+    const head = area ? `${area} ${biz}` : biz;
+    let out = `${head} ${t}`;
+    return { from: t, to: out, over: out.length > MENU_MAX };
+  }).filter(x => !x.over);
+
+  return { total: raw.length, area, withArea, stale, suggest,
+           pricey: raw.filter(t => MENU_PRICEY.test(t)) };
+}
+
+/* ============================================================
+   매장 컨셉 한 줄
+
+   은코치에도 "매장 컨셉 메이커"가 있다. 그쪽은 사장님이 차별점을 적어 넣으시면
+   한 줄로 다듬어 준다. 우리는 적어 넣으실 것도 이미 갖고 있다 -
+   손님이 무엇을 걱정했는지는 리뷰에서 셌고, 우리가 무엇을 가졌는지는 메뉴에 있다.
+
+   컨셉은 "우리가 자랑하고 싶은 것"이 아니라 "손님 걱정에 대한 답"이어야 한다.
+   그래서 걱정 1·2위를 먼저 놓고, 그 걱정을 지우는 시설을 우리 메뉴에서 찾아 붙인다.
+   재료에 없으면 안 붙인다 - 없는 시설로 만든 컨셉은 첫 방문에 들통난다.
+   ============================================================ */
+/* 걱정마다 그 걱정을 지우는 시설이 다르다. 우리 메뉴에 그게 있어야만 쓴다. */
+const CONCEPT_FIX = {
+  "남 눈치":       { re:/우먼존|여성\s*전용|별도|분리|프리웨이트존|스트레칭실/, say:"눈치 안 보고" },
+  "돈":            { re:/무료|무제한|프리패스|공동구매|\d+개월/,               say:"부담 없이" },
+  "기구가 모자랄까": { re:/\d+\s*(대|종)|머신|웨이트|파워렉/,                   say:"기다리지 않고" },
+  "시간이 안 맞을까": { re:/24시|365일|프리패스/,                              say:"아무 때나" },
+  "처음이라":       { re:/초보|완초자|PT|피티|인바디|상담/,                     say:"처음이어도" },
+  "멀까":          { re:/주차/,                                              say:"차 대고" },
+};
+
+function conceptLines(o){
+  /* 철 지난 메뉴는 재료에서 뺀다. 컨셉은 몇 달 쓰는 문장인데
+     "광복절 기념 8월무료"를 근거로 삼으면 9월에 거짓말이 된다.
+     규칙으로 막지 않고 재료에서 뺀다 - 안 보이는 것은 못 쓴다. */
+  const menus = (window.__place?.material?.menuNames || [])
+    .map(x => String(x || "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim())
+    .filter(Boolean).filter(t => !MENU_STALE.test(t));
+  const g = readGuests(window.__place?.material?.reviews);
+  if(!menus.length || !g) return null;
+
+  const area = String(o?.area || "").trim();
+  const biz  = String(o?.type || "헬스장").trim();
+  const head = area ? `${area} ${biz}` : biz;
+
+  /* 걱정 많은 순서대로, 우리 메뉴에 답이 있는 것만 남긴다 */
+  const fixes = g.worry.found.map(w => {
+    const spec = CONCEPT_FIX[w.label]; if(!spec) return null;
+    const proof = menus.find(m => spec.re.test(m)); if(!proof) return null;
+    return { worry: w.label, n: w.n, say: spec.say, proof };
+  }).filter(Boolean);
+  if(!fixes.length) return null;
+
+  const a = fixes[0], b = fixes[1];
+  const lines = [];
+  if(a && b) lines.push({ t:`${a.say} ${b.say} 운동하는 ${head}`, why:`걱정 1위 "${a.worry}"(${a.n}명) + 2위 "${b.worry}"(${b.n}명)`, proof:[a.proof, b.proof] });
+  if(a)      lines.push({ t:`${a.say} 운동할 수 있는 ${head} — ${a.proof}`, why:`걱정 1위 "${a.worry}"(${a.n}명)을 시설로 바로 답함`, proof:[a.proof] });
+  if(b)      lines.push({ t:`${b.say} 운동하는 ${head} — ${b.proof}`, why:`걱정 2위 "${b.worry}"(${b.n}명)`, proof:[b.proof] });
+  return { lines: lines.slice(0, 3), fixes, total: g.total };
+}
+
+/* ============================================================
    어떤 손님이 오시나 — 리뷰에서 센다
 
    아래 PERSONAS 와 헷갈리지 말 것. 그건 "글을 누구에게 쓸까"를 고르는 칸이고,
@@ -5338,6 +5466,56 @@ function readGuests(reviews){
   return out;
 }
 
+/* 메뉴 이름 — 센 것과 바꿀 것을 나눠 적는다 */
+function renderMenuNames(o){
+  const box = $("o-menu"); if(!box) return;
+  const r = menuRename(o);
+  if(!r){ box.innerHTML = `<div class="trend">메뉴를 아직 못 가져왔습니다.
+    위 검색줄에 플레이스 주소를 넣고 <b>수집</b>을 누르세요.</div>`; return; }
+
+  const none = r.withArea.length === 0;
+  box.innerHTML = `
+    <div class="${none ? "gs-lead gs-warn" : "gs-lead"}">
+      <b>메뉴 ${r.total}개 중 "${escH(r.area || "지역")}"이 든 이름은 ${r.withArea.length}개입니다.</b>
+      <span>${none
+        ? `메뉴 이름은 네이버가 읽는 칸인데 지금은 <b>한 개도 없습니다.</b>
+           "3개월 9.9만원"은 어느 헬스장에 갖다 붙여도 맞는 이름입니다.`
+        : `이미 ${r.withArea.length}개에 들어 있습니다. 더 늘리기보다 그대로 두세요.`}
+        열아홉 개에 전부 박으면 도배입니다. <b>두세 개만</b> 바꾸세요.</span></div>
+
+    ${r.suggest.length ? `<h5 class="gs-h">이렇게 바꿔 보세요 (${r.suggest.length}개)</h5>
+      <div class="gs-rows">${r.suggest.map(x=>`
+        <div class="mn-row"><i>${escH(x.from)}</i>
+          <b>${escH(x.to)}</b><u>${x.to.length}자</u></div>`).join("")}</div>
+      <p class="gs-note">원래 이름을 지우지 않고 앞에만 얹었습니다. 뜻이 안 상합니다.
+        네이버 메뉴 이름 칸은 ${MENU_MAX}자까지라, 넘는 것은 아예 후보에서 뺐습니다.</p>` : ""}
+
+    ${r.stale.length ? `<h5 class="gs-h">철 지난 이름 ${r.stale.length}개</h5>
+      <div class="gs-rows">${r.stale.map(x=>`
+        <div class="mn-row stale"><b>${escH(x)}</b><u>지금 지나갔나요?</u></div>`).join("")}</div>
+      <p class="gs-note">메뉴는 오래 남는 칸입니다. 이 달만 맞는 이름을 두면 다음 달엔 거짓말이 됩니다.
+        아직 하고 계신 것이면 그대로 두시고, 끝났으면 지우거나 날짜를 떼세요.</p>` : ""}`;
+}
+
+/* 컨셉 — 왜 그 문장인지를 같이 적는다. 근거 없는 한 줄은 점집이다. */
+function renderConcept(o){
+  const box = $("o-concept"); if(!box) return;
+  const r = conceptLines(o);
+  if(!r){ box.innerHTML = `<div class="trend">리뷰와 메뉴가 있어야 만듭니다.
+    위 검색줄에서 <b>수집</b>을 먼저 누르세요.</div>`; return; }
+  box.innerHTML = `
+    <div class="gs-lead"><b>컨셉은 자랑이 아니라 손님 걱정에 대한 답입니다.</b>
+      <span>리뷰 ${r.total}개에서 센 걱정 순서대로, 그 걱정을 지우는 <b>실제 메뉴</b>를 붙였습니다.
+        재료에 없는 시설은 안 씁니다 - 첫 방문에 들통납니다.</span></div>
+    <div class="cc-list">${r.lines.map((x,i)=>`
+      <div class="cc"><b>${escH(x.t)}</b>
+        <i>${escH(x.why)}</i>
+        <u>근거 메뉴 · ${x.proof.map(escH).join(" / ")}</u>
+        <button class="btn sm ghost copy" data-copy="${escH(x.t)}">복사</button></div>`).join("")}</div>
+    <p class="gs-note">소개글 첫 줄과 "다른 헬스장과 다른 점 한 줄"에 그대로 쓰시면 됩니다.
+      철 지난 메뉴(광복절·8월 같은 것)는 근거에서 빼 두었습니다.</p>`;
+}
+
 /* 센 것을 화면에 적는다.
 
    숫자만 늘어놓으면 또 "이걸 보고 어떻게 하라는 거냐"가 된다. 제일 많이 나온 걱정을
@@ -5368,6 +5546,21 @@ function renderGuests(){
     <p class="gs-note">리뷰 ${g.total}개에서 센 것입니다. 짐작해서 적은 항목은 없고,
       숫자마다 그 말이 나온 실제 문장을 하나씩 붙였습니다.
       리뷰가 쌓이면 숫자도 바뀝니다 - 수집을 다시 하시면 다시 셉니다.</p>`;
+}
+
+/* 경쟁 칸에 "광고가 몇 개 붙나"를 같이 적는다.
+
+   plAvgDepth 도 검색량과 같은 응답에 실려 오는데 받아만 놓고 안 쓰고 있었다.
+   광고가 여러 개 붙는 말은 돈 내고 사 갈 만하다고 여러 업체가 판단한 말이다.
+   "경쟁 높음"만 보면 피하고 싶어지는데, 광고가 붙는다는 건 그만큼 값이 된다는 뜻이라
+   같이 봐야 판단이 선다. */
+function compCell(v){
+  if(!v || v.unknown) return "—";
+  const c = v.comp || "—";
+  if(v.adDepth == null) return c;
+  const n = Math.round(v.adDepth * 10) / 10;
+  return `${c}<i style="font-style:normal;color:var(--muted);font-size:11px;display:block">`
+    + `광고 ${n}개</i>`;
 }
 
 /* 줄마다 "그래서 뭘 하면 되나"를 적는다.
@@ -5557,7 +5750,7 @@ $("kf-rank")?.addEventListener("click", async ()=>{
         <td>${x.keyword}</td>
         ${hasVol ? `<td class="r">${volCell(x.vol)}</td>
         <td class="r">${clickCell(x.vol)}</td>
-        <td class="r">${x.vol && x.vol.comp ? x.vol.comp : "—"}</td>` : ""}
+        <td class="r">${compCell(x.vol)}</td>` : ""}
         <td class="r">${x.found ? x.rank + "위" : "—"}</td>
         <td><span class="v ${x.v.cls}">${x.v.t}</span></td>
         <td class="act">${x.act}</td></tr>`).join("")}
@@ -6242,8 +6435,13 @@ document.addEventListener("click", e=>{
 
 document.addEventListener("click", e=>{
   const b = e.target.closest(".copy"); if(!b) return;
-  const el = $(b.dataset.t);
-  const text = [...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join("").trim();
+  /* 상자에서 긁어 오는 것이 원래 방식이다. 컨셉 한 줄처럼 상자가 아니라
+     버튼에 글이 붙어 있는 경우도 있어서 그쪽을 먼저 본다. */
+  let text = b.dataset.copy;
+  if(text == null){
+    const el = $(b.dataset.t); if(!el) return;
+    text = [...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join("").trim();
+  }
   navigator.clipboard.writeText(text).then(showToast, ()=>{
     const ta=document.createElement("textarea"); ta.value=text;
     document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); showToast();
