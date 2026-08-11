@@ -1555,7 +1555,13 @@ async function blogProbe() {
          다르다 - 앞엣것은 다시 복사하면 되고, 뒤엣것은 애초에 다른 종류의 키를
          넣은 것이다(클라우드 액세스키·검색광고 키를 넣으면 여기 걸린다). */
       val = { ok: false, status: r.status, code, gate: r.gate, tried: r.tried, shape: idShape(k.id),
-        note: code === '024' || /Not Exist Client ID/i.test(why)
+        /* 같은 024 라도 사유가 두 가지다. "그런 아이디가 없다"와 "권한이 없다"는
+           고치는 곳이 다르다. 앞엣것은 값을 바꿔야 하고, 뒤엣것은 값은 맞는데
+           그 앱에 검색을 안 켜 둔 것이다. 실제로 사장님 화면이 이 둘을 차례로 지났다. */
+        note: /Scope/i.test(why)
+              ? '아이디는 네이버가 인정합니다. 다만 그 앱에 "검색" 권한이 꺼져 있습니다 - '
+                + 'developers.naver.com > 내 애플리케이션 > 해당 앱 > API 설정에서 "검색"을 추가하고 저장하세요.'
+            : code === '024' || /Not Exist Client ID/i.test(why)
               ? '네이버에 그런 아이디가 없습니다. 값이 틀린 게 아니라 다른 종류의 키일 수 있습니다 - '
                 + '검색광고 키나 클라우드 액세스키가 아니라, developers.naver.com 내 애플리케이션의 Client ID 여야 합니다.'
             : /Secret/i.test(why) ? '시크릿이 안 맞습니다. NAVER_CLIENT_SECRET 값을 다시 확인하세요.'
