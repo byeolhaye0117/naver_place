@@ -1515,6 +1515,21 @@ async function blogProbe() {
   } catch (e) {
     val = { ok: false, note: '서버가 네이버로 나가지 못했습니다.', network: true };
   }
+
+  /* 024 인데 모양은 멀쩡하다면 남는 것은 "두 값이 서로 바뀐 것"이다.
+     아이디와 시크릿은 둘 다 영문+숫자라 눈으로는 안 갈린다. 사장님께
+     "다시 보세요"라고 말해 봐야 같은 자리를 또 보시게 된다.
+     그러니 우리가 바꿔서 한 번 눌러 본다. 되면 그게 답이다. */
+  if (val && !val.ok && val.code === '024' && val.shape === 'looks-ok') {
+    try {
+      const r2 = await fetch(`${NAVER_SEARCH_HOST}?query=${encodeURIComponent('헬스장')}&display=1`, {
+        headers: { 'X-Naver-Client-Id': k.sec, 'X-Naver-Client-Secret': k.id },
+      });
+      if (r2.ok) val = { ...val, swapped: true,
+        note: '두 값이 서로 바뀌어 들어갔습니다. NAVER_CLIENT_ID 에 시크릿이, '
+            + 'NAVER_CLIENT_SECRET 에 아이디가 들어 있습니다. 두 값을 맞바꿔 주세요.' };
+    } catch { /* 확인만 해 본 것이라 실패해도 원래 진단을 그대로 둔다 */ }
+  }
   BLOG_PROBE = { at: Date.now(), val };
   return val;
 }
