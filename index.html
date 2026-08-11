@@ -525,6 +525,9 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .mn-row b{font-weight:700;min-width:0;overflow-wrap:anywhere}
 .mn-row u{text-decoration:none;color:var(--muted);font-size:11px;white-space:nowrap}
 .mn-row.stale u{color:var(--warn-fg)}
+.cc-n{font-size:11px;font-weight:700;color:var(--muted);margin-left:4px}
+.cc-line{background:var(--ok-bg);border-radius:7px;padding:8px 10px;margin:5px 0 3px;
+  font-size:13px;line-height:1.65;color:var(--fg)}
 .cc-list{display:flex;flex-direction:column;gap:10px;margin:12px 0 0}
 .cc{border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:var(--card);
   display:grid;gap:3px;position:relative}
@@ -5358,6 +5361,15 @@ function menuRename(o){
    재료에 없으면 안 붙인다 - 없는 시설로 만든 컨셉은 첫 방문에 들통난다.
    ============================================================ */
 /* 걱정마다 그 걱정을 지우는 시설이 다르다. 우리 메뉴에 그게 있어야만 쓴다. */
+/* 문장에 넣을 때 쓰는 말. "출산 뒤"에 "려고"를 붙이면 "출산 뒤려고"가 된다 -
+   어미를 문자열로 잘라 붙이지 않고 아예 따로 적어 둔다. */
+const WHY_PHRASE = {
+  "살을 빼려고":     "살을 빼려고",
+  "몸이 상해서":     "몸이 상하셔서",
+  "출산 뒤":        "출산 뒤에",
+  "근육을 키우려고":  "근육을 키우려고",
+  "다시 시작하려고":  "운동을 다시 시작하려고",
+};
 const CONCEPT_FIX = {
   "남 눈치":       { re:/우먼존|여성\s*전용|별도|분리|프리웨이트존|스트레칭실/, say:"눈치 안 보고" },
   "돈":            { re:/무료|무제한|프리패스|공동구매|\d+개월/,               say:"부담 없이" },
@@ -5516,6 +5528,66 @@ function renderConcept(o){
       철 지난 메뉴(광복절·8월 같은 것)는 근거에서 빼 두었습니다.</p>`;
 }
 
+/* 센 것을 손님 프로필로 만든다.
+
+   여기까지가 은코치와 갈리던 자리다. 우리는 "돈 8명, 남 눈치 6명"까지 세어 주고
+   끝냈다. 사장님이 그걸 읽고 문장을 만드셔야 했다. 그건 절반만 한 것이다.
+   은코치는 손님 프로필을 사람 모양으로 만들어 준다.
+
+   다만 지어내지는 않는다. 왜 왔는지와 무엇이 걱정인지를 곱해서 조합을 만들면
+   실제로는 아무도 아닌 사람이 나온다. 그래서 "같은 리뷰 안에서 실제로 같이 나온"
+   짝만 쓴다. 그리고 그 걱정을 지우는 우리 메뉴를 찾아 바로 쓸 문장까지 만든다.
+   문장을 못 만들면 그 프로필은 안 낸다 - 해 줄 말이 없으면 프로필도 소용없다. */
+function guestProfiles(o){
+  const reviews = (window.__place?.material?.reviews || [])
+    .map(x => String(x || "").trim()).filter(Boolean);
+  if(reviews.length < 3) return null;
+  const menus = (window.__place?.material?.menuNames || [])
+    .map(x => String(x || "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim())
+    .filter(Boolean).filter(t => !MENU_STALE.test(t));
+
+  /* 한 리뷰 안에서 같이 나온 것만 짝으로 센다 */
+  const pairs = new Map();
+  for(const t of reviews){
+    const hit = k => GUEST_SIGNS[k].rows.filter(([, re]) => re.test(t)).map(x => x[0]);
+    const why = hit("why"), wor = hit("worry"), who = hit("who");
+    for(const a of why) for(const b of wor){
+      const key = a + "\u0000" + b;
+      const p = pairs.get(key) || { why:a, worry:b, n:0, who:new Set(), quote:"" };
+      p.n++; who.forEach(w => p.who.add(w));
+      if(!p.quote) p.quote = t.length > 74 ? t.slice(0, 74) + "…" : t;
+      pairs.set(key, p);
+    }
+  }
+  if(!pairs.size) return null;
+
+  /* 같은 "왜"가 셋씩 나오면 세 프로필이 같은 사람이 된다. 왜별로 제일 센 것 하나씩 먼저. */
+  const all = [...pairs.values()].sort((a,b)=> b.n - a.n);
+  const seen = new Set(), order = [];
+  for(const p of all) if(!seen.has(p.why)){ seen.add(p.why); order.push(p); }
+  /* 남는 것으로 채우지 않는다. 같은 "왜"가 두 번 나오면 같은 사람이 두 장 된다 -
+     실제로 "직장인, 몸이 상해서"가 1번과 5번에 똑같이 앉아 있었다. */
+
+  const cards = [];
+  for(const p of order){
+    const fix = CONCEPT_FIX[p.worry];
+    const proof = fix ? menus.find(m => fix.re.test(m)) : null;
+    if(!proof) continue;                    /* 해 줄 말이 없으면 프로필도 안 낸다 */
+    const who = [...p.who][0] || "";
+    cards.push({
+      n: p.n, why: p.why, worry: p.worry, who,
+      title: `${who ? who + ", " : ""}${p.why}`,
+      /* 바로 쓸 문장 - 소개글 첫 줄이나 답글에 그대로 넣으실 수 있게 */
+      /* 한 명이 말한 것을 "많습니다"라고 하면 그건 부풀린 것이다. 센 대로 적는다. */
+      line: `${WHY_PHRASE[p.why] || p.why} 오시는 분이 ${p.n >= 3 ? "많습니다" : `계십니다`}. `
+          + `${fix.say} 운동하실 수 있게 ${proof} 준비해 두었습니다.`,
+      proof, quote: p.quote,
+    });
+    if(cards.length >= 5) break;
+  }
+  return cards.length ? { cards, total: reviews.length } : null;
+}
+
 /* 센 것을 화면에 적는다.
 
    숫자만 늘어놓으면 또 "이걸 보고 어떻게 하라는 거냐"가 된다. 제일 많이 나온 걱정을
@@ -5531,6 +5603,7 @@ function renderGuests(){
   }
   const top = g.worry.found[0];
   const why = g.why.found[0];
+  const prof = guestProfiles();
 
   const group = (sec) => !sec.found.length ? "" : `
     <h5 class="gs-h">${sec.t}</h5>
@@ -5542,6 +5615,16 @@ function renderGuests(){
     ${top ? `<div class="gs-lead"><b>손님이 제일 걱정한 건 "${escH(top.label)}"입니다 — 리뷰 ${g.total}개 중 ${top.n}개.</b>
       <span>${why ? `오시는 이유로는 <b>${escH(why.label)}</b>가 제일 많았습니다(${why.n}명). ` : ""}
       소개글과 답글에서 <b>이 걱정부터</b> 지워 주세요. 시설 자랑보다 이게 먼저 읽힙니다.</span></div>` : ""}
+    ${prof ? `<h5 class="gs-h">손님 ${prof.cards.length}명 — 그대로 쓰실 문장까지</h5>
+      <div class="cc-list">${prof.cards.map(c=>`
+        <div class="cc"><b>${escH(c.title)} <span class="cc-n">${c.n}명</span></b>
+          <i>걱정: ${escH(c.worry)} · 근거 메뉴 ${escH(c.proof)}</i>
+          <div class="cc-line">${escH(c.line)}</div>
+          <u>리뷰 원문 · "${escH(c.quote)}"</u>
+          <button class="btn sm ghost copy" data-copy="${escH(c.line)}">복사</button></div>`).join("")}</div>
+      <p class="gs-note">소개글이나 답글에 그대로 넣으실 수 있습니다.
+        한 리뷰 안에서 <b>실제로 같이 나온</b> 짝만 썼습니다 - 곱해서 만들면 아무도 아닌 사람이 나옵니다.
+        해 드릴 말(근거 메뉴)이 없는 조합은 아예 안 냈습니다.</p>` : ""}
     ${group(g.why)}${group(g.worry)}${group(g.who)}
     <p class="gs-note">리뷰 ${g.total}개에서 센 것입니다. 짐작해서 적은 항목은 없고,
       숫자마다 그 말이 나온 실제 문장을 하나씩 붙였습니다.
