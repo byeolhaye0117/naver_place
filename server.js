@@ -1442,7 +1442,56 @@ async function searchAdProbe() {
 
    네이버 검색 오픈 API 는 상한 없는 total 을 준다. 키 두 개가 필요하고,
    없으면 이 기능만 조용히 꺼진다 - 나머지는 그대로 돈다. */
-const NAVER_SEARCH_HOST = 'https://openapi.naver.com/v1/search/blog.json';
+/* 네이버 검색 API 로 가는 길이 두 개다. 어느 키를 갖고 계신지에 따라 다르다.
+
+     예전 길  developers.naver.com 앱  →  openapi.naver.com
+              헤더 X-Naver-Client-Id / X-Naver-Client-Secret
+     지금 길  NAVER Cloud API Hub      →  naverapihub.apigw.ntruss.com
+              헤더 X-NCP-APIGW-API-KEY-ID / X-NCP-APIGW-API-KEY
+
+   2026년 현재 developers.naver.com 에서는 검색 앱을 새로 못 만든다. 그런데 우리는
+   예전 길만 두드리고 있었고, 사장님 키(API Hub 것)에 대고 "그런 아이디가 없다"는
+   네이버 답을 그대로 옮겼다. 키가 틀린 게 아니라 우리가 틀린 문을 두드린 것이었다.
+
+   그래서 둘 다 두드린다. 어느 쪽이 열리는지는 키가 정한다. */
+const SEARCH_GATES = [
+  { name: 'apihub',
+    url: q => `https://naverapihub.apigw.ntruss.com/search/v1/blog?query=${encodeURIComponent(q)}&display=1&format=json`,
+    head: k => ({ 'X-NCP-APIGW-API-KEY-ID': k.id, 'X-NCP-APIGW-API-KEY': k.sec }) },
+  { name: 'openapi',
+    url: q => `https://openapi.naver.com/v1/search/blog.json?query=${encodeURIComponent(q)}&display=1`,
+    head: k => ({ 'X-Naver-Client-Id': k.id, 'X-Naver-Client-Secret': k.sec }) },
+];
+/* 한 번 열린 문을 기억한다. 매번 두 번씩 두드리면 한도를 두 배로 태운다. */
+let SEARCH_GATE = null;
+
+/* 검색어 하나로 블로그 글 수를 센다. 열리는 문을 찾아 그쪽으로만 간다. */
+async function searchBlogTotal(kw) {
+  const k = blogKeys();
+  const order = SEARCH_GATE
+    ? [SEARCH_GATES.find(g => g.name === SEARCH_GATE), ...SEARCH_GATES.filter(g => g.name !== SEARCH_GATE)]
+    : SEARCH_GATES;
+  let last = null;
+  for (const g of order.filter(Boolean)) {
+    try {
+      const r = await fetch(g.url(kw), { headers: g.head(k) });
+      const body = await r.text();
+      if (r.ok) {
+        SEARCH_GATE = g.name;
+        const t = Number(JSON.parse(body).total);
+        return { ok: true, gate: g.name, total: isFinite(t) ? t : null };
+      }
+      let why = '', code = '';
+      try {
+        const j = JSON.parse(body);
+        why = j.errorMessage || j.error?.message || j.error?.details || '';
+        code = j.errorCode || j.error?.errorCode || '';
+      } catch {}
+      last = { ok: false, gate: g.name, status: r.status, code, why };
+    } catch (e) { last = { ok: false, gate: g.name, error: String(e.message || e) }; }
+  }
+  return last || { ok: false, error: '두 관문 모두 응답이 없습니다.' };
+}
 const blogKeys = () => ({
   id:  String(process.env.NAVER_CLIENT_ID     || '').trim(),
   sec: String(process.env.NAVER_CLIENT_SECRET || '').trim(),
@@ -1486,23 +1535,21 @@ async function blogProbe() {
   if (BLOG_PROBE.val && Date.now() - BLOG_PROBE.at < BLOG_PROBE_TTL) return BLOG_PROBE.val;
   let val;
   try {
-    const r = await fetch(`${NAVER_SEARCH_HOST}?query=${encodeURIComponent('헬스장')}&display=1`, {
-      headers: { 'X-Naver-Client-Id': k.id, 'X-Naver-Client-Secret': k.sec },
-    });
-    const body = await r.text();
+    const r = await searchBlogTotal('헬스장');
     if (r.ok) {
-      const t = Number(JSON.parse(body).total);
-      val = { ok: true, note: `네이버가 받아 줍니다. "헬스장" 글 ${isFinite(t) ? t.toLocaleString('ko-KR') : '?'}편으로 셉니다.` };
+      const t = r.total;
+      val = { ok: true, gate: r.gate,
+        note: `네이버가 받아 줍니다(${r.gate === 'apihub' ? 'API Hub' : '개발자센터'}). `
+            + `"헬스장" 글 ${t != null ? t.toLocaleString('ko-KR') : '?'}편으로 셉니다.` };
     } else {
-      let why = ''; let code = '';
-      try { const j = JSON.parse(body); why = j.errorMessage || ''; code = j.errorCode || ''; } catch {}
+      const why = r.why || '', code = r.code || '';
       /* 네이버가 주는 사유는 영어다. 그대로 내보내면 사장님은 무엇을 고칠지 모르신다.
          무엇이 틀렸는지가 아니라 무엇을 하면 되는지로 바꿔 적는다.
 
          024 는 "값이 틀렸다"가 아니라 "그런 아이디가 없다"이다. 둘은 고치는 방법이
          다르다 - 앞엣것은 다시 복사하면 되고, 뒤엣것은 애초에 다른 종류의 키를
          넣은 것이다(클라우드 액세스키·검색광고 키를 넣으면 여기 걸린다). */
-      val = { ok: false, status: r.status, code, shape: idShape(k.id),
+      val = { ok: false, status: r.status, code, gate: r.gate, shape: idShape(k.id),
         note: code === '024' || /Not Exist Client ID/i.test(why)
               ? '네이버에 그런 아이디가 없습니다. 값이 틀린 게 아니라 다른 종류의 키일 수 있습니다 - '
                 + '검색광고 키나 클라우드 액세스키가 아니라, developers.naver.com 내 애플리케이션의 Client ID 여야 합니다.'
@@ -1522,9 +1569,9 @@ async function blogProbe() {
      그러니 우리가 바꿔서 한 번 눌러 본다. 되면 그게 답이다. */
   if (val && !val.ok && val.code === '024' && val.shape === 'looks-ok') {
     try {
-      const r2 = await fetch(`${NAVER_SEARCH_HOST}?query=${encodeURIComponent('헬스장')}&display=1`, {
-        headers: { 'X-Naver-Client-Id': k.sec, 'X-Naver-Client-Secret': k.id },
-      });
+      const sw = { id: k.sec, sec: k.id };
+      const g = SEARCH_GATES.find(x => x.name === (val.gate || 'apihub')) || SEARCH_GATES[0];
+      const r2 = await fetch(g.url('헬스장'), { headers: g.head(sw) });
       if (r2.ok) val = { ...val, swapped: true,
         note: '두 값이 서로 바뀌어 들어갔습니다. NAVER_CLIENT_ID 에 시크릿이, '
             + 'NAVER_CLIENT_SECRET 에 아이디가 들어 있습니다. 두 값을 맞바꿔 주세요.' };
@@ -1558,20 +1605,9 @@ async function blogCounts(list) {
   for (const kw of want) {
     const n = kwNorm(kw);
     if (cache.map[n] != null) continue;
-    try {
-      const r = await fetch(`${NAVER_SEARCH_HOST}?query=${encodeURIComponent(kw)}&display=1`, {
-        headers: { 'X-Naver-Client-Id': k.id, 'X-Naver-Client-Secret': k.sec },
-      });
-      const body = await r.text();
-      if (!r.ok) {
-        let msg = body.slice(0, 160);
-        try { msg = JSON.parse(body).errorMessage || msg; } catch {}
-        failed = { status: r.status, error: msg };
-        break;                       /* 키가 틀렸으면 나머지도 다 틀린다 */
-      }
-      const t = Number(JSON.parse(body).total);
-      cache.map[n] = isFinite(t) ? t : null;
-    } catch (e) { failed = { error: String(e.message || e) }; break; }
+    const r = await searchBlogTotal(kw);
+    if (!r.ok) { failed = { status: r.status, error: r.why || r.error || '거절되었습니다.' }; break; }
+    cache.map[n] = r.total;          /* 키가 틀렸으면 나머지도 다 틀리므로 첫 실패에서 멈춘다 */
     await sleep(120);                /* 몰아치지 않는다 */
   }
   blogSave(cache);

@@ -641,10 +641,22 @@ AI 답글만 열려 있어서 둘이 갈라져 있었습니다. 답글은 몇 �
 이걸 쓰면 **가짜 "빈자리"** 를 만들게 됩니다.
 
 진짜 값을 주는 곳은 네이버 검색 API 하나뿐인데, **2026년 현재
-`developers.naver.com` 에서는 신규 신청이 안 됩니다.** 네이버가
+`developers.naver.com` 에서는 검색 앱을 새로 못 만듭니다.** 네이버가
 [NAVER Cloud Platform API Hub](https://www.ncloud.com/product/applicationService/naverApiHub)
 로 옮겼습니다. 거기에는 **검색어 트렌드(시즌·추이)** 도 같이 있어서,
 한 번 신청하면 은코치에 지던 두 칸을 같이 채울 수 있습니다.
+
+**그래서 문이 두 개입니다. 둘 다 두드립니다.**
+
+| 키를 받은 곳 | 주소 | 헤더 |
+|---|---|---|
+| developers.naver.com (예전) | `openapi.naver.com` | `X-Naver-Client-Id` / `X-Naver-Client-Secret` |
+| API Hub (지금) | `naverapihub.apigw.ntruss.com/search/v1/blog` | `X-NCP-APIGW-API-KEY-ID` / `X-NCP-APIGW-API-KEY` |
+
+처음엔 **예전 문만** 두드리고 있었습니다. 그래서 API Hub 키를 넣으신 사장님께
+네이버 답을 그대로 옮겨 *"그런 아이디가 없습니다"* 라고 말했습니다.
+**키가 틀린 게 아니라 우리가 틀린 문을 두드린 것**이었습니다.
+지금은 열리는 쪽을 찾아 그쪽을 기억합니다 — 매번 두 번 두드리면 한도를 두 배로 태웁니다.
 
 그래서 이 기능은 **키가 들어오면 켜지는 상태로 두었습니다.** 키가 없으면
 블로그 칸 자체가 안 생기고 검색량·클릭률은 그대로 돕니다.
