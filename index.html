@@ -535,6 +535,17 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .cc i{font-style:normal;font-size:12px;color:var(--muted)}
 .cc u{text-decoration:none;font-size:11.5px;color:var(--accent)}
 .cc .copy{position:absolute;top:9px;right:10px}
+.ai-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;
+  padding-top:11px;border-top:1px dashed var(--line)}
+.ai-note{font-size:11.5px;color:var(--muted)}
+.ai-out{margin-top:10px}
+.ai-live{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
+.ai-h{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px 12px;
+  border-bottom:1px solid var(--line);font-size:12.5px;font-weight:700;background:var(--surface-2)}
+.ai-h .copy{margin-left:auto}
+.ai-live pre{margin:0;padding:12px 13px;white-space:pre-wrap;word-break:break-word;
+  font:inherit;font-size:13px;line-height:1.8}
+.ai-live .gs-note{padding:0 13px 11px;margin:0}
 /* 어떤 손님이 오시나 — 센 것과 그 근거를 나란히 */
 .gs-lead{background:var(--ok-bg);border:1px solid var(--ok-line);border-radius:10px;
   padding:12px 14px;margin:0 0 14px;font-size:13px;line-height:1.7}
@@ -4666,6 +4677,7 @@ function buildWriter(o){
   renderGuests();
   renderMenuNames(o);
   renderConcept(o);
+  try{ mountAiButtons(); }catch{}
 }
 
 function renderPersonaPicker(o){
@@ -8474,6 +8486,75 @@ document.addEventListener("click", async e=>{
 });
 
 /* 키가 있을 때만 버튼을 보여준다. 없는데 보여주면 눌러도 안 되는 버튼이 된다. */
+/* ── 도구마다 그 자리에서 AI 에게 시킨다 ─────────────────────────
+   지금까지는 "AI 지시문" 탭에 가서 종류를 고르고 복사해 오셔야 했다.
+   사장님 말씀이 맞다 - 소개글을 쓰다가 다른 탭으로 갔다가 돌아오는 건 일이다.
+   지시문이 있는 도구에는 그 칸 안에 버튼을 단다.
+
+   버튼은 둘이다. 키가 있으면 "AI에게 시키기"가 뜨고, 없어도 "지시문 복사"는
+   늘 보인다 - 그게 돈 안 드는 길이라 없애면 안 된다. */
+const AI_TOOLS = { intro:"소개글", kw:"대표키워드", news:"소식 글감", copy:"짧은 문구",
+                   guests:"손님 프로필", menu:"메뉴 이름", concept:"매장 컨셉" };
+
+function mountAiButtons(){
+  for(const [kind, label] of Object.entries(AI_TOOLS)){
+    const sec = document.querySelector(`.out[data-tool="${kind}"]`);
+    if(!sec || sec.querySelector(".ai-row")) continue;
+    const row = document.createElement("div");
+    row.className = "ai-row";
+    row.innerHTML = `
+      <button class="btn dark sm ai-go" type="button" data-ai="${kind}"
+              data-aionly style="display:none">✨ AI에게 시키기</button>
+      <button class="btn ghost sm ai-copy" type="button" data-ai="${kind}">지시문 복사</button>
+      <span class="ai-note" data-aionly style="display:none">
+        AI가 직접 씁니다. <b data-ailelft></b></span>`;
+    sec.appendChild(row);
+    const out = document.createElement("div");
+    out.className = "ai-out"; out.id = `ai-out-${kind}`; out.style.display = "none";
+    sec.appendChild(out);
+  }
+  try{ paintAiButtons(); }catch{}
+}
+
+/* 지시문만 복사 - 키가 없어도 되는 길. 이게 원래 "AI 지시문" 탭이 하던 일이다. */
+document.addEventListener("click", e=>{
+  const b = e.target.closest(".ai-copy"); if(!b) return;
+  const kind = b.dataset.ai;
+  const text = PROMPT_KIND[kind] ? PROMPT_KIND[kind](promptFacts(kind)) : "";
+  if(!text){ alert("먼저 진단을 한 번 돌려 주세요."); return; }
+  navigator.clipboard.writeText(text).then(()=>showToast("지시문을 복사했습니다"), ()=>{
+    const ta=document.createElement("textarea"); ta.value=text;
+    document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+    showToast("지시문을 복사했습니다");
+  });
+});
+
+/* 그 자리에서 AI 에게 시킨다 */
+document.addEventListener("click", async e=>{
+  const b = e.target.closest(".ai-go"); if(!b) return;
+  const kind = b.dataset.ai;
+  const prompt = PROMPT_KIND[kind] ? PROMPT_KIND[kind](promptFacts(kind)) : "";
+  if(!prompt){ alert("먼저 진단을 한 번 돌려 주세요."); return; }
+  const box = $(`ai-out-${kind}`); if(!box) return;
+  b.disabled = true; const was = b.textContent; b.textContent = "AI가 쓰는 중…";
+  box.style.display = "";
+  box.innerHTML = `<div class="ai-live"><div class="ai-h">AI가 쓰는 중…</div><pre id="ai-live-${kind}"></pre></div>`;
+  try{
+    const text = await callAIStream(prompt, "fast", t=>{
+      const el = $(`ai-live-${kind}`); if(el) el.textContent = t;
+    });
+    box.innerHTML = `<div class="ai-live"><div class="ai-h">AI가 쓴 글
+        <span data-ailelft></span>
+        <button class="btn sm ghost copy" data-copy="${escH(text)}">복사</button></div>
+      <pre>${escH(text)}</pre>
+      <p class="gs-note">그대로 믿지 마시고 한 번 읽어 보세요.
+        네이버에 없는 사실이 섞였는지는 사장님만 아십니다.</p></div>`;
+    try{ paintAiButtons(); }catch{}
+  }catch(err){
+    box.innerHTML = `<div class="srv-err"><b>AI 호출 실패</b><br>${escH(err.message)}</div>`;
+  }finally{ b.disabled = false; b.textContent = was; }
+});
+
 function paintAiButtons(){
   const on = Boolean(SERVER?.ai) || Boolean(sessionStorage.getItem("ak"));
   document.querySelectorAll("[data-aionly]").forEach(el=>{ el.style.display = on ? "" : "none"; });
