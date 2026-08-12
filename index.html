@@ -1251,6 +1251,9 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <section class="card" id="srv" style="display:none">
         <h2>🔗 도우미 서버 <span id="srv-badge" class="srv-badge">서버 연결됨</span></h2>
         <p class="desc">위 검색줄의 <b>수집</b>, 그리고 <b>순위 조회 · 상위 3곳 분석</b>이 이 서버를 씁니다.</p>
+        <!-- 넣으신 AI 키가 진짜로 도는지. "환경변수에 값이 있다"와 "그 키가 먹힌다"는
+             다른 얘기라, 서버가 실제로 한 번 눌러 본 결과를 그대로 적는다. -->
+        <div id="ai-key-row" style="display:none;margin-top:16px"></div>
         <div id="lan-row" style="display:none;margin-top:16px" class="lan">
           <b>📱 휴대폰에서도 이 기능을 쓰려면</b>
           <p>같은 와이파이에 연결한 뒤, 휴대폰 브라우저에 아래 주소를 입력하고 <b>북마크</b>해 두세요.
@@ -7724,6 +7727,7 @@ function apiUrl(pathAndQuery){
       그때는 쓰던 기기에서 한 번 열기만 하면 그 기기의 사본이 다시 올라갑니다.</span>`;
     if(SERVER.ai) $("srv-badge").textContent = "서버 연결됨 · AI 프록시 사용 가능";
     if(SERVER.aiStatus) paintAiLeft(SERVER.aiStatus);
+    paintAiKey(SERVER);
     try{ paintAiButtons(); }catch{}
     // 어느 판을 보고 있는지 화면에 남긴다. "안 바뀌었다"의 원인을 가리는 데 쓴다.
     if(SERVER.built) $("build").textContent = `화면 버전 ${SERVER.built} · 안 바뀌었으면 새로고침을 길게 눌러 캐시를 지우세요`;
@@ -8722,8 +8726,49 @@ document.addEventListener("click", async e=>{
   }finally{ b.disabled = false; b.textContent = was; }
 });
 
+/* 넣으신 키가 도는지 그대로 적는다.
+
+   여기서 "키가 있다"로 끝내면 오타 하나, 지운 키, 크레딧 0 이 전부 초록불로
+   보인다. 서버가 실제로 한 번 눌러 본 결과(aiLive)를 받아서, 안 되면 무엇을
+   고쳐야 하는지까지 적는다. 값은 서버가 안 보내므로 여기 올 일도 없다. */
+function paintAiKey(info){
+  const box = $("ai-key-row"); if(!box) return;
+  const live = info?.aiLive;
+  if(!info?.ai){                       /* 키를 아직 안 넣으셨다 */
+    box.style.display = "none"; return;
+  }
+  box.style.display = "block";
+  if(live == null){                    /* 옛 서버 - 눌러 본 적이 없다 */
+    box.innerHTML = `<div class="lan"><b>🔑 AI 키가 들어 있습니다</b>
+      <p>다만 이 서버는 아직 눌러 보지 않았습니다. 배포가 끝나면 여기에
+        실제로 도는지까지 표시됩니다.</p></div>`;
+    return;
+  }
+  if(live.ok){
+    box.innerHTML = `<div class="lan"><b>✅ AI 키가 잘 돕니다</b>
+      <p>${escH(live.note)} 도구마다 있는 <b>✨ AI에게 시키기</b> 버튼을 쓰실 수 있습니다.</p></div>`;
+    return;
+  }
+  /* 안 되는 이유를 그대로 적는다. "안 됩니다" 한 줄은 고칠 데를 안 알려준다. */
+  const where = live.kind === "shape"
+    ? `render.com → 이 서비스 → <b>Environment</b> → <code>ANTHROPIC_API_KEY</code> 값을 고치세요.`
+    : live.kind === "credit"
+      ? `<b>키는 맞습니다.</b> console.anthropic.com → Billing 에서 충전하세요.`
+      : live.kind === "network"
+        ? `키를 다시 넣지 마세요. 서버가 밖으로 못 나간 것이라 잠시 뒤 다시 보시면 됩니다.`
+        : `render.com → 이 서비스 → <b>Environment</b> 에서 키를 다시 넣고 저장하세요.`;
+  box.innerHTML = `<div class="srv-err"><b>⚠️ AI 키가 아직 안 돕니다</b>
+    <br>${escH(live.note)}
+    <div style="margin-top:8px">${where}</div>
+    <div style="margin-top:8px">그동안에도 <b>지시문 복사</b> 버튼은 그대로 쓰실 수 있습니다 —
+      복사해서 챗지피티 같은 곳에 붙여넣으시면 됩니다. 돈이 들지 않습니다.</div></div>`;
+}
+
 function paintAiButtons(){
-  const on = Boolean(SERVER?.ai) || Boolean(sessionStorage.getItem("ak"));
+  /* 안 도는 키에 "AI에게 시키기"를 띄우지 않는다. 눌러 봐야 실패만 한다.
+     서버가 눌러 본 적이 없으면(옛 서버) 예전처럼 있는지 없는지로 판단한다. */
+  const srvOn = SERVER?.aiLive ? SERVER.aiLive.ok : Boolean(SERVER?.ai);
+  const on = srvOn || Boolean(sessionStorage.getItem("ak"));
   document.querySelectorAll("[data-aionly]").forEach(el=>{ el.style.display = on ? "" : "none"; });
   if(on) refreshAiLeft();
 }

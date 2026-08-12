@@ -2120,11 +2120,93 @@ function aiStatus() {
            krw: Math.round((u.usd || 0) * USD_KRW) };
 }
 
+/* ── 키가 실제로 먹히는지 눌러 본다 ─────────────────────────────────
+   그동안 health 는 ai: true/false 만 내보냈다. 그건 "환경변수 칸에 글자가
+   들어 있다"는 뜻이지 "그 키가 먹힌다"는 뜻이 아니다. 오타 한 글자, 지운 키,
+   크레딧 0 - 셋 다 ai: true 로 보인다. 그러다 사장님이 버튼을 눌렀을 때에야
+   실패한다. 검색광고 쪽은 이미 이렇게 눌러 보고 있어서, AI 도 같이 맞춘다.
+
+   1토큰짜리로 부른다. 값이 거의 안 나가는데 401/400/429 는 그대로 구분된다.
+   응답에 키는 한 글자도 담지 않는다 - 됐는지와 왜 안 됐는지만 담는다.
+   하루 한도(AI_DAILY_CAP)는 깎지 않는다. 사장님이 시킨 일이 아니라 점검이다. */
+/* 붙여넣기 사고를 먼저 거른다.
+
+   폰에서 키를 복사해 넣으면 앞뒤에 줄바꿈이 붙거나, 한글 자판이 켜진 채로
+   한 글자가 섞이거나, 따옴표째 들어가거나, "ANTHROPIC_API_KEY=sk-..." 를
+   통째로 값 칸에 넣는 일이 생긴다. 이 중 무엇이든 fetch 가 헤더를 만들다
+   터지는데, 그 오류는 "연결 실패"처럼 생겼다. 그대로 두면 멀쩡한 망을 두고
+   네트워크를 의심하시게 된다. 부르기 전에 모양부터 보고 이름을 붙여 준다. */
+function aiKeyShape(raw) {
+  const k = String(raw);
+  if (/^\s|\s$/.test(k))       return '키 앞뒤에 공백이나 줄바꿈이 붙어 있습니다. 그것만 지우면 됩니다.';
+  if (/^["']|["']$/.test(k))   return '키가 따옴표로 감싸여 있습니다. 따옴표는 빼고 값만 넣으세요.';
+  if (/^ANTHROPIC_API_KEY\s*=/i.test(k))
+                               return '이름까지 통째로 들어갔습니다. 값 칸에는 sk-ant- 로 시작하는 부분만 넣으세요.';
+  if (/[^\x20-\x7E]/.test(k))  return '키에 영문·숫자가 아닌 글자가 섞여 있습니다. 한글 자판이 켜진 채로 복사됐을 수 있습니다.';
+  if (!/^sk-ant-/.test(k))     return '키가 sk-ant- 로 시작하지 않습니다. 다른 값을 넣으신 것 같습니다.';
+  return null;
+}
+
+let AI_PROBE = { at: 0, val: null };
+const AI_PROBE_TTL = Math.max(60, Number(process.env.AI_PROBE_TTL || 600)) * 1000;
+async function aiProbe() {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  if (AI_PROBE.val && Date.now() - AI_PROBE.at < AI_PROBE_TTL) return AI_PROBE.val;
+
+  /* 모양이 틀린 것은 부르지 않는다. 부르면 어차피 헤더에서 터지고,
+     그 오류 문구는 사장님이 고칠 데를 알려주지 못한다. */
+  const bad = aiKeyShape(process.env.ANTHROPIC_API_KEY);
+  if (bad) {
+    AI_PROBE = { at: Date.now(), val: { ok: false, status: 0, kind: 'shape', note: bad } };
+    return AI_PROBE.val;
+  }
+
+  let val;
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json',
+                 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: AI_TIERS.fast.model, max_tokens: 1,
+                             messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    const t = await r.text();
+    let etype = '', emsg = '';
+    try { const j = JSON.parse(t); etype = j?.error?.type || ''; emsg = j?.error?.message || ''; } catch {}
+    /* 크레딧 부족은 400 으로 오고 키 자체는 멀쩡하다. 401 과 같이 묶으면
+       "키를 다시 넣으세요"라는 엉뚱한 안내를 하게 된다. */
+    const credit = /credit balance|insufficient/i.test(emsg);
+    val = r.ok
+      ? { ok: true, model: AI_TIERS.fast.model,
+          note: 'Anthropic 이 받아 줍니다. AI 버튼을 쓸 수 있습니다.' }
+      : { ok: false, status: r.status, kind: credit ? 'credit' : etype || 'unknown',
+          note: credit  ? '키는 맞는데 크레딧이 0 입니다. console.anthropic.com 에서 충전하세요.'
+              : r.status === 401 ? '키가 틀렸거나 지워진 키입니다. 앞뒤 공백이 붙었는지도 보세요.'
+              : r.status === 403 ? '이 키로는 이 모델을 쓸 수 없습니다.'
+              : r.status === 404 ? `모델 이름을 못 찾습니다 (${AI_TIERS.fast.model}).`
+              : r.status === 429 ? 'Anthropic 쪽 호출 한도에 걸렸습니다. 잠시 뒤 다시 보세요.'
+              : r.status >= 500  ? 'Anthropic 서버 쪽 문제입니다. 키와는 무관합니다.'
+              : '알 수 없는 오류입니다.' };
+  } catch (e) {
+    /* 여기까지 오면 키 문제가 아니라 서버가 밖으로 못 나간 것이다.
+       그걸 "키가 틀렸다"로 적으면 멀쩡한 키를 계속 다시 넣게 된다. */
+    val = { ok: false, status: 0, kind: 'network',
+            note: `키 문제가 아니라 서버가 Anthropic 으로 나가지 못했습니다. ${e.message}` };
+  }
+  AI_PROBE = { at: Date.now(), val };
+  return val;
+}
+
 /* 한도·모델 판정은 한 군데서만 한다. 스트리밍이든 아니든 같은 잣대라야
    한쪽으로 한도를 우회할 수 없다. 클라이언트가 보낸 model / max_tokens 는 읽지 않는다. */
 function aiGuard(body) {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return { status: 503, message: 'AI 키가 설정되어 있지 않습니다. 무료 지시문 방식을 쓰세요.' };
+  /* 점검 화면과 버튼이 같은 말을 해야 한다. 한쪽만 "공백이 붙었다"고 하고
+     다른 쪽이 "연결 실패"라고 하면 어느 쪽이 맞는지 알 수 없다. */
+  const shape = aiKeyShape(key);
+  if (shape) return { status: 503, message: `AI 키 모양이 맞지 않습니다. ${shape}` };
   const tier = AI_TIERS[body?.tier] || AI_TIERS.fast;
   const prompt = String(body?.prompt ?? '').trim();
   if (!prompt) return { status: 400, message: '보낼 내용이 비어 있습니다.' };
@@ -2374,6 +2456,9 @@ const server = http.createServer(async (req, res) => {
         keySource: KEY_SOURCE,
         ai: Boolean(process.env.ANTHROPIC_API_KEY),
         aiStatus: aiStatus(),   // 오늘 몇 번 썼는지 - 화면에 보여준다
+        /* "키를 넣었다"와 "그 키가 먹힌다"는 다른 얘기다. 실제로 한 번 눌러 본
+           결과를 같이 싣는다. 값은 담지 않는다 - 됐는지와 왜 안 됐는지만. */
+        aiLive: await aiProbe(),
         /* 검색광고 키가 들어왔는지. 값은 절대 내보내지 않는다 - 있는지 없는지만.
            세 개가 다 있어야 쓸 수 있어서 하나씩 표시한다. 하나만 빠져도 안 돈다. */
         searchad: { ...searchAdStatus(), live: await searchAdProbe() },
