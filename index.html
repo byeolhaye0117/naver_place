@@ -647,6 +647,8 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .sec-h{margin:26px 0 12px;padding-left:12px;border-left:4px solid var(--accent)}
 .sec-h b{display:block;font-size:17px;font-weight:800;letter-spacing:-.02em}
 .sec-h span{display:block;font-size:13px;color:var(--muted);margin-top:3px}
+/* 설명 줄 안에서 강조한 말이 제목처럼 한 줄을 통째로 먹지 않게 한다 */
+.sec-h span b{display:inline;font-size:inherit;color:var(--ink)}
 
 /* 도구 카드 격자 — 어떤 도구가 있는지 한눈에, 누르면 그 칸으로 */
 .tools-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
@@ -661,6 +663,37 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .tcard.on b{color:var(--accent)}
 .tcard u{display:inline-block;text-decoration:none;font-size:11px;font-weight:700;margin-top:9px;
   color:var(--ok-fg);background:var(--ok-bg);border-radius:6px;padding:2px 8px}
+/* 만든 것을 스마트플레이스 어느 칸에 붙이는지 — 카드에서 바로 보여야 한다.
+   "리뷰답글, 소개글 말곤 어디서 쓰는지 모르겠어" 라는 말이 나온 자리다.
+   붙여넣을 칸이 없는 도구(재료)는 색을 죽여서 "여긴 붙이는 게 아니다"를 표시한다. */
+.tcard em{display:block;font-style:normal;font-size:11.5px;font-weight:700;margin-top:8px;
+  color:var(--accent);line-height:1.5;word-break:keep-all}
+.tcard em.mat{color:var(--muted);font-weight:600}
+/* 손댈 때 — 카드에도 한 줄로 적는다. 열두 개가 전부 똑같이 급해 보이면 안 된다. */
+.tcard span.cad{font-size:11.5px;font-weight:700;color:var(--ink);margin-top:7px}
+.tcard span.cad.now{color:var(--accent)}
+
+/* 언제 하나요 — 손댈 때가 같은 도구끼리 묶는다. 위에서 아래로 자주 → 드물게 */
+.whenband{display:flex;flex-direction:column;gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.wrow{background:var(--card);padding:13px 15px;display:grid;gap:3px 16px;
+  grid-template-columns:minmax(0,1fr) auto;align-items:center}
+.wrow>b{font-size:14px;font-weight:800;letter-spacing:-.02em}
+.wrow .wq{grid-column:1;font-size:12px;color:var(--muted);line-height:1.5}
+.wrow .wtools{grid-column:2;grid-row:1 / span 2;display:flex;flex-wrap:wrap;
+  gap:6px;justify-content:flex-end}
+.wrow .wtools i{font-style:normal;font-size:12px;font-weight:700;cursor:pointer;
+  white-space:nowrap;border:1px solid var(--line);border-radius:999px;
+  padding:5px 11px;background:var(--surface-2);transition:.12s}
+.wrow .wtools i:hover{border-color:var(--accent);color:var(--accent);
+  background:var(--accent-soft)}
+/* 오늘 할 일 한 줄만 강조한다. 다 강조하면 아무것도 강조가 아니다. */
+.wrow.hot{background:var(--accent-soft)}
+.wrow.hot>b{color:var(--accent)}
+@media(max-width:640px){
+  .wrow{grid-template-columns:minmax(0,1fr)}
+  .wrow .wtools{grid-column:1;grid-row:auto;justify-content:flex-start;margin-top:5px}
+}
 
 /* 출력 박스 */
 .out{margin-top:16px}
@@ -1341,30 +1374,103 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
     <button class="btn ghost" type="button" id="btn-godiag">🔍 진단으로 →</button>
   </div>
 
-  <div class="sec-h"><b>무엇을 채울까요</b>
-    <span>진단에서 알아낸 값으로 만듭니다. 누르면 그 칸으로 갑니다.</span></div>
+  <!-- 언제 하나 — "이 기능들을 어떨 때 쓰고 어떨 때 해야 하는지 모르겠다"는 말에 대한 답.
+       도구가 무엇을 하는지는 카드에 적혀 있었지만, 손댈 때가 언제인지는
+       도구를 열어야만 보였다. 그래서 열두 개가 전부 똑같이 급해 보였다.
+       실제로는 답글만 오늘 할 일이고 나머지는 대부분 한 번 해 두면 되는 것이다. -->
+  <div class="sec-h"><b>언제 하나요</b>
+    <span>손댈 때가 도구마다 다릅니다. <b>매일 할 일은 하나뿐입니다.</b> 눌러서 바로 가세요.</span></div>
+  <div class="whenband">
+    <div class="wrow hot"><b>새 리뷰가 달리면</b>
+      <span class="wq">하루 안에 · 별점 낮은 리뷰는 특히</span>
+      <span class="wtools"><i data-tcard="reply">💬 리뷰 답글</i></span></div>
+    <div class="wrow"><b>글을 네이버에 올리기 직전</b>
+      <span class="wq">붙여넣기 전 마지막 확인</span>
+      <span class="wtools"><i data-tcard="check">🧪 써 준 글 검사</i></span></div>
+    <div class="wrow"><b>한 달에 한 번</b>
+      <span class="wq">소식이 몇 달째 없으면 손님 눈에 닫힌 가게로 보입니다</span>
+      <span class="wtools"><i data-tcard="news">📢 소식 글감</i><i data-tcard="blog">✍️ 블로그 글</i></span></div>
+    <div class="wrow"><b>2주에 한 번</b>
+      <span class="wq">유입이 0인 칸만 바꿉니다</span>
+      <span class="wtools"><i data-tcard="kw">🔑 대표키워드 5개</i></span></div>
+    <div class="wrow"><b>쿠폰·광고 칸을 채울 때</b>
+      <span class="wq">칸마다 글자수 제한이 달라서 그때그때</span>
+      <span class="wtools"><i data-tcard="copy">✂️ 짧은 문구 모음</i></span></div>
+    <div class="wrow"><b>순위가 안 오를 때</b>
+      <span class="wq">글을 더 쓰기 전에 방향부터 봅니다</span>
+      <span class="wtools"><i data-tcard="kwfind">🎯 키워드 발굴</i><i data-tcard="fix">🧭 개선 계획</i></span></div>
+    <div class="wrow"><b>처음 한 번, 그다음은 반년에 한 번</b>
+      <span class="wq">한 번 잘 해 두면 계속 일합니다. 자주 고칠 필요 없습니다</span>
+      <span class="wtools"><i data-tcard="guests">👥 어떤 손님이 오시나</i><i data-tcard="concept">✨ 매장 컨셉</i><i data-tcard="intro">📝 소개글</i><i data-tcard="menu">🍽️ 메뉴 이름</i></span></div>
+  </div>
+
+  <div class="sec-h"><b>1단계 · 무엇을 쓸지 먼저 정합니다</b>
+    <span>여기 셋은 <b>네이버에 붙여넣는 칸이 없습니다.</b> 아래 2단계 도구들이 쓸 재료입니다.</span></div>
   <div class="tools-grid">
     <div class="tcard" data-tcard="kwfind"><i>🎯</i><b>키워드 발굴</b>
-      <span>무엇을 노릴지 정합니다</span><u>실제 내 순위</u></div>
-    <div class="tcard" data-tcard="intro"><i>📝</i><b>소개글</b>
-      <span>손님 불안을 지우는 8단 구성</span><u>리뷰 자동 인용</u></div>
-    <div class="tcard" data-tcard="kw"><i>🔑</i><b>대표키워드 5개</b>
-      <span>스마트플레이스 5칸을 채웁니다</span></div>
-    <div class="tcard" data-tcard="reply"><i>💬</i><b>리뷰 답글</b>
-      <span>실제 리뷰에 맞춘 답글</span><u>리뷰 자동 수집</u></div>
-    <div class="tcard" data-tcard="news"><i>📢</i><b>소식 글감</b>
-      <span>4주치 미리 잡아 둡니다</span></div>
-    <div class="tcard" data-tcard="copy"><i>✂️</i><b>짧은 문구 모음</b>
-      <span>쿠폰·톡톡·광고 문구</span><u>글자수 자동 판정</u></div>
-    <div class="tcard" data-tcard="menu"><i>🍽️</i><b>메뉴 이름 다시 짓기</b>
-      <span>네이버가 읽는 칸입니다</span><u>철 지난 것도 짚음</u></div>
-    <div class="tcard" data-tcard="concept"><i>✨</i><b>매장 컨셉 한 줄</b>
-      <span>손님 걱정에 대한 답으로</span><u>리뷰 근거</u></div>
+      <span>어느 검색어를 노릴지 정합니다</span>
+      <span class="cad">🕐 순위가 안 오를 때</span>
+      <em class="mat">정하면 아래 도구가 전부 그 검색어 기준으로 바뀝니다</em><u>실제 내 순위</u></div>
     <div class="tcard" data-tcard="guests"><i>👥</i><b>어떤 손님이 오시나</b>
-      <span>리뷰에서 세어 봅니다</span><u>지어내지 않음</u></div>
-    <div class="tcard" data-tcard="prompt"><i>🤖</i><b>AI 지시문</b>
-      <span>쓰시는 AI 채팅에 붙여넣기</span><u>API 키 불필요</u></div>
+      <span>리뷰에서 "왜 왔나"를 셉니다</span>
+      <span class="cad">🕐 처음 한 번 · 반년마다</span>
+      <em class="mat">누구에게 말할지 정합니다</em><u>지어내지 않음</u></div>
+    <div class="tcard" data-tcard="concept"><i>✨</i><b>매장 컨셉 한 줄</b>
+      <span>우리를 한마디로 뭐라 부를까</span>
+      <span class="cad">🕐 처음 한 번 · 반년마다</span>
+      <em class="mat">소개글 첫 줄과 광고 문구에 씁니다</em><u>리뷰 근거</u></div>
   </div>
+
+  <div class="sec-h"><b>2단계 · 네이버에 붙여넣을 것을 만듭니다</b>
+    <span>만든 글을 <b>스마트플레이스 어느 칸에</b> 넣는지 카드마다 적어 뒀습니다.</span></div>
+  <div class="tools-grid">
+    <div class="tcard" data-tcard="intro"><i>📝</i><b>소개글</b>
+      <span>손님 불안을 지우는 8단 구성</span>
+      <span class="cad">🕐 처음 한 번 · 반년마다</span>
+      <em>→ 업체정보 · 상세설명</em><u>리뷰 자동 인용</u></div>
+    <div class="tcard" data-tcard="kw"><i>🔑</i><b>대표키워드 5개</b>
+      <span>빈칸은 그냥 버리는 칸입니다</span>
+      <span class="cad">🕐 2주에 한 번 점검</span>
+      <em>→ 업체정보 · 대표키워드 5칸</em></div>
+    <div class="tcard" data-tcard="reply"><i>💬</i><b>리뷰 답글</b>
+      <span>실제 리뷰에 맞춘 답글</span>
+      <span class="cad now">🕐 새 리뷰가 달릴 때마다</span>
+      <em>→ 리뷰 · 답글</em><u>리뷰 자동 수집</u></div>
+    <div class="tcard" data-tcard="news"><i>📢</i><b>소식 글감</b>
+      <span>4주치 미리 잡아 둡니다</span>
+      <span class="cad">🕐 한 달에 한 번</span>
+      <em>→ 소식</em></div>
+    <div class="tcard" data-tcard="menu"><i>🍽️</i><b>메뉴 이름 다시 짓기</b>
+      <span>네이버가 이 이름을 읽습니다</span>
+      <span class="cad">🕐 처음 한 번 · 반년마다</span>
+      <em>→ 메뉴 · 이용권 이름</em><u>철 지난 것도 짚음</u></div>
+    <div class="tcard" data-tcard="copy"><i>✂️</i><b>짧은 문구 모음</b>
+      <span>칸마다 글자수 제한이 다릅니다</span>
+      <span class="cad">🕐 쿠폰·광고 칸 채울 때</span>
+      <em>→ 쿠폰명 · 톡톡 · 광고 문구</em><u>글자수 자동 판정</u></div>
+    <div class="tcard" data-tcard="blog"><i>✍️</i><b>블로그 글 1편</b>
+      <span>홍보글과 정보글 두 가지</span>
+      <span class="cad">🕐 한 달에 한 번</span>
+      <em>→ 네이버 블로그 (플레이스 밖)</em></div>
+  </div>
+
+  <div class="sec-h"><b>3단계 · 붙여넣기 전에 확인합니다</b>
+    <span>네이버에 올리기 전 마지막 관문입니다.</span></div>
+  <div class="tools-grid">
+    <div class="tcard" data-tcard="check"><i>🧪</i><b>써 준 글 검사</b>
+      <span>금지문자 · 글자수 · 8단 구성</span>
+      <span class="cad now">🕐 올리기 직전마다</span>
+      <em class="mat">어떤 AI로 쓰셨든 검사합니다</em><u>붙여넣기만</u></div>
+    <div class="tcard" data-tcard="fix"><i>🧭</i><b>개선 계획</b>
+      <span>진단에서 못 채운 것부터</span>
+      <span class="cad">🕐 순위가 안 오를 때</span>
+      <em class="mat">오늘 할 것과 몇 주 걸릴 것을 가릅니다</em></div>
+  </div>
+
+  <!-- 도구를 고르면 여기에 "이렇게 하면 좋아요"가 뜬다.
+       예전에는 이 안내가 #writer 안에 있어서 진단을 돌리기 전에는 아예 안 보였다.
+       무엇에 쓰는 도구인지 모르는 분이 제일 먼저 보셔야 할 글인데 그랬다. -->
+  <div class="howto" id="how-tool"></div>
 
   <!-- 키워드 발굴 — 무엇을 노릴지부터 정한다 -->
   <section class="card" id="kwfind" style="display:none">
@@ -1374,7 +1480,6 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <b>지금 우리가 이미 30위 안에 들어 있는 키워드</b>부터 1페이지로 올리는 편이 빠릅니다.
       아래는 지역과 업종을 조합해 후보를 만들고, <b>각각 우리가 몇 위인지 실제로 조회</b>합니다.
     </p>
-    <div class="howto" id="how-kwfind"></div>
     <div class="kwf-row">
       <label class="f"><span>지역 (쉼표로 여러 개)</span>
         <input id="kf-area" type="text" placeholder="예) 쌍용동, 봉명동"></label>
@@ -1397,7 +1502,6 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <h2><span class="ic">✍️</span> <span id="writer-title">복붙용 문장</span>
         <button class="btn sm ghost" type="button" id="btn-tools-back" style="margin-left:auto">← 도구 목록</button></h2>
       <p class="desc" id="writer-desc">목표 키워드가 자연스럽게 들어가도록 만들었습니다.</p>
-      <div class="howto" id="how-writer"></div>
 
       <div class="out" data-tool="intro"><h4>플레이스 소개글 <span class="cnt" id="c-intro"></span></h4>
         <p class="hint" style="margin:0 0 8px">
@@ -1494,31 +1598,26 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <div id="o-snip"></div>
       </div>
 
-      <!-- 키 없이 쓰는 AI — 지시문을 만들어 주고, 실행은 쓰시는 AI 채팅에서 -->
-      <div class="out" data-tool="prompt" id="ai-prompt">
-        <h4>🤖 AI에게 시킬 지시문 <span class="cnt">API 키 불필요</span></h4>
+      <!-- 블로그 글 — 플레이스 밖이지만 플레이스를 밀어 올린다.
+           홍보글과 정보글은 목적이 달라서 지시문도 따로 둔다. -->
+      <div class="out" data-tool="blog"><h4>블로그 글 1편 <span class="cnt">네이버 블로그에 올립니다</span></h4>
         <p class="hint" style="margin:0 0 8px">
-          진단으로 알아낸 값(업체명·지역·키워드·시설·부족한 항목·경쟁사 표현)을 전부 넣어
-          <b>그대로 붙여넣기만 하면 되는 지시문</b>을 만듭니다.
-          쓰시는 AI 채팅에 붙여넣으세요. <b>추가 비용이 들지 않습니다.</b>
-        </p>
-        <select id="ai-kind" class="f" style="width:100%;margin-bottom:8px">
-          <option value="intro">플레이스 소개글 (500자 이상)</option>
-          <option value="kw">대표키워드 5개</option>
-          <option value="reply">리뷰 답글 3종 (칭찬·보통·불만)</option>
-          <option value="news">소식·이벤트 글감 4주치</option>
-          <option value="copy">짧은 문구 모음 (쿠폰·톡톡·광고)</option>
-          <option value="blog">블로그 홍보글 1편</option>
-          <option value="info">블로그 정보글 1편 (지수 올리기용)</option>
-          <option value="guests">손님 프로필 (리뷰에서 센 것으로)</option>
-          <option value="menu">메뉴 이름 다시 짓기</option>
-          <option value="concept">매장 컨셉 한 줄</option>
-          <option value="fix">진단 결과로 개선 계획 짜기</option>
-        </select>
-        <div class="box" id="o-prompt"><button class="btn sm ghost copy" data-t="o-prompt">복사</button></div>
+          <b>홍보글</b>은 우리 가게를 소개하는 글, <b>정보글</b>은 운동 상식처럼 가게 얘기가 아닌 글입니다.
+          정보글을 섞어야 광고 블로그로 보이지 않습니다. 어느 쪽이든 글 안에
+          <b>플레이스 링크를 반드시 넣으세요</b> — 그게 없으면 블로그만 크고 가게는 그대로입니다.</p>
+      </div>
 
-        <!-- AI 가 써 준 글을 그대로 믿지 않는다. 붙여넣으면 우리 기준으로 검사한다.
-             어떤 AI 를 쓰셨든 상관없다 — 글자만 있으면 판정할 수 있다. -->
+      <!-- 개선 계획 — "그래서 뭐부터 하란 건가"에 답하는 자리 -->
+      <div class="out" data-tool="fix"><h4>개선 계획 <span class="cnt">진단 결과로 짭니다</span></h4>
+        <p class="hint" style="margin:0 0 8px">
+          진단에서 못 채운 항목을 <b>오늘 할 것 · 몇 주 걸릴 것 · 못 바꾸는 것</b>으로 갈라
+          순위에 미치는 영향이 큰 순서대로 정리합니다. 사장님이 못 하실 일(리뷰 구매 같은
+          제재 대상)은 계획에 넣지 않습니다.</p>
+      </div>
+
+      <!-- AI 가 써 준 글을 그대로 믿지 않는다. 붙여넣으면 우리 기준으로 검사한다.
+           어떤 AI 를 쓰셨든 상관없다 — 글자만 있으면 판정할 수 있다. -->
+      <div class="out" data-tool="check" id="ai-check-wrap">
         <div class="ai-check">
           <h4>AI가 써 준 글 검사 <span class="cnt">붙여넣기만 하면 됩니다</span></h4>
           <p class="hint" style="margin:0 0 8px">
@@ -1535,7 +1634,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         </div>
       </div>
 
-      <div class="note" data-tool="intro kw reply news copy prompt">
+      <div class="note" data-tool="intro kw reply news copy blog">
         <b>주의 —</b> 업체명에 키워드를 욱여넣거나 리뷰·저장수를 구매하는 건 제재 대상입니다.
         위 문장에 <b>실제로 없는 시설이 적혀 있으면 반드시 지우세요.</b> 방문 후기에서 바로 드러나고 그게 더 큰 손해입니다.
       </div>
@@ -2165,7 +2264,6 @@ $("btn-run").addEventListener("click", ()=>{
     : `<div class="all-good">22개 항목 전부 통과했습니다. 이 상태를 유지하면서 리뷰와 소식만 꾸준히 관리하세요.</div>`;
 
   buildWriter(o);
-  renderPrompt();
   try{ showTool(TOOL); }catch{}
   renderWorklog();
   $("result").style.display = "block";
@@ -4334,7 +4432,7 @@ function makePastedReply(){
     ${unknown ? `<div class="rp-unknown">
       <b>이 리뷰는 저희가 아는 주제에 안 걸렸습니다.</b>
       아래 답글은 무난하지만 <b>이 리뷰에 대한 답은 아닙니다.</b> 이런 리뷰는 AI에게 맡기세요.
-      <button class="btn sm" type="button" id="rp-toai">이 리뷰로 AI 지시문 만들기</button>
+      <button class="btn sm" type="button" id="rp-toai">이 리뷰를 AI에게 넘기기 ↓</button>
     </div>` : ""}
     ${thinFactNote([made.text])}
     <div class="rp-one"><p>${escH(made.text)}</p>
@@ -4356,7 +4454,7 @@ function makePastedReply(){
       바로 쓰긴 좋지만 사람이 쓴 맛은 덜합니다. 아래를 누르면 <b>이 리뷰와 우리 가게 정보,
       길이·키워드·끝인사 조건까지 담은 지시문</b>을 만들어 드립니다.
       쓰시는 AI 채팅에 붙여넣으세요. <b>돈은 들지 않습니다.</b>
-      <button class="btn sm ghost" type="button" id="rp-toai2">이 리뷰로 AI 지시문 만들기</button>
+      <button class="btn sm ghost" type="button" id="rp-toai2">이 리뷰를 AI에게 넘기기 ↓</button>
     </div>
   </div>`;
 }
@@ -4368,14 +4466,15 @@ document.addEventListener("click", e => {
   try{ makePastedReply(); }catch{}
 });
 
-/* 못 알아들은 리뷰는 AI 지시문 도구로 넘긴다 */
+/* 못 알아들은 리뷰는 답글 도구 안의 AI 버튼으로 넘긴다.
+   예전에는 "AI 지시문" 이라는 딴 탭으로 보냈는데, 답글을 쓰다가 다른 칸으로
+   튕겨 나가는 셈이라 돌아오기가 번거로웠다. 이제 그 자리에 버튼이 있다. */
 document.addEventListener("click", e=>{
   if(!e.target.closest("#rp-toai") && !e.target.closest("#rp-toai2")) return;
-  showTool("prompt");
-  const sel = $("ai-kind"); if(sel){ sel.value = "reply"; }
-  try{ renderPrompt(); }catch{}
-  requestAnimationFrame(()=> $("ai-prompt")?.scrollIntoView({ behavior:"smooth", block:"start" }));
-  showToast("리뷰 본문을 담아 지시문을 만들었습니다");
+  showTool("reply");
+  const row = document.querySelector('.ai-row[data-kind="reply"]');
+  requestAnimationFrame(()=> row?.scrollIntoView({ behavior:"smooth", block:"center" }));
+  showToast("아래 AI 버튼이 리뷰 본문을 담아 갑니다");
 });
 
 /* 소식 글감 - 견본 네 줄을 주는 게 아니라, 수집한 재료로 채운다.
@@ -4809,7 +4908,9 @@ const TOOL_META = {
   menu:  { t:"메뉴 이름 다시 짓기", d:"메뉴 이름은 네이버가 읽는 칸입니다. 지역이 든 이름이 몇 개인지 세고, 철 지난 이름을 짚습니다." },
   concept:{ t:"매장 컨셉 한 줄",   d:"자랑이 아니라 손님 걱정에 대한 답으로 만듭니다. 리뷰에서 센 걱정과 실제 메뉴만 씁니다." },
   guests:{ t:"어떤 손님이 오시나", d:"수집한 리뷰에서 셉니다. 손님이 실제로 쓴 문장만 근거로 씁니다 - 짐작해서 적지 않습니다." },
-  prompt:{ t:"AI 지시문",       d:"진단으로 알아낸 값을 전부 담아, 쓰시는 AI 채팅에 붙여넣을 지시문을 만듭니다." },
+  blog:  { t:"블로그 글 1편",    d:"홍보글과 정보글 두 가지. 네이버 블로그에 올리는 글이라 플레이스 밖이지만, 플레이스를 밀어 올립니다." },
+  fix:   { t:"개선 계획",       d:"진단에서 못 채운 항목을 오늘 할 것·몇 주 걸릴 것·못 바꾸는 것으로 갈라 순서를 잡습니다." },
+  check: { t:"써 준 글 검사",    d:"어떤 AI로 쓰셨든 상관없습니다. 붙여넣으면 금지문자·글자수·구성을 우리 기준으로 판정합니다." },
 };
 const TOOL_KEY = "np_tool_v1";
 let TOOL = null;
@@ -4880,25 +4981,74 @@ const TOOL_HOW = {
     ],
     care: "쿠폰과 체험은 사장님이 <b>새로 거실 혜택</b>이라 제안으로 드립니다. <b>실제로 하실 것만 고르세요.</b> 안 지킬 혜택을 걸면 그 자리에서 신뢰를 잃습니다.",
   },
-  prompt: {
-    when: "챗지피티나 클로드 같은 AI 채팅을 이미 쓰고 계실 때. <b>돈이 들지 않습니다.</b>",
+  menu: {
+    when: "메뉴(이용권) 이름이 <b>'헬스 1개월', '3개월권'</b>처럼 지역 없이 적혀 있을 때.",
     steps: [
-      "무엇을 만들지 <b>종류</b>를 고르세요. 소개글, 대표키워드, 리뷰 답글, 소식, 짧은 문구, 블로그 글, 개선 계획 8가지입니다.",
-      "<b>복사</b>를 누르고 쓰시는 AI 채팅에 그대로 붙여넣으세요. 우리 가게 정보가 전부 들어 있습니다.",
-      "AI가 써 준 글을 <b>아래 검사 칸에 붙여넣고 검사하기</b>를 누르세요.",
-      "통과하면 네이버에 붙여넣고, 금지문자가 걸리면 <b>금지문자만 고쳐서 복사</b>를 누르세요.",
+      "<b>지역이 든 이름이 몇 개인지</b> 먼저 보세요. 0개면 이 칸을 통째로 놀리고 있는 것입니다.",
+      "제안된 이름을 보고, 바꿀 것만 고르세요. <b>전부 바꾸지 마세요</b> - 다섯 개 중 두세 개면 충분합니다.",
+      "<b>철 지난 이름</b>으로 표시된 것이 있으면 그것부터 지우세요. 지난달 이벤트가 걸려 있으면 손님이 닫힌 가게로 봅니다.",
+      "<b>스마트플레이스 - 메뉴</b>에서 이름을 고쳐 저장하세요. 가격은 건드리지 않아도 됩니다.",
     ],
-    care: "AI가 썼다고 네이버 점수를 더 받지는 않습니다. 네이버는 누가 썼는지 모릅니다. AI가 나은 건 <b>문장이 자연스럽다</b>는 것 하나입니다. 그리고 <b>AI는 없는 시설을 지어냅니다</b> - 반드시 검사하고 눈으로 한 번 읽으세요.",
+    care: "메뉴 이름은 네이버가 읽는 칸이지만 <b>손님도 읽는 칸</b>입니다. 키워드를 욱여넣어 '쌍용동헬스장PT다이어트1개월' 같은 이름을 만들면 검색에도 안 좋고 손님도 안 누릅니다. 지역 하나만 자연스럽게 넣으세요.",
+  },
+  concept: {
+    when: "소개글이나 광고 문구를 쓰기 전에. <b>여기서 정한 한 줄이 그 글들의 첫 문장이 됩니다.</b>",
+    steps: [
+      "제안된 한 줄과 <b>그 아래 근거</b>를 읽으세요. 리뷰에서 센 걱정과 실제 등록된 메뉴만 씁니다.",
+      "우리 가게와 맞는 것 하나를 고르세요. <b>여러 개 고르지 마세요</b> - 한 줄로 설명이 안 되면 손님도 기억하지 못합니다.",
+      "고른 한 줄을 <b>소개글</b>과 <b>짧은 문구</b> 도구로 가져가세요. 그 글들의 첫 문장으로 씁니다.",
+    ],
+    care: "여기는 <b>네이버에 붙여넣는 칸이 아닙니다.</b> 자랑('최신 시설, 최고의 트레이너')이 아니라 <b>손님 걱정에 대한 답</b>으로 만듭니다. 걱정이 리뷰에 안 나온 것은 지어내지 않으므로, 제안이 적게 나오면 그만큼 근거가 없다는 뜻입니다.",
+  },
+  guests: {
+    when: "소개글이나 답글을 쓰기 전에. <b>누구에게 말하는 글인지</b>부터 정해야 문장이 안 흔들립니다.",
+    steps: [
+      "손님 종류별 카드를 읽으세요. 각 카드 아래 <b>실제 리뷰 문장</b>이 근거로 붙어 있습니다.",
+      "제일 많은 종류 <b>한둘</b>을 정하세요. 그게 소개글 첫 줄을 걸 손님입니다.",
+      "<b>소개글</b> 도구로 가면 그 손님이 이미 골라져 있습니다. 답글 쓰실 때도 이 사람들을 떠올리세요.",
+    ],
+    care: "여기는 <b>네이버에 붙여넣는 칸이 아닙니다.</b> 숫자가 작게 나와도 지어내지 않은 것이니 그대로 믿으셔도 됩니다. 리뷰에 안 쓰인 손님은 세지 않습니다 - 실제로는 오시는데 리뷰를 안 남기신 분들이 있습니다.",
+  },
+  blog: {
+    when: "플레이스만으로 안 될 때. <b>한 달에 두세 편</b>이면 충분합니다.",
+    steps: [
+      "<b>홍보글</b>과 <b>정보글</b> 중 고르세요. 번갈아 쓰시는 게 좋습니다.",
+      "받은 글을 블로그에 올리고, <b>본문 안에 플레이스 링크</b>를 반드시 넣으세요.",
+      "사진을 5장 이상 넣으세요. 글만 있는 포스팅은 오래 안 읽힙니다.",
+      "제목에 <b>목표 키워드</b>가 들어갔는지 확인하세요.",
+    ],
+    care: "홍보글만 계속 올리면 광고 블로그로 보여서 오히려 손해입니다. <b>정보글을 섞으세요.</b> 그리고 링크 없는 블로그 글은 블로그만 키우고 가게는 그대로 둡니다 - 링크가 이 도구의 전부입니다.",
+  },
+  fix: {
+    when: "진단을 돌린 뒤, <b>못 채운 항목이 여러 개 나왔을 때.</b> 무엇부터 할지 모르겠을 때 쓰세요.",
+    steps: [
+      "<b>오늘 할 것</b>부터 보세요. 사진 올리기, 대표키워드 채우기처럼 30분이면 끝나는 것들입니다.",
+      "그것부터 다 하고 나서 <b>몇 주 걸릴 것</b>으로 넘어가세요.",
+      "<b>못 바꾸는 것</b>은 읽고 잊으세요. 위치나 개업일처럼 손댈 수 없는 항목입니다.",
+    ],
+    care: "여기는 <b>네이버에 붙여넣는 칸이 아닙니다.</b> 계획서를 읽고 사장님이 직접 하시는 일입니다. 계획에 <b>리뷰 구매 같은 제재 대상은 넣지 않습니다</b> - 넣어 달라고 하셔도 넣지 않습니다.",
+  },
+  check: {
+    when: "AI가 써 준 글을 네이버에 붙여넣기 <b>직전에.</b> 어떤 AI로 쓰셨든 상관없습니다.",
+    steps: [
+      "AI가 써 준 글을 칸에 <b>통째로 붙여넣고</b> 검사하기를 누르세요.",
+      "8단 구성이 다 들어갔는지, 금지문자가 섞였는지, 글자수가 맞는지 판정해 드립니다.",
+      "금지문자가 걸리면 <b>금지문자만 고쳐서 복사</b>를 누르세요. 문장은 그대로 두고 그 글자만 바꿉니다.",
+      "통과하면 네이버 해당 칸에 붙여넣으세요.",
+    ],
+    care: "검사를 통과해도 <b>내용이 사실인지는 판정하지 못합니다.</b> AI는 없는 시설을 지어냅니다 - 샤워실, 주차장, 트레이너 수 같은 건 <b>사장님이 눈으로 한 번 읽으셔야</b> 합니다. 검사는 형식만 봅니다.",
   },
 };
 
+/* 안내는 도구 목록 바로 아래 한 자리에서만 뜬다.
+   예전에는 #writer 안에 있어서 진단을 돌리기 전에는 아예 안 보였다 - 정작
+   "이 도구가 뭐 하는 건지 모르겠다"는 분이 제일 먼저 보셔야 할 글인데 그랬다. */
 function renderHow(name){
   const h = TOOL_HOW[name];
-  const boxes = [$("how-kwfind"), $("how-writer")];
-  boxes.forEach(b => { if(b){ b.innerHTML = ""; b.style.display = "none"; } });
-  if(!h) return;
-  const box = (name === "kwfind") ? $("how-kwfind") : $("how-writer");
+  const box = $("how-tool");
   if(!box) return;
+  box.innerHTML = ""; box.style.display = "none";
+  if(!h) return;
   box.style.display = "";
   box.innerHTML = `<h5>💡 이렇게 하면 좋아요</h5>
     <p class="when">${h.when}</p>
@@ -4920,7 +5070,15 @@ function showTool(name){
   const isText = Boolean(TOOL) && TOOL !== "kwfind";
   if(wr){
     const ran = wr.dataset.ready === "1";
-    wr.style.display = (isText && ran) ? "block" : "none";
+    /* 글 검사는 우리 가게 정보가 없어도 된다 - 붙여넣은 글자만 보면 되는 일이다.
+       다른 도구와 똑같이 "먼저 진단하세요"로 막아 두면, 정작 남이 써 준 글을
+       확인하러 오신 분이 아무것도 못 하고 돌아간다. */
+    const free = TOOL === "check";
+    wr.style.display = (isText && (ran || free)) ? "block" : "none";
+    /* 한 화면에서 두 말을 하지 않는다 - 검사 칸을 열어 두고 그 위에
+       "먼저 진단을 돌려주세요"를 같이 띄우면 어느 쪽이 맞는 말인지 알 수 없다. */
+    const nd = $("need-diag");
+    if(nd && !ran) nd.style.display = free ? "none" : "";
     document.querySelectorAll("#writer [data-tool]").forEach(el=>{
       el.style.display = el.dataset.tool.split(" ").includes(TOOL) ? "" : "none";
     });
@@ -6534,12 +6692,9 @@ ${f}
 - 제가 못 하는 것을 시키지 마세요 (리뷰 구매 같은 제재 대상 포함)`,
 };
 
-function renderPrompt(){
-  const kind = $("ai-kind")?.value || "intro";
-  const build = PROMPT_KIND[kind]; if(!build) return;
-  setBox("o-prompt", build(promptFacts(kind)));
-}
-$("ai-kind")?.addEventListener("change", renderPrompt);
+/* 지시문을 미리 만들어 칸에 담아 두던 renderPrompt 는 없앴다.
+   이제 도구마다 붙은 버튼을 누르는 그 순간 promptFacts 로 만든다 -
+   재료가 바뀌었는데 미리 만들어 둔 옛 지시문이 남아 있는 일이 없어진다. */
 
 /* 복사 */
 /* 결과 안에서 체크하면 3단계 체크박스와 같이 움직인다.
@@ -7265,7 +7420,7 @@ async function pullBlog(url, out){
     || (String(x).length < body.length && body.includes(String(x).slice(0, 40)));
   window.__place.material.blogs = [body, ...list.filter(x => !dup(x))].slice(0, 5);
   save();
-  try{ if($("writer")?.dataset.ready === "1"){ buildWriter(getInfo()); renderPrompt(); } }catch{}
+  try{ if($("writer")?.dataset.ready === "1"){ buildWriter(getInfo()); } }catch{}
   return r;
 }
 
@@ -7324,7 +7479,7 @@ document.addEventListener("input", e=>{
   if(e.target.id === "i-facts") paintFactsN();
   if(WRITER_INPUTS.includes(e.target.id) && $("writer")?.dataset.ready === "1"){
     clearTimeout(reWriteTimer);
-    reWriteTimer = setTimeout(()=>{ try{ buildWriter(getInfo()); renderPrompt(); }catch{} }, 500);
+    reWriteTimer = setTimeout(()=>{ try{ buildWriter(getInfo()); }catch{} }, 500);
   }
 });
 document.addEventListener("change", e=>{ if(e.target.closest("main")) save(); });
@@ -8203,7 +8358,6 @@ $("s-comp")?.addEventListener("click", async ()=>{
     if(!r.ok){ $("s-out").innerHTML = srvError(`"${kw}" 상위권 분석 실패 (${r.stage} 단계)`, r); return; }
     window.__lastComp = r;   // 지시문 만들 때 경쟁사 결과를 재료로 쓴다
     applyCalibration(r);     // 추정 기준을 이 키워드의 실측 진입선으로 바꾼다
-    renderPrompt();
     /* 진입선이 바뀌면 "몇 장 부족"도 같이 바뀐다. 위 숫자 칸을 다시 그린다. */
     try{ if($("topline").style.display !== "none") renderStats(getInfo()); }catch{}
 
@@ -8493,19 +8647,32 @@ document.addEventListener("click", async e=>{
 
    버튼은 둘이다. 키가 있으면 "AI에게 시키기"가 뜨고, 없어도 "지시문 복사"는
    늘 보인다 - 그게 돈 안 드는 길이라 없애면 안 된다. */
-const AI_TOOLS = { intro:"소개글", kw:"대표키워드", news:"소식 글감", copy:"짧은 문구",
-                   guests:"손님 프로필", menu:"메뉴 이름", concept:"매장 컨셉" };
+/* host - 한 칸에 두 종류가 사는 경우가 있다. 블로그는 홍보글과 정보글을 따로 시켜야
+   해서 버튼이 두 벌 뜬다. 그래서 "어느 칸에 붙일지"를 종류와 따로 적는다. */
+const AI_TOOLS = {
+  intro:  { l:"소개글" },
+  kw:     { l:"대표키워드" },
+  reply:  { l:"리뷰 답글" },
+  news:   { l:"소식 글감" },
+  copy:   { l:"짧은 문구" },
+  guests: { l:"손님 프로필" },
+  menu:   { l:"메뉴 이름" },
+  concept:{ l:"매장 컨셉" },
+  fix:    { l:"개선 계획" },
+  blog:   { l:"블로그 홍보글", host:"blog", go:"✨ 홍보글 써 주세요", cp:"홍보글 지시문 복사" },
+  info:   { l:"블로그 정보글", host:"blog", go:"✨ 정보글 써 주세요", cp:"정보글 지시문 복사" },
+};
 
 function mountAiButtons(){
-  for(const [kind, label] of Object.entries(AI_TOOLS)){
-    const sec = document.querySelector(`.out[data-tool="${kind}"]`);
-    if(!sec || sec.querySelector(".ai-row")) continue;
+  for(const [kind, t] of Object.entries(AI_TOOLS)){
+    const sec = document.querySelector(`.out[data-tool="${t.host || kind}"]`);
+    if(!sec || sec.querySelector(`.ai-row[data-kind="${kind}"]`)) continue;
     const row = document.createElement("div");
-    row.className = "ai-row";
+    row.className = "ai-row"; row.dataset.kind = kind;
     row.innerHTML = `
       <button class="btn dark sm ai-go" type="button" data-ai="${kind}"
-              data-aionly style="display:none">✨ AI에게 시키기</button>
-      <button class="btn ghost sm ai-copy" type="button" data-ai="${kind}">지시문 복사</button>
+              data-aionly style="display:none">${t.go || "✨ AI에게 시키기"}</button>
+      <button class="btn ghost sm ai-copy" type="button" data-ai="${kind}">${t.cp || "지시문 복사"}</button>
       <span class="ai-note" data-aionly style="display:none">
         AI가 직접 씁니다. <b data-ailelft></b></span>`;
     sec.appendChild(row);
