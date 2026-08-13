@@ -273,104 +273,203 @@ function suggestTone(star) {
 }
 
 /**
+ * 답글 길이 — 문장 수와 글자 수를 같이 준다
+ *
+ * "4~5문장"만 적으면 AI 가 짧은 문장으로 개수만 채운다. 실제로 그랬다.
+ * 줄 수와 글자 수를 같이 주면 문장이 알아서 길어진다.
+ */
+const LEN_TEXT = {
+  짧게: '3~4줄 (공백 포함 150~230자)', short: '3~4줄 (공백 포함 150~230자)',
+  중간: '4~6줄 (공백 포함 250~350자)', medium: '4~6줄 (공백 포함 250~350자)',
+  길게: '6~8줄 (공백 포함 380~480자)', long: '6~8줄 (공백 포함 380~480자)',
+};
+
+/* 성별 단서가 없으면 여성전용을 재료 목록에서 아예 뺀다.
+   규칙으로 두 번 적었는데 AI 가 두 번 다 넘겼다. 안 보이는 것은 쓸 수 없다. */
+function pickFacts(facts, review) {
+  const clue = /여성|여자|아내|딸|엄마|와이프|남편이|여성분/.test(String(review || ''));
+  return (Array.isArray(facts) ? facts : [])
+    .map(x => String(x || '').trim()).filter(Boolean)
+    .filter(x => clue || !/여성|우먼/.test(x));
+}
+
+/**
+ * 가게가 어떤 곳인지 적은 머리글
+ *
+ * 화면(index.html)은 이미 훨씬 자세한 것을 만들어 두고 head 로 넘긴다.
+ * 대시보드처럼 그게 없는 쪽을 위해 최소한만 여기서 만든다.
+ */
+function factsHead(o) {
+  const kw = Array.isArray(o.keywords)
+    ? o.keywords.map(String).filter(Boolean)
+    : String(o.keywords || '').split(/[,\n]/).map(x => x.trim()).filter(Boolean);
+  const near = (Array.isArray(o.landmarks) ? o.landmarks : []).map(String).filter(Boolean);
+  const L = [];
+  L.push(`- 업체명: ${String(o.name || '').trim() || '(모름)'}`);
+  L.push(`- 지역: ${String(o.area || '').trim() || '(모름)'}`);
+  L.push(`- 업종: ${String(o.type || '').trim() || '헬스장'}`);
+  L.push(`- 목표 키워드: ${kw.join(', ') || '(없음)'}`);
+  if (near.length) L.push(`- 근처: ${near.join(', ')}`);
+  return L.join('\n');
+}
+
+/**
  * 리뷰 하나에 맞춘 답글 지시문
+ *
+ * ── 지시문을 줄였다 ──────────────────────────────────────────────
+ * 예전 지시문은 9,600자였다. 사장님이 마음에 안 든다고 하실 때마다 규칙을
+ * 하나씩 더 넣은 결과다. 스무 번쯤 그렇게 했다.
+ * 비교해 본 은코치 지시문은 500자였고, 사장님은 그쪽 문장을 더 좋아하셨다.
+ *
+ * 규칙이 쌓일수록 AI 는 규칙을 지키는 데 힘을 쓰고 문장은 뻣뻣해진다.
+ * 그래서 설명을 버리고 실물을 놓는다 - 사장님이 마음에 들어 하신 답글 세 편이다.
+ * 규칙으로 남긴 것은 사장님이 직접 걸고 넘어지신 것, 그리고 잘못 나가면
+ * 사장님이 실제로 감당하셔야 하는 것(없는 행사·가격, 못 지킬 약속)뿐이다.
+ *
+ * 이 글은 오래 index.html 안에만 있었다. 대시보드가 같은 답글을 쓰려고
+ * 따로 지시문을 만들었더니 인사말도 이모지도 달라졌다 — 사장님이 바로
+ * 알아보셨다. 그래서 원본을 여기로 옮겼다. 이제 여기가 하나뿐인 자리다.
  *
  * facts 는 "실제로 확인된 것"만 넣는다. 비면 비었다고 말한다 —
  * 지어내는 것보다 낫다.
  */
 function buildReplyPrompt(input) {
   const o = input || {};
-  const name = String(o.name || '').trim();
   const review = String(o.review || '').trim();
-  const star = Number(o.star) || 0;
-  const tone = TONE_RULE[o.tone] ? o.tone : suggestTone(star);
-  const lenRule = LENGTH_RULE[o.length] || LENGTH_RULE.중간;
-  const keywords = (Array.isArray(o.keywords) ? o.keywords : []).map(String).filter(Boolean);
-  const facts = (Array.isArray(o.facts) ? o.facts : []).map(String).filter(Boolean);
-  const near = (Array.isArray(o.landmarks) ? o.landmarks : []).map(String).filter(Boolean);
-  const closing = String(o.closing || '').trim();
-  const bad = star > 0 && star <= 2;
+  const star = Number(o.star) || 5;
+  const LEN = LEN_TEXT[o.length] || LEN_TEXT.중간;
+  const kwArr = Array.isArray(o.keywords) ? o.keywords.map(String).filter(Boolean) : [];
+  const kw = kwArr.length ? kwArr.join(', ') : String(o.keywords || '').trim();
+  const cl = String(o.closing || '').trim();
+  const f = String(o.head || '').trim() || factsHead(o);
+  const F = pickFacts(o.facts, review);
 
-  const L = [];
-  L.push(`네이버 플레이스에 달린 리뷰에 사장님을 대신해 답글을 씁니다.`);
-  if (name) L.push(`가게 이름은 「${name}」입니다.`);
-  L.push('');
+  /* 1~2점은 사과하는 자리다. 견본도 모양도 홍보도 전부 걷어낸다.
+     사과할 자리에 광고를 넣으면 그것부터 다음 손님 눈에 들어온다. */
+  if (star <= 2) return `네이버 플레이스에 달린 아래 불만 리뷰에 사장님이 달 답글을 써 주세요.
 
-  /* 말투 → 문장의 결 → 견본. 설명보다 실물이 먼저다.
-     규칙을 앞에 쌓으면 AI 가 규칙 지키는 데 힘을 써서 문장이 뻣뻣해진다. */
-  const t = toneBlock('답글');
-  if (t) { L.push(t); L.push(''); }
-  L.push(LIVELY);
-  L.push('');
-  const mb = modelBlock();
-  if (mb) { L.push(mb); L.push(''); }
+${f}
 
-  /* 불만 리뷰에는 견본이 안 통한다. 견본은 전부 칭찬 리뷰에 단 것이다 */
-  if (bad) {
-    L.push('[이번 리뷰는 불만입니다 - 위 견본을 따르지 마세요]');
-    L.push('문단도 이모지도 홍보도 없이, 사과와 조치만 적습니다.');
-    L.push('첫머리에 사과를 놓고, 무엇이 불편하셨는지 손님이 쓴 말로 짚고,');
-    L.push('무엇을 어떻게 하겠다고 구체적으로 적고, 직접 연락할 길을 엽니다.');
-    L.push('검색어를 심지 않습니다. 사과 자리에 광고가 있으면 읽는 사람이 먼저 압니다.');
-    L.push('');
-  }
+[리뷰] (별점 ${star}개)
+${review}
 
-  L.push(facts.length
-    ? `[확인된 사실 - 여기 있는 것만 쓰세요]\n- ${facts.join('\n- ')}`
-    : '[확인된 사실] 아직 하나도 없습니다. 시설·프로그램·혜택을 한 마디도 꺼내지 말고 '
-      + '손님이 쓴 말에만 답하세요. 없는 것을 지어내느니 짧게 쓰는 편이 낫습니다.');
-  if (near.length) L.push(`[근처] ${near.join(', ')}`);
-  L.push('');
+[이 답글에서 제일 중요한 것]
+이 답글은 화가 나신 그분보다, 나중에 이걸 읽는 다음 손님이 훨씬 많이 봅니다.
+그 사람이 "문제가 생겨도 이 사장님은 제대로 대응하는구나"라고 느끼면 성공입니다.
 
-  L.push('[꼭 지킬 것]');
-  L.push('- 위 [확인된 사실]에 없는 시설·행사·할인·기간·상품을 만들어내지 마세요.');
-  L.push('  방문 첫날 들통나고 그게 다시 리뷰로 남습니다.');
-  L.push('- 앞날을 약속하지 마세요. 특히 가격은 "앞으로도 올리지 않겠다"를 쓰지 않습니다.');
-  L.push('- 마크다운(**, #, 목록표시)을 쓰지 마세요. 네이버는 그것을 글자 그대로 보여줍니다.');
-  L.push('');
+- 순서: 사과 -> 무엇이 문제였는지 인정 -> 무엇을 어떻게 바꾸겠다(구체적으로) -> 직접 연락 요청
+- 변명 금지. "바쁜 시간대라", "그날따라" 는 읽는 사람에게 핑계로 보입니다.
+- "확인해 보겠습니다"로 끝내지 마세요. 무엇을 하겠다고 적으세요.
+- 홍보, 시설 자랑, 검색어, 이모지 전부 금지입니다.
+- 길이 ${LEN}
+${cl ? `- 끝인사는 붙이지 마세요. 사과 자리에는 안 맞습니다.` : ''}
 
-  L.push(`[길이] ${lenRule}`);
-  if (!bad) L.push(`[말투 보태기] ${TONE_RULE[tone]}`);
-  if (keywords.length && !bad) {
-    L.push(`[검색어] 다음 말을 자연스럽게 한 번 넣으세요: ${keywords.join(', ')}`);
-  }
-  if (closing && !bad) {
-    L.push(`[끝인사] 맨 마지막에 다음을 그대로 붙이세요: ${closing}`);
-    L.push('   그 바로 앞에는 이 손님에게 하는 한마디가 있어야 합니다.');
-  }
-  L.push('');
+[출력] 답글 하나만. 번호, 제목, 설명은 붙이지 마세요.`;
 
-  L.push('[답하는 방식]');
-  L.push('설명 없이 JSON 하나만 답합니다.');
-  L.push('{"주제": ["리뷰에서 읽어낸 주제 2~4개"], "답글": "답글 본문"}');
-  L.push('답글 본문의 문단 나눔은 견본처럼 \\n\\n 으로 넣으세요.');
-  L.push('');
-  L.push(star ? `이번 리뷰의 별점: 별 ${star}개` : '이번 리뷰의 별점: 알 수 없음');
-  L.push('');
-  L.push('[이번에 답글을 달 리뷰]');
-  L.push(review);
+  return `네이버 플레이스에 달린 아래 리뷰에 사장님이 달 답글을 써 주세요.
+여러 개를 만들어 고르게 하지 마시고, 제대로 된 하나를 주세요.
 
-  return L.join('\n');
+${f}
+
+${modelBlock()}
+
+[답글의 모양] - 위 견본과 같습니다
+- 1문단: "고객님, 안녕하세요"로 열고, 무엇 때문에 오셨는지 리뷰에서 읽어서 받고, 감사 + 이모지 하나
+- 2문단: 리뷰에 쓰신 얘기에 공감하고, 그 얘기에 붙여서 시설을 소개.
+  여기가 제일 중요합니다. 짧은 문장을 여러 개 쌓지 마세요 - 조립한 티가 바로 납니다.
+  공감은 한 줄로 짧게 열고, 시설은 여러 개를 한 문장에 엮어서 길게 쓰세요.
+  위 견본을 세어 보시면 문단 2가 두세 문장이고 그중 하나가 90자 안팎입니다.
+  나쁨 - 기구가 많습니다. 공간도 넓습니다. 대기도 적습니다. 편하게 쓰세요.
+  좋음 - 저희 매장은 웨이트실과 프리웨이트실을 아예 공간부터 분리해두었고, 인기 머신도
+        여유 있게 배치해서 기구 기다리다 흐름 끊기는 일 없이 운동하실 수 있답니다.
+- 3문단: 다음에 해 보시면 좋을 것 하나 + 응원 + 이모지 하나
+- 문단 사이에는 빈 줄을 넣으세요. 한 덩어리로 쓰면 같은 글자라도 읽는 맛이 다릅니다.
+- 이모지는 1문단 끝과 3문단 끝에 하나씩만. 문장 중간에 흩뿌리지 마세요.
+
+[답글을 달아야 할 리뷰] (별점 ${star}개)
+${review}
+
+${F.length
+? `[쓸 수 있는 사실] - 확인된 것만 적었습니다. 이 목록 밖은 지어내지 마세요.
+${F.map(x => `- ${x}`).join('\n')}`
+: `[쓸 수 있는 사실]
+- 없습니다. 시설도 리뷰 수도 확인되지 않았습니다.
+- 지어내지 마시고, 손님이 리뷰에 쓴 얘기만 받아서 쓰세요.`}
+
+[답글 옵션]
+- 길이: ${LEN}. 다 쓰신 뒤 글자 수를 세어 보시고 모자라면 채우세요.
+- 박을 키워드: ${kw || '자동 선택'}${kw ? ` (한 번만. 두 번 나오면 반복으로 보입니다)` : ''}
+${cl ? `- 끝인사: 마지막을 "${cl}" 로 닫아 주세요.` : ''}
+
+[꼭 지킬 것 - 일곱 개뿐입니다]
+1. 시설을 그냥 나열하지 마세요. "웨이트머신 100종이 있으니 부담없이 쓰셔도 됩니다"는
+   홍보일 뿐이고 알맹이가 없습니다. "그래서 회원님께 뭐가 좋은지"가 반드시 붙어야 합니다.
+   예) 웨이트머신 100종으로 기다림 없이 쓰실 수 있고, 인기 있는 머신은 2대씩 있으니 참고해주세요
+2. 위 [쓸 수 있는 사실]에 없는 숫자, 가격, 행사, 기간은 절대 쓰지 마세요.
+   답글은 몇 년 동안 그 자리에 남고, 손님이 그걸 보고 찾아와 물으면 사장님이 감당하셔야 합니다.
+3. 앞날을 약속하지 마세요. 가격을 안 올리겠다 / 그날 안에 고치겠다 / 앞으로도 이대로 하겠다 - 전부 금지.
+4. 리뷰에 성별 단서가 없으면 여성전용 공간을 "둘러보세요", "이용해보세요"라고 권하지 마세요.
+   남성 회원이면 답글이 통째로 어긋납니다. 우리 시설을 늘어놓는 자리에 한 항목으로 적는 건 괜찮습니다.
+5. 이 리뷰에만 할 수 있는 말을 하세요. 우리 가게 이름을 빼고 다른 헬스장 이름을 넣어도
+   말이 되는 문장이면 실패입니다. "더 좋은 환경을 만들겠습니다", "함께하겠습니다" 가 그런 문장입니다.
+6. 친밀도는 아직 없는 상태에서 시작합니다. "그동안 어떻게 지내셨는지 편하게 말씀해주세요" 같은 말은
+   서로 아는 사이에나 쓰는 말이라, 처음 받아 보시는 분은 갸우뚱합니다.
+7. 맞는 말이라도 아 다르고 어 다릅니다. 가르치듯 단정하지 말고 권하세요.
+   전 - 인바디로 한 달에 한 번은 숫자로 확인해보세요. 체중보다 체지방이 중요합니다.
+   후 - 다이어트가 목적이시라면 한 달에 한 번 정도 보시면서 변화를 지켜보는 걸 추천드릴게요.
+        하시다가 막힌다면 언제든 편하게 문의해주시면 함께 고민해드리겠습니다.
+   뒤쪽이 "이 센터는 회원을 진짜로 챙겨 주는구나"로 읽힙니다. 같은 내용인데 그렇습니다.
+
+[내보내기 전에 스스로 확인하세요 - 하나만 주시니 이건 꼭 하셔야 합니다]
+하나라도 아니면 그 자리를 고쳐서 내세요. 고친 것만 주시면 됩니다.
+1. 앞 두 문장 안에 "감사합니다" 또는 "고맙습니다"가 있는가
+2. 이 리뷰를 읽지 않으면 쓸 수 없는 문장이 있는가
+3. 시설을 말한 자리마다 "그래서 회원님께 뭐가 좋은지"가 붙어 있는가
+4. 위 [쓸 수 있는 사실] 밖의 숫자, 가격, 행사가 섞이지 않았는가
+5. "함께하겠습니다", "더 좋은 환경을 만들겠습니다" 같은 빈말이 없는가
+6. 문단이 셋이고 사이에 빈 줄이 있는가
+6-1. 문단 2가 짧은 문장 대여섯 개로 되어 있지 않은가 (그러면 조립한 글로 읽힙니다)
+7. 글자 수가 위 길이에 맞는가
+
+[출력] 답글 하나만. 번호, 제목, 머리말, 설명, 마무리 말은 붙이지 마세요.`;
 }
 
 /**
- * AI 가 준 답에서 JSON 만 골라낸다
+ * 여러 개가 와도 하나만 고른다
  *
- * "JSON 으로만 답하라"고 시켜도 앞뒤에 설명이 붙어 올 때가 있다.
- * 그때마다 실패로 처리하면 쓰는 사람은 이유를 모른 채 다시 누르게 된다.
+ * 답글 하나만 달라고 시켜도 AI 가 습관처럼 여러 개를 보낼 때가 있다.
+ * "---" 나 "1)" 이 보이면 첫 덩어리만 쓴다. 잘못 갈라 문장을 잘라 먹는
+ * 것보다는 낫다. 이모지와 문단 나눔은 답글 모양의 일부라 replySafe 로 살린다.
+ */
+function pickOneReply(text) {
+  const clean = x => replySafe(x).replace(/^\s*(\d+[.)]|답글\s*\d*\s*[:：]?)\s*/, '').trim();
+  const first = String(text || '').split(/^\s*-{3,}\s*$/m)[0];
+  return clean(first).replace(/\n{2,}\s*(?:답글\s*)?[2-9][.)]\s*[\s\S]*$/, '').trim()
+      || replySafe(String(text || ''));
+}
+
+/**
+ * AI 가 준 답에서 답글만 골라낸다
+ *
+ * 지시문은 「답글 하나만, 머리말 없이」라고 시킨다. 그러니 보통은 그냥
+ * 글이 온다. 한때 JSON 으로 받아 봤는데, 형식을 지키느라 문단 나눔과
+ * 이모지 자리가 흐트러졌다 — 답글의 모양이 곧 답글의 절반이라 그건 손해다.
+ *
+ * 그래도 JSON 으로 답해 오는 날이 있어서 양쪽을 다 받는다.
  */
 function parseReply(text) {
   const t = String(text || '').trim();
+  if (!t) return null;
   const tries = [t];
   const s = t.indexOf('{'), e = t.lastIndexOf('}');
   if (s >= 0 && e > s) tries.push(t.slice(s, e + 1));
   for (const cand of tries) {
     try {
       const j = JSON.parse(cand);
-      if (j && typeof j === 'object') return j;
+      if (j && typeof j === 'object' && (j.답글 || j.reply)) return j;
     } catch { /* 다음 후보 */ }
   }
-  return null;
+  return { 답글: pickOneReply(t), 주제: [] };
 }
 
 /* ── 답글 점검 ────────────────────────────────────────────────
@@ -449,9 +548,9 @@ function auditReply(text, review, o, star = 5) {
 
 
   return {
-    buildReplyPrompt, parseReply, auditReply,
+    buildReplyPrompt, parseReply, pickOneReply, auditReply,
     replySafe, replyCharOK, hasReviewWord, suggestTone,
-    LENGTH_RULE, TONE_RULE,
+    LENGTH_RULE, TONE_RULE, LEN_TEXT, pickFacts, factsHead,
     /* 화면(index.html)도 이걸 그대로 쓴다 — 한 벌만 두려고 내보낸다 */
     OWNER_TONE, REPLY_MODELS, LIVELY, modelBlock, toneBlock,
   };
