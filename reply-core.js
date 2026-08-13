@@ -272,6 +272,151 @@ function suggestTone(star) {
   return star > 0 && star <= 3 ? '사과' : '정중';
 }
 
+
+/* ── 답글에 넣을 재료 ─────────────────────────────────────────
+ *
+ * 이것도 오래 index.html 안에만 있었다. 지시문을 여기로 옮기고 나서도
+ * 답글이 원조와 달랐던 진짜 이유가 이쪽이다 — 같은 지시문에 다른 재료를
+ * 넣으면 다른 답글이 나온다. 대시보드는 메뉴 이름 몇 줄만 넣고 있었고,
+ * 원조는 지하철·버스·블로그 후기·손님이 자주 쓰는 말·소식·운영 연차까지
+ * 스물여덟 줄을 넣고 있었다.
+ *
+ * 브라우저 값(getInfo, window.__place)을 인자로 바꿨을 뿐, 안의 판단은
+ * 한 줄도 손대지 않았다.
+ *   o     : { name, area, type, price, fac, edge, intro, keywords, repkw }
+ *   place : { data, material } — 긁어온 그대로
+ *   own   : 사장님이 직접 적어 두신 사실 (없으면 빈 배열)
+ * ──────────────────────────────────────────────────────────── */
+
+/* 소개글 칸 기준 — 이모지를 지운다. 답글은 replySafe 를 쓴다 */
+function naverSafe(t){
+  let out = (t || '').normalize('NFC');
+  SAFE_SWAP.forEach(([re, to]) => { out = out.replace(re, to); });
+  return [...out].filter(ch => NAVER_ALLOWED.test(ch)).join('').replace(/ {2,}/g, ' ');
+}
+
+function yearsFact(text){
+  const m = String(text || "").match(/(?<!\d)([1-9]\d?)\s*년(째|간|\s*전통|\s*동안)/);
+  return m ? `${m[1]}년째 운영 중` : "";
+}
+
+function replyFacts(o, place, own){
+  o = o || {};
+  place = place || {};
+  const m = place.material || {};
+  const d = place.data || {};
+  const F = [];
+  (o.fac || []).forEach(x => F.push(x));
+  if(o.price) F.push(`1개월 이용권 ${o.price}`);
+  const rev = d.visitorReviewCount ?? d.visitorReviewsTotal;
+  const sc  = d.visitorReviewsScore ?? d.visitorReviewScore;
+  if(rev) F.push(`방문자 리뷰 ${Number(rev).toLocaleString("ko-KR")}개`
+                 + (sc ? ` · 평점 ${sc}점` : ""));
+  if(m.subway?.name) F.push(`${m.subway.name}`
+    + (m.subway.exit ? ` ${m.subway.exit}번 출구` : "")
+    + (m.subway.walkTime ? ` 도보 ${m.subway.walkTime}분` : ""));
+  (m.bus || []).slice(0,2).forEach(b =>
+    F.push(`${b.name} 정류장${b.walkTime ? ` 도보 ${b.walkTime}분` : ""}`));
+  /* 이벤트는 답글 재료에서 뺀다. 무료 답글은 이미 빼고 있었는데(rpFactPool)
+     AI 쪽만 열려 있어서 둘이 갈라져 있었다.
+     답글은 몇 년씩 그 자리에 남는다. "광복절 기념 8월무료"를 인용한 답글이
+     9월에도 남아 있으면, 그걸 보고 찾아오신 손님을 사장님이 감당하셔야 한다.
+     소개글과 같은 이유이고, 사장님이 소개글에서 빼라고 하신 것과 같은 판단이다.
+     이벤트는 소식·쿠폰·문구에서 알린다 - 거기는 바뀌면 바로 다시 만드는 자리다. */
+  /* 사장님이 메뉴 칸에 직접 적어 두신 시설·프로그램. 여기가 제일 값진 재료다 -
+     "여성전용(우먼존) 24시이용권", "스미스머신 파워렉 6대" 같은 것은
+     다른 헬스장이 쓸 수 없는 문장이고, 우리 말고는 아무도 안 읽는다.
+     다만 기간 한정 혜택은 위와 같은 이유로 걸러 낸다. */
+  const EV_OUT = /특가|이벤트|할인|증정|기념|무료행사|\d+\s*%|\d[\d,.]*\s*(만원|원)(?!짜)/;
+  (m.menuNames || []).forEach(x => {
+    const t = naverSafe(x).trim();
+    if(t && !EV_OUT.test(t)) F.push(t);
+  });
+  if(o.edge) F.push(o.edge);
+  /* 개업 연차는 어느 필드에도 없다. 사장님이 소식이나 소개글에 쓰신 문장에만 있다.
+     "28년째 같은 자리를 지키고 있는" 처럼 - 이건 다른 헬스장이 절대 못 쓰는 사실이다. */
+  const yrs = yearsFact([o.intro, ...(m.feeds||[]).map(x=>`${x.title} ${x.desc}`)].join(" "));
+  if(yrs) F.push(yrs);
+  /* 사장님이 직접 적어 두신 사실. 트레이너 경력처럼 네이버에 아예 없는 것이
+     여기 들어온다. 맨 앞에 둔다 - 수집값보다 이쪽이 우리를 더 잘 설명한다. */
+  return [...new Set([...(own || []).map(String).filter(Boolean), ...F].filter(x => String(x||"").trim()))].slice(0, 28);
+}
+
+function promptFacts(kind, o, place, extra){
+  o = o || {};
+  place = place || {};
+  extra = extra || {};
+  const comp = extra.comp;
+  const L = [];
+  L.push(`- 업체명: ${o.name || "(모름)"}`);
+  L.push(`- 지역: ${o.area || "(모름)"}`);
+  L.push(`- 업종: ${o.type || "헬스장"}`);
+  if(o.price) L.push(`- 1개월 이용권: ${o.price}`);
+  L.push(`- 목표 키워드: ${(o.keywords || []).join(", ") || "(없음)"}`);
+  L.push(`- 보유 시설: ${(o.fac || []).join(", ") || "(체크 안 함)"}`);
+  if(o.edge) L.push(`- 다른 곳과 다른 점 (사장님이 직접 적음): ${o.edge}`);
+  /* 네이버에 없는 사실. 수집으로는 절대 안 들어오는 값이라 이게 있고 없고가
+     "다른 헬스장에도 붙는 글"과 "우리 글"을 가른다. */
+  const own = (extra.own || []).map(String).filter(Boolean);
+  if(own.length){
+    L.push(`- 사장님이 직접 알려주신 사실 (네이버에는 없는 내용입니다. 그대로 써도 됩니다):`);
+    own.forEach(x => L.push(`  · ${x}`));
+  }
+  L.push(`- 현재 소개글: ${o.intro ? `${o.intro.length}자 — "${o.intro.slice(0,200)}${o.intro.length>200?"…":""}"` : "없음"}`);
+  if((o.repkw || []).length) L.push(`- 등록된 대표키워드: ${o.repkw.join(", ")}`);
+
+  /* 수집한 재료를 전부 넘긴다. AI 는 우리 가게를 모른다 —
+     리뷰 문장, 역·정류장, 진행 이벤트가 있어야 지어내지 않고 쓸 수 있다. */
+  const m = place.material || {};
+  const d = place.data || {};
+  const rev = d.visitorReviewCount ?? d.visitorReviewsTotal;
+  const sc  = d.visitorReviewsScore ?? d.visitorReviewScore;
+  if(rev) L.push(`- 방문자 리뷰 ${rev}개${sc ? ` · 평점 ${sc}점` : ""}`);
+  if(m.subway?.name){
+    L.push(`- 지하철: ${m.subway.name}${m.subway.exit ? ` ${m.subway.exit}번 출구` : ""}`
+      + (m.subway.walkTime ? ` 도보 ${m.subway.walkTime}분` : ""));
+  }
+  if((m.bus||[]).length){
+    L.push(`- 버스정류장: ${m.bus.slice(0,3).map(b=>`${b.name}${b.walkTime?` 도보 ${b.walkTime}분`:""}`).join(", ")}`);
+  }
+  const longLived = kind === "intro" || kind === "reply";
+  if(!longLived && (m.events||[]).length) L.push(`- 진행 중인 이벤트: ${m.events.map(e=>naverSafe(e).trim()).filter(Boolean).join(" / ")}`);
+  if((m.payments||[]).length) L.push(`- 결제수단: ${m.payments.join(", ")}`);
+  if((m.voice||[]).length){
+    L.push(`- 손님이 리뷰에서 자주 쓰는 말: ${m.voice.slice(0,5).map(v=>`${v.label}(${v.n}회)`).join(", ")}`);
+  }
+  if((m.feeds||[]).length){
+    L.push(`- 사장님이 올리신 소식 (직접 쓰신 글입니다. 여기 적힌 사실은 그대로 써도 됩니다):`);
+    m.feeds.slice(0,3).forEach(x =>
+      L.push(`  · ${x.title}${x.desc ? ` — ${x.desc.slice(0,120)}` : ""}`));
+  }
+  /* 블로그 후기는 방문자 리뷰보다 길고 구체적이다. 기구 이름이나 동선처럼
+     네이버 기본 필드에 없는 것이 여기 적혀 있다 - "펙덱플라이", "랫풀다운"이
+     그랬다. 수집은 하고 있었는데 아무 데도 안 쓰고 있었다. */
+  if((m.blogs||[]).length){
+    L.push(`- 손님이 블로그에 쓴 후기 (실제로 있는 것만 적혀 있습니다. 여기 나온 기구나 공간은 써도 됩니다):`);
+    m.blogs.slice(0,2).forEach(x =>
+      L.push(`  · ${String(x).replace(/\s+/g," ").slice(0,400)}`));
+  }
+  if((m.reviews||[]).length){
+    L.push(`- 실제 손님 리뷰 (그대로 인용해도 됩니다):`);
+    m.reviews.slice(0,3).forEach(r=>L.push(`  · ${String(r).replace(/\s+/g," ").slice(0,110)}`));
+  }
+
+  // 진단에서 미달로 나온 것 — 무엇을 보완해야 하는지 AI 가 알아야 한다
+  const miss = (extra.missing || []).map(String).filter(Boolean);
+  if(miss.length) L.push(`- 아직 안 된 항목: ${miss.slice(0,8).join(" / ")}`);
+
+  if(comp){
+    const gaps = (comp.gaps||[]).filter(g=>!g.inMine).map(g=>g.term);
+    if(gaps.length) L.push(`- 상위권이 쓰는데 우리 글에 없는 표현: ${gaps.join(", ")}`);
+    if(comp.myRank) L.push(`- "${comp.keyword}" 현재 순위: ${comp.myRank}위`);
+    const rivals = (comp.rivals||[]).map(v=>`${v.rank}위 ${v.name}`).join(", ");
+    if(rivals) L.push(`- 상위권: ${rivals}`);
+  }
+  return L.join("\n");
+}
+
 /**
  * 답글 길이 — 문장 수와 글자 수를 같이 준다
  *
@@ -584,6 +729,7 @@ function auditReply(text, review, o, star = 5) {
 
   return {
     buildReplyPrompt, parseReply, pickOneReply, auditReply,
+    promptFacts, replyFacts, yearsFact, naverSafe,
     replySafe, replyCharOK, hasReviewWord, suggestTone,
     LENGTH_RULE, TONE_RULE, LEN_TEXT, pickFacts, factsHead,
     /* 화면(index.html)도 이걸 그대로 쓴다 — 한 벌만 두려고 내보낸다 */

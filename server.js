@@ -2517,26 +2517,34 @@ const server = http.createServer(async (req, res) => {
        */
       let facts = Array.isArray(body.facts) ? body.facts : [];
       let landmarks = Array.isArray(body.landmarks) ? body.landmarks : [];
+      let head = String(body.head || '').trim();
       /* 부르는 쪽은 「쌍용점」 같은 지점 이름만 알고 있을 수 있다.
          손님이 검색으로 보는 이름은 「쌍용동헬스장 MTO피트니스 쌍용점」이다.
          인사말에 들어갈 이름은 그쪽이어야 한다. */
       let name = String(body.name || '').trim();
       if (facts.length === 0 && body.placeId) {
         try {
-          const got = await collectPlace(String(body.placeId), body.type, { deep: false });
-          const m = got.material || {};
+          /* 화면(index.html)이 /api/place 를 부를 때와 같은 깊이로 긁는다.
+             얕게 긁으면 블로그 후기와 소식이 안 들어와 재료가 줄고,
+             그러면 같은 지시문인데도 답글이 달라진다. */
+          const got = await collectPlace(String(body.placeId), body.type);
           const real = String(got.data?.name || '').trim();
           if (real) name = real;
-          facts = [
-            ...(m.menuNames || []),
-            ...(m.conveniences || []),
-            ...(m.payments || []).map(x => `${x} 결제 가능`),
-          ].map(x => String(x).trim()).filter(x => x.length >= 3).slice(0, 18);
-          landmarks = (m.landmarks || []).map(String).slice(0, 4);
+          /* 재료와 머리글은 화면과 똑같은 함수로 만든다.
+             한때 여기서만 메뉴 이름 몇 줄을 따로 추려 넣었고,
+             그것이 답글이 원조와 달랐던 진짜 이유였다. */
+          const o = {
+            name, area: body.area, type: body.type,
+            keywords: Array.isArray(body.keywords) ? body.keywords : [],
+            fac: [], repkw: [], intro: '', price: '', edge: '',
+          };
+          facts = REPLY.replyFacts(o, got, []);
+          head = REPLY.promptFacts('reply', o, got, {});
+          landmarks = (got.material?.landmarks || []).map(String).slice(0, 4);
         } catch { /* 못 가져와도 답글은 만든다 */ }
       }
 
-      const prompt = REPLY.buildReplyPrompt({ ...body, review, star, facts, landmarks, name });
+      const prompt = REPLY.buildReplyPrompt({ ...body, review, star, facts, landmarks, name, head });
       const out = await aiProxy({ tier: body.tier, prompt });
 
       let raw = {};
