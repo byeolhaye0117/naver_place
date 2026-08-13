@@ -6638,8 +6638,8 @@ ${modelBlock()}
 [답글의 모양] - 위 견본과 같습니다
 ${gr
 ? `- 1문단: 첫 문장을 정확히 이렇게 쓰세요 - "${gr}"
-  그다음 한 문장으로 무엇 때문에 오셨는지 리뷰에서 읽어서 받으세요. 감사는 첫 문장이 이미 했으니
-  여기서 또 하지 마세요. 문단 끝에 이모지 하나.`
+  그다음 한 문장으로 무엇 때문에 오셨는지 리뷰에서 읽어서 받고 이어 가세요. 감사는 첫 문장이
+  이미 했으니 여기서 또 하지 마세요. 문단 끝에 이모지 하나.`
 : `- 1문단: "고객님, 안녕하세요"로 열고, 무엇 때문에 오셨는지 리뷰에서 읽어서 받고, 감사 + 이모지 하나`}
 - 2문단: 리뷰에 쓰신 얘기에 공감하고, 그 얘기에 붙여서 시설을 소개.
   여기가 제일 중요합니다. 짧은 문장을 여러 개 쌓지 마세요 - 조립한 티가 바로 납니다.
@@ -8871,10 +8871,21 @@ function paintAiKey(info){
       복사해서 챗지피티 같은 곳에 붙여넣으시면 됩니다. 돈이 들지 않습니다.</div></div>`;
 }
 
+/* 눌러 봐서 "키가 문제"라고 확인된 경우에만 버튼을 감춘다.
+   점검이 실패했다고 다 감추면, 우리 서버가 잠깐 밖으로 못 나갔다거나
+   Anthropic 이 5xx 를 준 것만으로 멀쩡한 기능이 사라진다.
+   모르는 것은 모른다고 두고 버튼은 남긴다 - 사유는 위 상태 칸이 적어 준다. */
+const AI_KEY_SURE_BAD = new Set([
+  "shape", "authentication_error", "permission_error", "credit", "not_found_error",
+]);
+
 function paintAiButtons(){
   /* 안 도는 키에 "AI에게 시키기"를 띄우지 않는다. 눌러 봐야 실패만 한다.
      서버가 눌러 본 적이 없으면(옛 서버) 예전처럼 있는지 없는지로 판단한다. */
-  const srvOn = SERVER?.aiLive ? SERVER.aiLive.ok : Boolean(SERVER?.ai);
+  const live = SERVER?.aiLive;
+  const srvOn = live
+    ? (live.ok || !AI_KEY_SURE_BAD.has(live.kind))
+    : Boolean(SERVER?.ai);
   const on = srvOn || Boolean(sessionStorage.getItem("ak"));
   document.querySelectorAll("[data-aionly]").forEach(el=>{ el.style.display = on ? "" : "none"; });
   if(on) refreshAiLeft();

@@ -2136,14 +2136,25 @@ function aiStatus() {
    통째로 값 칸에 넣는 일이 생긴다. 이 중 무엇이든 fetch 가 헤더를 만들다
    터지는데, 그 오류는 "연결 실패"처럼 생겼다. 그대로 두면 멀쩡한 망을 두고
    네트워크를 의심하시게 된다. 부르기 전에 모양부터 보고 이름을 붙여 준다. */
+/* fatal 은 "이 값으로는 요청을 보낼 수조차 없다"는 뜻이다. 그것만 막는다.
+   나머지는 짐작이라 막지 않는다 - 앞자리가 sk-ant- 가 아니라고 막았더니
+   중계 서버(ANTHROPIC_BASE_URL)를 쓰시는 경우까지 같이 막혔다. 짐작으로
+   길을 끊으면, 멀쩡히 되던 것이 어느 날 안 되고 이유도 안 보인다.
+   짐작은 눌러 본 뒤 401 이 왔을 때 "아마 이것 때문입니다"로 덧붙인다. */
 function aiKeyShape(raw) {
   const k = String(raw);
-  if (/^\s|\s$/.test(k))       return '키 앞뒤에 공백이나 줄바꿈이 붙어 있습니다. 그것만 지우면 됩니다.';
-  if (/^["']|["']$/.test(k))   return '키가 따옴표로 감싸여 있습니다. 따옴표는 빼고 값만 넣으세요.';
+  /* 이 둘은 헤더를 만들다 터진다 - 실제로 fetch 가 ByteString 오류를 낸다 */
+  if (/^\s|\s$/.test(k))
+    return { fatal: true, note: '키 앞뒤에 공백이나 줄바꿈이 붙어 있습니다. 그것만 지우면 됩니다.' };
+  if (/[^\x20-\x7E]/.test(k))
+    return { fatal: true, note: '키에 영문·숫자가 아닌 글자가 섞여 있습니다. 한글 자판이 켜진 채로 복사됐을 수 있습니다.' };
+  /* 아래는 보내지기는 한다. 거의 틀림없이 실수지만 단정하지 않는다. */
+  if (/^["']|["']$/.test(k))
+    return { fatal: false, note: '키가 따옴표로 감싸여 있는 것 같습니다. 따옴표는 빼고 값만 넣으세요.' };
   if (/^ANTHROPIC_API_KEY\s*=/i.test(k))
-                               return '이름까지 통째로 들어갔습니다. 값 칸에는 sk-ant- 로 시작하는 부분만 넣으세요.';
-  if (/[^\x20-\x7E]/.test(k))  return '키에 영문·숫자가 아닌 글자가 섞여 있습니다. 한글 자판이 켜진 채로 복사됐을 수 있습니다.';
-  if (!/^sk-ant-/.test(k))     return '키가 sk-ant- 로 시작하지 않습니다. 다른 값을 넣으신 것 같습니다.';
+    return { fatal: false, note: '이름까지 통째로 들어간 것 같습니다. 값 칸에는 키 값만 넣으세요.' };
+  if (!/^sk-ant-/.test(k))
+    return { fatal: false, note: '키가 sk-ant- 로 시작하지 않습니다. 중계 서버를 쓰시는 게 아니라면 다른 값을 넣으신 것 같습니다.' };
   return null;
 }
 
@@ -2153,11 +2164,11 @@ async function aiProbe() {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   if (AI_PROBE.val && Date.now() - AI_PROBE.at < AI_PROBE_TTL) return AI_PROBE.val;
 
-  /* 모양이 틀린 것은 부르지 않는다. 부르면 어차피 헤더에서 터지고,
+  /* 보낼 수조차 없는 것만 부르지 않는다. 부르면 헤더에서 터지고,
      그 오류 문구는 사장님이 고칠 데를 알려주지 못한다. */
   const bad = aiKeyShape(process.env.ANTHROPIC_API_KEY);
-  if (bad) {
-    AI_PROBE = { at: Date.now(), val: { ok: false, status: 0, kind: 'shape', note: bad } };
+  if (bad && bad.fatal) {
+    AI_PROBE = { at: Date.now(), val: { ok: false, status: 0, kind: 'shape', note: bad.note } };
     return AI_PROBE.val;
   }
 
@@ -2182,7 +2193,7 @@ async function aiProbe() {
           note: 'Anthropic 이 받아 줍니다. AI 버튼을 쓸 수 있습니다.' }
       : { ok: false, status: r.status, kind: credit ? 'credit' : etype || 'unknown',
           note: credit  ? '키는 맞는데 크레딧이 0 입니다. console.anthropic.com 에서 충전하세요.'
-              : r.status === 401 ? '키가 틀렸거나 지워진 키입니다. 앞뒤 공백이 붙었는지도 보세요.'
+              : r.status === 401 ? `키가 틀렸거나 지워진 키입니다.${bad ? ` ${bad.note}` : ' 앞뒤 공백이 붙었는지도 보세요.'}`
               : r.status === 403 ? '이 키로는 이 모델을 쓸 수 없습니다.'
               : r.status === 404 ? `모델 이름을 못 찾습니다 (${AI_TIERS.fast.model}).`
               : r.status === 429 ? 'Anthropic 쪽 호출 한도에 걸렸습니다. 잠시 뒤 다시 보세요.'
@@ -2206,7 +2217,7 @@ function aiGuard(body) {
   /* 점검 화면과 버튼이 같은 말을 해야 한다. 한쪽만 "공백이 붙었다"고 하고
      다른 쪽이 "연결 실패"라고 하면 어느 쪽이 맞는지 알 수 없다. */
   const shape = aiKeyShape(key);
-  if (shape) return { status: 503, message: `AI 키 모양이 맞지 않습니다. ${shape}` };
+  if (shape && shape.fatal) return { status: 503, message: `AI 키 모양이 맞지 않습니다. ${shape.note}` };
   const tier = AI_TIERS[body?.tier] || AI_TIERS.fast;
   const prompt = String(body?.prompt ?? '').trim();
   if (!prompt) return { status: 400, message: '보낼 내용이 비어 있습니다.' };
