@@ -669,6 +669,19 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .tcard em{display:block;font-style:normal;font-size:11.5px;font-weight:700;margin-top:8px;
   color:var(--accent);line-height:1.5;word-break:keep-all}
 .tcard em.mat{color:var(--muted);font-weight:600}
+/* 한글이 알파벳으로 샌 자리 — 고친 것과 못 고친 것을 갈라서 보여 준다 */
+.gl-fix,.gl-left{margin-top:10px;padding:10px 12px;border-radius:9px;font-size:12.5px;
+  line-height:1.6;display:flex;flex-wrap:wrap;gap:5px 8px;align-items:baseline}
+.gl-fix{background:var(--ok-bg);border:1px solid var(--ok-line,var(--line))}
+.gl-left{background:var(--warn-bg,var(--accent-soft));border:1px solid var(--acc-line)}
+.gl-fix>b,.gl-left>b{flex:0 0 100%;font-size:13px;font-weight:800;letter-spacing:-.02em}
+.gl-fix>b{color:var(--ok-fg)}
+.gl-left>b{color:var(--accent)}
+.gl-fix span,.gl-left span{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px;font-weight:700;background:var(--card);border:1px solid var(--line);
+  border-radius:6px;padding:2px 7px}
+.gl-left i{flex:0 0 100%;font-style:normal;font-size:12px;color:var(--muted);margin-top:2px}
+
 /* 챗지피티에 한 번만 붙여넣는 지시문 — 매번 5,000자를 옮기시던 것을 한 번으로 */
 .rp-skill{margin-top:14px;padding:14px 15px;background:var(--surface-2);
   border:1px solid var(--line);border-radius:10px}
@@ -2390,6 +2403,99 @@ function replySafe(t){
     .replace(/[ \t]*\n[ \t]*/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/* ── 한글이 알파벳으로 새는 자리 ──────────────────────────────────────
+   AI 가 한글을 쓰다가 한 음절을 알파벳으로 흘릴 때가 있다. 실제로 답글에
+   "쌍용동"이 "쌍ong동"으로 나갔다.
+
+   이게 고약한 이유가 셋이다.
+     · 네이버 금지문자가 아니다 - A-Za-z 는 업체명(MTO, PT)에 필요해서 허용이다.
+       그래서 문자 검사에 하나도 안 걸린다.
+     · 눈에 잘 안 띈다. 한 음절이라 읽으면서 넘어간다.
+     · 답글은 몇 년씩 그 자리에 남는다.
+
+   막을 수 있는 이유는 하나다 - 우리는 맞는 낱말을 이미 알고 있다.
+   업체명, 지역, 키워드, 메뉴 이름이 전부 수집돼 있다. "쌍?동" 자리에 들어갈
+   말이 "쌍용동" 하나뿐이면 그건 짐작이 아니라 확인이다. */
+
+/* 한글 사이에 낀 알파벳 중 멀쩡한 것들. 헬스장 말로 대문자가 대부분이다.
+   소문자만으로 된 토막(ong, dong)은 거의 예외 없이 샌 자리다. */
+const LATIN_OK = /^([A-Z][A-Za-z]*|[A-Z]+\d*)$/;
+
+/* 우리가 아는 낱말 - 이게 있어야 고칠 수 있다 */
+function ourWords(){
+  const o = (typeof getInfo === "function") ? getInfo() : {};
+  const m = window.__place?.material || {};
+  return [...new Set([
+    o.name, o.area,
+    ...(o.keywords || []), ...(o.repkw || []), ...(o.fac || []),
+    ...(m.menuNames || []),
+  ].filter(x => typeof x === "string" && x.trim()))]
+    .flatMap(x => x.trim().split(/\s+/))     // "쌍용동 헬스장" 은 낱말 둘이다
+    .filter(x => [...x].length >= 3)
+    .sort((a, b) => [...b].length - [...a].length);   // 긴 말부터 - 겹칠 때 더 많이 맞는 쪽
+}
+
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/* 아는 낱말로 되돌린다. 한 음절이 통째로 알파벳이 된 경우만 고친다 -
+   두 음절 넘게 어긋난 것은 무엇이 맞는지 우리도 모르므로 손대지 않는다. */
+function fixGlitch(text, words){
+  let out = String(text ?? "");
+  const fixed = [];
+  for(const w of (words || ourWords())){
+    const s = [...w];
+    for(let i = 1; i < s.length - 1; i++){
+      if(!/[가-힣]/.test(s[i])) continue;            // 원래 알파벳인 자리는 건너뛴다
+      const re = new RegExp(
+        reEsc(s.slice(0, i).join("")) + "[A-Za-z]{1,6}" + reEsc(s.slice(i + 1).join("")), "g");
+      out = out.replace(re, hit => {
+        if(hit === w) return hit;
+        fixed.push({ was: hit, now: w });
+        return w;
+      });
+    }
+  }
+  return { text: out, fixed };
+}
+
+/* 고치지 못하고 남은 자리. 아는 낱말이 아니면 무엇이 맞는지 모르므로
+   조용히 지어내지 않고 사장님께 보여 드린다. */
+function glitchSpots(text){
+  const out = [];
+  /* 양옆이 다 한글일 때만 보면 낱말 끝에서 샌 것을 놓친다 - "운dong" 이 그랬다.
+     한쪽만 한글이어도 본다. 대신 대문자로 된 말(PT, GX, MTO)은 멀쩡한 것이라 뺀다. */
+  for(const m of String(text ?? "").matchAll(/[가-힣][A-Za-z]{1,6}[가-힣]?|[A-Za-z]{1,6}[가-힣]/g)){
+    const latin = m[0].replace(/[가-힣]/g, "");
+    if(LATIN_OK.test(latin)) continue;              // PT, GX, MTO 는 멀쩡한 말이다
+    out.push(m[0]);
+  }
+  return [...new Set(out)];
+}
+
+/* AI 가 준 글을 화면에 올리기 전에 한 번 거른다. 고칠 수 있는 것은 고치고,
+   못 고친 것은 남겨서 보여 준다 - 둘 다 안 하면 그대로 네이버로 간다. */
+function aiClean(text){
+  const r = fixGlitch(text);
+  return { text: r.text, fixed: r.fixed, left: glitchSpots(r.text) };
+}
+
+/* 화면에 붙일 한 줄. 고친 게 있으면 무엇을 무엇으로 고쳤는지 그대로 적는다. */
+function glitchNote(r){
+  if(!r) return "";
+  const parts = [];
+  if(r.fixed?.length){
+    const seen = [...new Map(r.fixed.map(x => [x.was, x])).values()];
+    parts.push(`<div class="gl-fix"><b>한글이 알파벳으로 샌 곳 ${seen.length}군데를 고쳤습니다</b>
+      ${seen.map(x => `<span>${escH(x.was)} → ${escH(x.now)}</span>`).join("")}</div>`);
+  }
+  if(r.left?.length){
+    parts.push(`<div class="gl-left"><b>알파벳이 섞인 곳이 남아 있습니다 - 눈으로 봐 주세요</b>
+      ${r.left.map(x => `<span>${escH(x)}</span>`).join("")}
+      <i>우리가 아는 낱말이 아니라 무엇이 맞는지 알 수 없어 손대지 않았습니다.</i></div>`);
+  }
+  return parts.join("");
 }
 
 /* 네이버가 이미 받아준 문자 — 지금 등록된 소개글에 들어 있는 것들 */
@@ -5236,9 +5342,19 @@ $("btn-ai-check")?.addEventListener("click", ()=>{
   box.style.display = "";
   const rows = introAudit(t, getInfo());
   const pass = rows.filter(r=>r.ok).length;
+  /* 챗지피티에서 받아 오신 글은 여기가 마지막 관문이다. 한글이 알파벳으로 샌
+     자리는 금지문자 검사에 안 걸리므로(A-Za-z 는 업체명에 필요해서 허용이다)
+     따로 봐야 한다. 실제로 "쌍ong동"이 이 검사를 그냥 통과했다. */
+  const g = aiClean(t);
   box.innerHTML =
     `<div class="audit-h"><span>AI 글 점검</span>
       <em class="${pass===rows.length?"pass":"fail"}">${pass} / ${rows.length}</em></div>`
+    + (g.fixed.length || g.left.length
+       ? `<div class="audit-row no"><i>⚠️</i><div><b>한글이 알파벳으로 샌 곳이 있습니다</b>
+          <span>${[...g.fixed.map(x=>`${escH(x.was)} → ${escH(x.now)}`),
+                   ...g.left.map(x=>`${escH(x)} (무엇이 맞는지 모르겠습니다)`)].join(", ")}${
+            g.fixed.length ? ` — 아래 <b>고쳐서 복사</b>를 누르시면 고쳐 드립니다.` : ""}</span></div></div>`
+       : `<div class="audit-row"><i>✅</i><div><b>한글이 알파벳으로 샌 곳이 없습니다</b><span></span></div></div>`)
     + rows.map(r=>`<div class="audit-row${r.ok?"":" no"}">
         <i>${r.ok?"✅":"⚠️"}</i>
         <div><b>${r.t}</b><span>${r.note||""}</span></div></div>`).join("");
@@ -5250,11 +5366,16 @@ $("btn-ai-clean")?.addEventListener("click", async ()=>{
   const el = $("ai-paste"); const t = (el?.value || "").trim();
   if(!t){ alert("AI가 만들어 준 글을 붙여넣어 주세요."); return; }
   const before = charCheck(t, false).risky.length;
-  const clean = naverSafe(t);
+  /* 문자만 고치던 자리다. 한글이 알파벳으로 샌 것도 여기서 같이 되돌린다 -
+     사장님이 눈으로 찾아 고치실 일이 아니다. */
+  const g = fixGlitch(t);
+  const clean = naverSafe(g.text);
   el.value = clean;
-  try{ await navigator.clipboard.writeText(clean); showToast(
-    before ? `금지문자 ${before}종을 고쳐서 복사했습니다` : "금지문자가 없어 그대로 복사했습니다");
-  }catch{ showToast(before ? `금지문자 ${before}종을 고쳤습니다 (직접 복사해 주세요)` : "금지문자가 없습니다"); }
+  const said = [
+    before ? `금지문자 ${before}종` : "",
+    g.fixed.length ? `한글이 샌 곳 ${g.fixed.length}군데` : "",
+  ].filter(Boolean).join(" · ");
+  copyText(clean, said ? `${said}를 고쳐서 복사했습니다` : "고칠 것이 없어 그대로 복사했습니다");
   $("btn-ai-check").click();
 });
 
@@ -6270,7 +6391,9 @@ function promptFacts(kind){
    여기 적힌 문자는 우리가 출력 단계에서 어차피 지운다(naverSafe).
    그래도 사장님이 지시문을 다른 AI 에 복사해 쓰실 때가 있어서 한 줄로 남긴다. */
 const CHAR_RULE = `[반드시 지킬 문자 규칙]
-- 이모지, 화살표(→), 가운뎃점(·), 엔대시(–), 큰따옴표("), 말줄임표(…), 낫표(「」), 마크다운(**, ##) 금지 - 네이버 입력칸이 막습니다`;
+- 이모지, 화살표(→), 가운뎃점(·), 엔대시(–), 큰따옴표("), 말줄임표(…), 낫표(「」), 마크다운(**, ##) 금지 - 네이버 입력칸이 막습니다
+- 한글 낱말 가운데에 알파벳을 섞지 마세요. 실제로 "쌍용동"이 "쌍ong동"으로 나간 적이 있습니다.
+  업체명에 원래 들어 있는 영문만 그대로 쓰고, 나머지 한글 낱말에는 알파벳을 한 글자도 넣지 마세요`;
 
 /* 붙여넣은 리뷰가 없을 때 쓰는 일반 답글 지시문 */
 /* ── 한 번만 붙여넣는 답글 지시문 ────────────────────────────────────
@@ -6359,6 +6482,11 @@ ${gr && rpGreetLow()
    전 - 인바디로 한 달에 한 번은 숫자로 확인해보세요. 체중보다 체지방이 중요합니다.
    후 - 다이어트가 목적이시라면 한 달에 한 번 정도 보시면서 변화를 지켜보는 걸 추천드릴게요.
 
+[한글은 한글로만 쓰세요]
+낱말 가운데에 알파벳을 섞지 마세요. 실제로 "쌍용동"이 "쌍ong동"으로 나간 적이 있습니다.
+업체명에 원래 들어 있는 영문(MTO, PT 같은 것)만 그대로 쓰고, 나머지 한글 낱말에는
+알파벳을 한 글자도 넣지 마세요. 다 쓰신 뒤 한글 낱말 사이에 알파벳이 끼어 있는지 한 번 보세요.
+
 [네이버가 안 받는 문자 - 답글 칸 기준]
 쓰지 마세요: 가운뎃점, 화살표, 말줄임표, 물결표, 긴 대시, 곡선 따옴표, 별표, 하트, 참고표.
 마크다운도 쓰지 마세요 - 별표 두 개로 굵게 쓰면 네이버 화면에 별표가 그대로 보입니다.
@@ -6374,7 +6502,8 @@ ${gr ? `1. 첫 문장이 "${gr}" 그대로인가 (별 1~2개는 예외)`
 5. 위 [쓸 수 있는 사실] 밖의 숫자, 가격, 행사가 섞이지 않았는가
 6. 문단이 셋이고 사이에 빈 줄이 있는가 (별 1~2개는 한 덩어리)
 7. 위 [네이버가 안 받는 문자]가 하나도 없는가
-8. 글자 수가 250~350자인가
+8. 한글 낱말 가운데에 알파벳이 끼어 있지 않은가 (업체명의 영문은 제외)
+9. 글자 수가 250~350자인가
 
 [출력]
 답글 하나만 주세요. 번호, 제목, 머리말, 설명, 마무리 말은 붙이지 마세요.
@@ -6755,6 +6884,7 @@ ${rv}
 - 변명 금지. "바쁜 시간대라", "그날따라" 는 읽는 사람에게 핑계로 보입니다.
 - "확인해 보겠습니다"로 끝내지 마세요. 무엇을 하겠다고 적으세요.
 - 홍보, 시설 자랑, 검색어, 이모지 전부 금지입니다.
+- 한글 낱말 가운데에 알파벳을 섞지 마세요 (업체명의 영문은 제외).
 - 길이 ${LEN}
 ${cl ? `- 끝인사는 붙이지 마세요. 사과 자리에는 안 맞습니다.` : ""}
 ${gr && rpGreetLow()
@@ -6831,7 +6961,9 @@ ${gr ? `1. 첫 문장이 "${gr}" 그대로인가 (한 글자도 바꾸지 마세
 5. "함께하겠습니다", "더 좋은 환경을 만들겠습니다" 같은 빈말이 없는가
 6. 문단이 셋이고 사이에 빈 줄이 있는가
 6-1. 문단 2가 짧은 문장 대여섯 개로 되어 있지 않은가 (그러면 조립한 글로 읽힙니다)
-7. 글자 수가 위 길이에 맞는가
+7. 한글 낱말 가운데에 알파벳이 끼어 있지 않은가 (업체명의 영문은 제외)
+   실제로 "쌍용동"이 "쌍ong동"으로 나간 적이 있습니다. 한 음절이라 눈에 잘 안 띕니다.
+8. 글자 수가 위 길이에 맞는가
 
 [출력] 답글 하나만. 번호, 제목, 머리말, 설명, 마무리 말은 붙이지 마세요.`;
   },
@@ -8876,10 +9008,14 @@ document.addEventListener("click", async e=>{
        그래도 AI 가 습관처럼 여러 개를 보낼 때가 있다. "---" 나 "1)" 이 보이면
        첫 덩어리만 쓴다. 잘못 갈라 문장을 잘라 먹는 것보다는 낫다.
        이모지와 문단 나눔은 답글 모양의 일부라 replySafe 로 살린다. */
-    const clean = x => replySafe(x).replace(/^\s*(\d+[.)]|답글\s*\d*\s*[:：]?)\s*/, "").trim();
+    const clean = x => fixGlitch(replySafe(x)).text
+      .replace(/^\s*(\d+[.)]|답글\s*\d*\s*[:：]?)\s*/, "").trim();
     const first = text.split(/^\s*-{3,}\s*$/m)[0];
     const one = clean(first).replace(/\n{2,}\s*(?:답글\s*)?[2-9][.)]\s*[\s\S]*$/, "").trim()
-             || replySafe(text);
+             || fixGlitch(replySafe(text)).text;
+    /* 고친 자리와 못 고친 자리를 답글 아래에 그대로 적는다. 조용히 고치면
+       사장님은 도구가 무엇을 만졌는지 모르신다. */
+    const gl = { fixed: fixGlitch(replySafe(text)).fixed, left: glitchSpots(one) };
     const star = Number($("rp-star")?.value || 5);
     const rows = replyAudit(one, raw, o, star);
     const bad = rows.filter(r => !r.ok);
@@ -8898,6 +9034,7 @@ document.addEventListener("click", async e=>{
         <em class="${pass===rows.length?"pass":"todo"}">${pass} / ${rows.length}</em></div>
         ${rows.map(r=>`<span class="${r.ok?"y":"n"}">${r.ok?"✅":"○"} ${r.t}${
           r.note?` <i>${r.note}</i>`:""}</span>`).join("")}</div>
+      ${glitchNote(gl)}
       ${thinFactNote([one])}
       <p class="rp-tip">마음에 안 드시면 <b>AI로 답글 쓰기</b>를 한 번 더 누르세요.
         AI가 썼어도 <b>없는 시설이 적혀 있으면 반드시 지우세요.</b>
@@ -8978,13 +9115,18 @@ document.addEventListener("click", async e=>{
   box.style.display = "";
   box.innerHTML = `<div class="ai-live"><div class="ai-h">AI가 쓰는 중…</div><pre id="ai-live-${kind}"></pre></div>`;
   try{
-    const text = await callAIStream(prompt, "fast", t=>{
+    const raw = await callAIStream(prompt, "fast", t=>{
       const el = $(`ai-live-${kind}`); if(el) el.textContent = t;
     });
+    /* 한글이 알파벳으로 샌 자리를 고치고 나서 화면에 올린다.
+       "쌍ong동"이 그대로 네이버까지 간 적이 있다. */
+    const g = aiClean(raw);
+    const text = g.text;
     box.innerHTML = `<div class="ai-live"><div class="ai-h">AI가 쓴 글
         <span data-ailelft></span>
         <button class="btn sm ghost copy" data-copy="${escH(text)}">복사</button></div>
       <pre>${escH(text)}</pre>
+      ${glitchNote(g)}
       <p class="gs-note">그대로 믿지 마시고 한 번 읽어 보세요.
         네이버에 없는 사실이 섞였는지는 사장님만 아십니다.</p></div>`;
     try{ paintAiButtons(); }catch{}
