@@ -273,6 +273,12 @@ function suggestTone(star) {
 }
 
 
+/* 진단 화면에서 체크하는 시설 목록.
+   대시보드도 똑같은 칸을 두게 되면서 여기로 옮겼다 — 목록이 갈리면
+   한쪽에서 체크한 것이 다른 쪽 답글에는 안 들어간다. */
+const FACILITIES = ["주차 가능","샤워실","락커","운동복 대여","사우나","24시간 운영",
+                    "여성 전용존","GX 프로그램","PT 상담 무료","인바디 측정","무인 출입","단백질바"];
+
 /* ── 답글에 넣을 재료 ─────────────────────────────────────────
  *
  * 이것도 오래 index.html 안에만 있었다. 지시문을 여기로 옮기고 나서도
@@ -729,7 +735,7 @@ function auditReply(text, review, o, star = 5) {
 
   return {
     buildReplyPrompt, parseReply, pickOneReply, auditReply,
-    promptFacts, replyFacts, yearsFact, naverSafe,
+    promptFacts, replyFacts, yearsFact, naverSafe, FACILITIES,
     replySafe, replyCharOK, hasReviewWord, suggestTone,
     LENGTH_RULE, TONE_RULE, LEN_TEXT, pickFacts, factsHead,
     /* 화면(index.html)도 이걸 그대로 쓴다 — 한 벌만 두려고 내보낸다 */
