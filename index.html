@@ -5693,6 +5693,8 @@ ${CHAR_RULE}`,
     if(!rv) return PROMPT_REPLY_GENERIC(f);
     return REPLY_CORE.buildReplyPrompt({
       head: f,
+      /* 인사말에 그대로 들어갈 이름이다 — 「안녕하세요 OOO입니다.」 */
+      name: getInfo().name,
       review: rv,
       star: Number($("rp-star")?.value || 5),
       length: $("rp-len")?.value || "medium",
