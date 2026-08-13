@@ -12,6 +12,21 @@
  * 부르는 쪽이 넘긴다. 그래야 서버에서도 돌고, 시험하기도 쉽다.
  * ==========================================================================*/
 
+/*
+ * 브라우저와 서버가 같은 파일을 읽는다
+ *
+ * 화면(index.html)에도 같은 값을 한 벌 더 두면, 한쪽을 고쳤을 때 다른 쪽이
+ * 옛것을 그대로 쓴다. 실제로 그렇게 어긋났다. 파일은 하나만 두고 양쪽이 부른다.
+ *   서버   : require('./reply-core.js')
+ *   브라우저: <script src="reply-core.js"> 뒤에 window.REPLY_CORE
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.REPLY_CORE = api;
+})(typeof self !== "undefined" ? self : this, function () {
+
+
 /* ── 네이버 입력칸이 받아주는 글자 ────────────────────────────
    답글 칸은 소개글 칸과 달리 이모지를 받는다. m.place 에 실제로 달려 있는
    답글에 😊 가 들어 있는 것을 확인했다. 줄 나눔도 살린다. */
@@ -432,8 +447,12 @@ function auditReply(text, review, o, star = 5) {
   ];
 }
 
-module.exports = {
-  buildReplyPrompt, parseReply, auditReply,
-  replySafe, replyCharOK, hasReviewWord, suggestTone,
-  LENGTH_RULE, TONE_RULE,
-};
+
+  return {
+    buildReplyPrompt, parseReply, auditReply,
+    replySafe, replyCharOK, hasReviewWord, suggestTone,
+    LENGTH_RULE, TONE_RULE,
+    /* 화면(index.html)도 이걸 그대로 쓴다 — 한 벌만 두려고 내보낸다 */
+    OWNER_TONE, REPLY_MODELS, LIVELY, modelBlock, toneBlock,
+  };
+});
