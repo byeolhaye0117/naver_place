@@ -24,6 +24,8 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 const crypto = require('crypto');
+/* 답글 지시문과 점검 — 화면과 대시보드가 같이 쓰도록 따로 뺐다 */
+const REPLY = require('./reply-core.js');
 
 const PORT     = Number(process.env.PORT || 5173);
 const HOST     = process.env.HOST || '0.0.0.0';   // 같은 와이파이의 휴대폰에서도 붙을 수 있게
@@ -2480,6 +2482,64 @@ const server = http.createServer(async (req, res) => {
       catch { return sendJson(res, 400, { error: { message: '요청을 읽지 못했습니다.' } }); }
       return aiStream(body, res);
     }
+    /* ── 리뷰 답글 한 개 ──────────────────────────────────────
+       지시문 만들기부터 점검까지 서버가 다 한다. 대시보드처럼 밖에서
+       부르는 곳이 생겼기 때문이다. 부르는 쪽마다 같은 코드를 다시 쓰면,
+       여기를 고쳐도 그쪽은 옛날 답글을 계속 쓰게 된다.
+
+       재료(확인된 사실)는 부르는 쪽이 넘긴다. 서버는 브라우저에 있는
+       사장님 입력값을 모르고, 알 필요도 없다.
+       한도와 요금 집계는 /api/ai 와 같은 것을 쓴다 - 창구를 하나 더
+       낸다고 한도를 우회할 수 있으면 한도를 두는 뜻이 없다. */
+    if (u.pathname === '/api/reply' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); }
+      catch { return sendJson(res, 400, { ok: false, error: '요청을 읽지 못했습니다.' }); }
+
+      const review = String(body.review ?? '').trim();
+      if (!review) return sendJson(res, 400, { ok: false, error: '리뷰 내용이 비어 있습니다.' });
+      if (review.length > 3000) {
+        return sendJson(res, 400, { ok: false, error: `리뷰가 너무 깁니다 (${review.length}자 / 최대 3000자)` });
+      }
+
+      const star = Number(body.star) || 0;
+      const prompt = REPLY.buildReplyPrompt({ ...body, review, star });
+      const out = await aiProxy({ tier: body.tier, prompt });
+
+      let raw = {};
+      try { raw = JSON.parse(out.text); } catch { /* 아래에서 걸린다 */ }
+      if (out.status !== 200) {
+        return sendJson(res, out.status,
+          { ok: false, error: raw?.error?.message || 'AI 호출이 막혔습니다.', ai: aiStatus() });
+      }
+
+      const text = (raw.content || []).filter(b => b?.type === 'text').map(b => b.text).join('').trim();
+      const parsed = REPLY.parseReply(text);
+      const reply = REPLY.replySafe(String(parsed?.답글 ?? parsed?.reply ?? '').trim());
+      if (!reply) {
+        return sendJson(res, 502,
+          { ok: false, error: 'AI 답을 읽지 못했습니다. 다시 한 번 눌러주세요.', ai: aiStatus() });
+      }
+
+      const topics = Array.isArray(parsed?.주제 ?? parsed?.topics)
+        ? (parsed.주제 ?? parsed.topics).map(String).map(x => x.trim()).filter(Boolean).slice(0, 6)
+        : [];
+      /* 만들어만 주고 "잘 됐나 보세요" 하는 것과, 무엇이 빠졌는지
+         짚어 주는 것은 다르다. 우리 잣대로 재서 같이 넘긴다. */
+      const audit = REPLY.auditReply(reply, review, { name: body.name, keywords: body.keywords }, star);
+
+      return sendJson(res, 200, {
+        ok: true,
+        reply,
+        topics,
+        chars: [...reply].length,
+        audit,
+        passed: audit.filter(r => r.ok).length,
+        total: audit.length,
+        ai: aiStatus(),
+      });
+    }
+
     if (u.pathname === '/api/ai-status') return sendJson(res, 200, aiStatus());
 
     if (u.pathname === '/api/blog') {
