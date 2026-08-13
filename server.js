@@ -2513,10 +2513,16 @@ const server = http.createServer(async (req, res) => {
        */
       let facts = Array.isArray(body.facts) ? body.facts : [];
       let landmarks = Array.isArray(body.landmarks) ? body.landmarks : [];
+      /* 부르는 쪽은 「쌍용점」 같은 지점 이름만 알고 있을 수 있다.
+         손님이 검색으로 보는 이름은 「쌍용동헬스장 MTO피트니스 쌍용점」이다.
+         인사말에 들어갈 이름은 그쪽이어야 한다. */
+      let name = String(body.name || '').trim();
       if (facts.length === 0 && body.placeId) {
         try {
           const got = await collectPlace(String(body.placeId), body.type, { deep: false });
           const m = got.material || {};
+          const real = String(got.data?.name || '').trim();
+          if (real) name = real;
           facts = [
             ...(m.menuNames || []),
             ...(m.conveniences || []),
@@ -2526,7 +2532,7 @@ const server = http.createServer(async (req, res) => {
         } catch { /* 못 가져와도 답글은 만든다 */ }
       }
 
-      const prompt = REPLY.buildReplyPrompt({ ...body, review, star, facts, landmarks });
+      const prompt = REPLY.buildReplyPrompt({ ...body, review, star, facts, landmarks, name });
       const out = await aiProxy({ tier: body.tier, prompt });
 
       let raw = {};
@@ -2549,7 +2555,7 @@ const server = http.createServer(async (req, res) => {
         : [];
       /* 만들어만 주고 "잘 됐나 보세요" 하는 것과, 무엇이 빠졌는지
          짚어 주는 것은 다르다. 우리 잣대로 재서 같이 넘긴다. */
-      const audit = REPLY.auditReply(reply, review, { name: body.name, keywords: body.keywords }, star);
+      const audit = REPLY.auditReply(reply, review, { name, keywords: body.keywords }, star);
 
       return sendJson(res, 200, {
         ok: true,
