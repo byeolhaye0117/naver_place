@@ -2503,7 +2503,30 @@ const server = http.createServer(async (req, res) => {
       }
 
       const star = Number(body.star) || 0;
-      const prompt = REPLY.buildReplyPrompt({ ...body, review, star });
+
+      /*
+       * 재료 없이 쓰면 지어낸다
+       *
+       * 부르는 쪽이 사실을 안 넘기면 AI 가 빈손으로 쓰려다 「6개월 회원권」 같은
+       * 없는 말을 만들어낸다. 실제로 그렇게 나왔다. 플레이스 주소만 주면
+       * 여기서 한 번 긁어와 채운다 — 어차피 그 일을 하는 서버다.
+       */
+      let facts = Array.isArray(body.facts) ? body.facts : [];
+      let landmarks = Array.isArray(body.landmarks) ? body.landmarks : [];
+      if (facts.length === 0 && body.placeId) {
+        try {
+          const got = await collectPlace(String(body.placeId), body.type, { deep: false });
+          const m = got.material || {};
+          facts = [
+            ...(m.menuNames || []),
+            ...(m.conveniences || []),
+            ...(m.payments || []).map(x => `${x} 결제 가능`),
+          ].map(x => String(x).trim()).filter(x => x.length >= 3).slice(0, 18);
+          landmarks = (m.landmarks || []).map(String).slice(0, 4);
+        } catch { /* 못 가져와도 답글은 만든다 */ }
+      }
+
+      const prompt = REPLY.buildReplyPrompt({ ...body, review, star, facts, landmarks });
       const out = await aiProxy({ tier: body.tier, prompt });
 
       let raw = {};
