@@ -679,6 +679,10 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .snip-msg.ok b{color:var(--ok-fg)}
 .snip-msg.wait{background:var(--accent-soft);border:1px solid var(--acc-line);color:var(--ink)}
 .snip-msg.bad{background:var(--accent-soft);border:1px solid var(--accent);color:var(--ink)}
+.snip-msg pre{margin:9px 0 0;max-height:300px;overflow:auto;white-space:pre-wrap;
+  word-break:break-word;font-family:inherit;font-size:12px;line-height:1.6;
+  background:var(--card);border:1px solid var(--line);border-radius:8px;
+  padding:11px 12px;color:var(--muted)}
 
 /* 한글이 알파벳으로 샌 자리 — 고친 것과 못 고친 것을 갈라서 보여 준다 */
 .gl-fix,.gl-left{margin-top:10px;padding:10px 12px;border-radius:9px;font-size:12.5px;
@@ -4993,31 +4997,64 @@ const snipLen = (s, unit) => unit === "줄" ? s.split("\n").length : [...s].leng
    틀렸다. 그래서 지시문에서 아예 세지 말라고 하고, 판정은 우리가 한다. */
 const snipNote = () => ($("snip-note")?.value || "").trim();
 
-/* AI 가 준 "키: 문구" 줄들을 칸별로 가른다. talkB 는 여러 줄이라 맨 뒤에 두고
-   그다음 줄부터 끝까지를 본문으로 본다. 못 알아본 칸은 손대지 않는다 -
-   빈 칸으로 덮어 버리면 있던 문구까지 사라진다. */
+/* AI 가 준 답을 칸별로 가른다.
+
+   처음 판은 영문 키(coupon:, newsT:)만 알아들었다. 그런데 지시문 본문은
+   내내 한글로 "쿠폰명: 15자 이내" 라고 적어 놓고 마지막에만 영문 키를
+   시켰다. AI 는 자연스럽게 한글 이름으로 답했고, 그래서 톡톡 본문 한 칸만
+   바뀌고 나머지는 그대로였다. 한 지시문 안에서 두 말을 한 것이다.
+
+   이제 둘 다 알아듣는다. 그리고 이름 뒤가 비어 있으면(쿠폰명: 만 있고
+   문구는 아랫줄부터) 다음 이름이 나올 때까지 그 칸으로 모은다 - 번호나
+   가운뎃점을 붙여 오는 것도 흔해서 그것도 걷어낸다. */
 const SNIP_KEYS = ["coupon","newsT","talkT","ad","plT","plD","talkB"];
+/* 긴 이름부터 본다. "쿠폰명"이 "쿠폰"에 먼저 걸리면 안 된다. */
+const SNIP_LABEL = [
+  ["talkB",  ["톡톡 메시지 본문","톡톡메시지 본문","톡톡 본문","톡톡본문","talkB"]],
+  ["talkT",  ["톡톡 메시지 제목","톡톡메시지 제목","톡톡 제목","톡톡제목","talkT"]],
+  ["newsT",  ["소식 제목","소식제목","소식 글 제목","newsT"]],
+  ["coupon", ["쿠폰명","쿠폰 문구","쿠폰문구","쿠폰","coupon"]],
+  ["ad",     ["플레이스광고 소재","플레이스 광고 소재","플레이스광고","광고 소재","광고소재","ad"]],
+  ["plT",    ["파워링크 제목","파워링크제목","plT"]],
+  ["plD",    ["파워링크 설명","파워링크설명","plD"]],
+];
+const SNIP_LABEL_RE = new RegExp(
+  "^\\s*(?:[-*·]|\\d+[.)])?\\s*(?:\\*\\*)?\\s*(" +
+  SNIP_LABEL.flatMap(([, ns]) => ns).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") +
+  ")\\s*(?:\\d+)?\\s*(?:\\*\\*)?\\s*[:：]\\s*(.*)$");
+const snipKeyOf = name => (SNIP_LABEL.find(([, ns]) => ns.includes(name)) || [])[0];
+
+/* 줄머리의 번호·가운뎃점·따옴표, 줄끝의 "(12자)" 를 걷어낸다.
+   AI 에게 글자수를 적지 말라고 했지만 습관처럼 적어 온다. */
+const snipStrip = t => String(t)
+  .replace(/^\s*(?:[-*·•]|\d+[.)])\s*/, "")
+  .replace(/^["'“”‘’]|["'“”‘’]$/g, "")
+  .replace(/\s*[(（]\s*\d+\s*(?:자|줄)\s*[)）]\s*$/, "")
+  .trim();
+
 function parseSnips(text){
-  const out = {}, lines = String(text ?? "").split("\n");
-  let inTalkB = false, talkB = [];
-  for(const raw of lines){
-    const line = raw.replace(/^\s*[-*\d.)\s]{0,4}/, "");
-    const m = line.match(/^(coupon|newsT|talkT|ad|plT|plD|talkB)\s*[:：]\s*(.*)$/);
+  const bag = {};                       // key -> 줄 배열
+  let cur = null;
+  for(const raw of String(text ?? "").split("\n")){
+    const m = raw.match(SNIP_LABEL_RE);
     if(m){
-      inTalkB = m[1] === "talkB";
-      if(inTalkB){ if(m[2].trim()) talkB.push(m[2].trim()); continue; }
-      const v = m[2].trim();
-      if(v){ (out[m[1]] = out[m[1]] || []).push(v); }
+      cur = snipKeyOf(m[1]);
+      const v = snipStrip(m[2]);
+      if(cur){ bag[cur] = bag[cur] || []; if(v) bag[cur].push(v); }
       continue;
     }
-    if(inTalkB && raw.trim()) talkB.push(raw.trim());
+    if(!cur) continue;                  // 머리말이나 설명은 버린다
+    if(!raw.trim()){ if(cur !== "talkB") cur = cur; continue; }
+    const v = snipStrip(raw);
+    if(v) bag[cur].push(v);
   }
-  if(talkB.length) out.talkB = [talkB.join("\n")];
-  /* 우리가 아는 칸만, 빈 것은 빼고 돌려준다 */
   const clean = {};
   for(const k of SNIP_KEYS){
-    const v = (out[k] || []).map(x => naverSafe(fixGlitch(x).text).trim()).filter(Boolean);
-    if(v.length) clean[k] = v;
+    let v = (bag[k] || []).map(x => naverSafe(fixGlitch(x).text).trim()).filter(Boolean);
+    if(!v.length) continue;
+    /* 톡톡 본문은 한 벌이고 줄바꿈이 모양의 일부라 이어 붙인다.
+       나머지는 줄마다 후보 하나다. */
+    clean[k] = k === "talkB" ? [v.join("\n")] : v;
   }
   return clean;
 }
@@ -7144,18 +7181,47 @@ ${LIVELY}
 
 ${CHAR_RULE}
 
-[출력 형식 - 이 모양을 지켜 주세요. 저희가 글자수를 다시 세서 화면에 표시합니다]
-줄마다 "칸이름: 문구" 로 적어 주세요. 글자수는 적지 마세요 - 저희가 셉니다.
-설명, 머리말, 번호, 마크다운은 붙이지 마세요.
+[출력 형식 - 이 모양 그대로 주세요. 저희가 글자수를 다시 세서 화면에 표시합니다]
+칸 이름을 한 줄에 적고, 그 아래에 문구를 한 줄에 하나씩 적어 주세요.
+일곱 칸을 하나도 빠뜨리지 마세요. 글자수는 적지 마세요 - 저희가 셉니다.
+머리말, 설명, 마크다운(**), 번호는 붙이지 마세요.
 
-coupon: (쿠폰명 4줄)
-newsT: (소식 제목 4줄)
-talkT: (톡톡 제목 3줄)
-ad: (플레이스광고 소재 5줄)
-plT: (파워링크 제목 3줄)
-plD: (파워링크 설명 3줄)
-talkB:
-(톡톡 본문을 여기서부터 줄바꿈해 8줄 이내로. 맨 마지막에 놓으세요)`;
+쿠폰명:
+문구
+문구
+문구
+문구
+
+소식 제목:
+문구
+문구
+문구
+문구
+
+톡톡 메시지 제목:
+문구
+문구
+문구
+
+플레이스광고 소재:
+문구
+문구
+문구
+문구
+문구
+
+파워링크 제목:
+문구
+문구
+문구
+
+파워링크 설명:
+문구
+문구
+문구
+
+톡톡 메시지 본문:
+여기부터 줄바꿈해서 8줄 이내로 씁니다. 이 칸은 맨 마지막에 두세요.`;
   },
 
   blog: f => `헬스장 네이버 블로그 홍보글 1편을 써 주세요.
@@ -7707,23 +7773,49 @@ $("snip-remake")?.addEventListener("click", async ()=>{
     if(!n){
       /* 형식을 못 지켜 온 것이다. 조용히 예전 것을 보여 주면 사장님은
          버튼이 안 먹은 줄 아신다. 무슨 일이 났는지 적는다. */
-      if(msg) msg.innerHTML = `<div class="snip-msg bad"><b>AI 답을 못 알아들었습니다</b>
-        아래 문구는 그대로입니다. 한 번 더 눌러 보시거나, <b>지시문 복사</b>로
-        쓰시는 AI 채팅에서 만들어 보세요.</div>`;
+      window.__snipRaw = text;
+      if(msg) msg.innerHTML = `<div class="snip-msg bad"><b>AI 답을 한 칸도 못 알아들었습니다</b>
+        아래 문구는 예전 그대로입니다. 한 번 더 눌러 보시거나, <b>지시문 복사</b>로
+        쓰시는 AI 채팅에서 만들어 보세요.
+        <button class="btn sm ghost" type="button" id="snip-raw-see"
+          style="margin-top:8px">AI가 보낸 그대로 보기</button>
+        <pre id="snip-raw" style="display:none"></pre></div>`;
       return;
     }
     window.__snipAI = got;
+    window.__snipRaw = text;
     renderSnips(getInfo());
+    const NAME = { coupon:"쿠폰명", newsT:"소식 제목", talkT:"톡톡 제목",
+                   talkB:"톡톡 본문", ad:"광고 소재", plT:"파워링크 제목", plD:"파워링크 설명" };
     const miss = SNIP_KEYS.filter(k => !got[k]);
-    if(msg) msg.innerHTML = `<div class="snip-msg ok"><b>사장님이 적으신 내용으로 다시 만들었습니다</b>
-      "${escH(note)}" 를 넣어 ${n}칸을 새로 채웠습니다.${
-        miss.length ? ` ${miss.length}칸은 AI가 못 만들어서 예전 문구가 그대로 있습니다.` : ""}
-      <b>글자수는 저희가 다시 셌습니다.</b></div>`;
+    /* 못 만든 칸은 이름을 대서 알린다. 개수만 말하면 어느 칸이 옛것인지 모르고,
+       아무 말도 안 하면 다 바뀐 줄 아신다 - 실제로 그래서 한 칸만 바뀐 것을
+       한참 뒤에 아셨다. 그리고 AI 가 뭐라고 답했는지 볼 길을 열어 둔다. */
+    if(msg) msg.innerHTML = `<div class="snip-msg ${miss.length ? "wait" : "ok"}">
+      <b>${miss.length ? `일곱 칸 중 ${n}칸만 바뀌었습니다` : "일곱 칸을 다시 만들었습니다"}</b>
+      "${escH(note)}" 를 넣어 ${SNIP_KEYS.filter(k=>got[k]).map(k=>NAME[k]).join(", ")}${
+        miss.length ? `을 새로 채웠습니다. <b>${miss.map(k=>NAME[k]).join(", ")}</b>은 AI가
+        형식을 안 지켜서 예전 문구가 그대로 있습니다.` : "까지 전부 새로 채웠습니다."}
+      <b>글자수는 저희가 다시 셌습니다.</b>
+      <button class="btn sm ghost" type="button" id="snip-raw-see"
+        style="margin-top:8px">AI가 보낸 그대로 보기</button>
+      <pre id="snip-raw" style="display:none"></pre></div>`;
     $("snip-reset").style.display = "";
     try{ refreshAiLeft(); }catch{}
   }catch(err){
     if(msg) msg.innerHTML = `<div class="srv-err"><b>AI 호출 실패</b><br>${escH(err.message)}</div>`;
   }finally{ btn.disabled = false; btn.textContent = was; }
+});
+
+/* AI 가 뭐라고 답했는지 그대로 볼 수 있어야 한다. 못 알아들었을 때
+   "왜 안 바뀌었나"를 사장님이 저한테 물어보실 필요가 없어진다. */
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#snip-raw-see")) return;
+  const box = $("snip-raw"), btn = $("snip-raw-see"); if(!box) return;
+  const open = box.style.display !== "none";
+  box.style.display = open ? "none" : "";
+  btn.textContent = open ? "AI가 보낸 그대로 보기" : "접기";
+  if(!open) box.textContent = window.__snipRaw || "(받은 것이 없습니다)";
 });
 
 $("snip-prompt")?.addEventListener("click", ()=>{
