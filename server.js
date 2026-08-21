@@ -2317,7 +2317,7 @@ const server = http.createServer(async (req, res) => {
         /* 어떤 창구가 살아 있는지 밖에서 확인할 수 있게 적어 둔다.
            열쇠 검사는 모든 /api/ 주소에 붙어서, 없는 창구를 찔러도 401 이 온다.
            그래서 「401 이 왔으니 창구가 있다」는 확인이 되지 않는다 — 실제로 그렇게 잘못 봤다. */
-        routes: ['place', 'reply', 'ai', 'rank'],
+        routes: ['place', 'reply', 'ai', 'rank', 'find'],
         /* 값이 아니라 출처만. env 가 아니면 배포할 때마다 키가 바뀐다. */
         keySource: KEY_SOURCE,
         ai: Boolean(process.env.ANTHROPIC_API_KEY),
