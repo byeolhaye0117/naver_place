@@ -7858,9 +7858,24 @@ function stashBranch(){
 function renderBranches(){
   const box = $("branches"); if(!box) return;
   const list = readBranches();
-  /* 가게가 하나뿐이면 이 줄은 아무 값도 없다. 안 띄운다. */
-  if(list.length < 2){ box.style.display = "none"; box.innerHTML = ""; return; }
+  /* 아직 아무것도 안 담겼으면 띄우지 않는다. 수집 전에 뜨면 무슨 말인지 모른다. */
+  if(!list.length){ box.style.display = "none"; box.innerHTML = ""; return; }
   const now = String(window.__placeId || "");
+
+  /* 한 곳뿐일 때 안 띄우던 자리다. 그랬더니 "지점 줄에서 누르세요"라고 알려
+     드려도 화면에 아무것도 없었다 - 어디를 봐야 하는지 알 길이 없다.
+     한 곳뿐이면 지점을 담는 자리라는 것과 무엇을 하면 되는지를 적는다. */
+  if(list.length === 1){
+    const one = list[0];
+    box.style.display = "";
+    box.innerHTML = `<b>지점</b>
+      <button type="button" class="br on" data-branch="${escH(one.id)}"
+        title="${escH(one.name)}">${escH(one.area || one.name)}</button>
+      <i><b>지점이 더 있으시면 위 검색줄에 그 지점 이름을 넣고 수집을 누르세요.</b>
+        여기 같이 담겨서, 다음부터는 눌러서 오갈 수 있습니다.
+        두 곳부터는 <b>한눈에 보기</b>로 나란히 견줄 수 있습니다.</i>`;
+    return;
+  }
   box.style.display = "";
   box.innerHTML = `<b>지점</b>
     ${list.map(b => `<button type="button" class="br${String(b.id) === now ? " on" : ""}"
