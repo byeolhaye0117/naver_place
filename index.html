@@ -703,6 +703,14 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
   border:1px dashed var(--line);border-radius:999px;padding:6px 13px;
   background:transparent;color:var(--muted);transition:.12s}
 .branches .brall:hover{border-color:var(--accent);color:var(--accent)}
+.branches .br.wait{opacity:.45;cursor:default}
+.branches .brbusy{font-size:12px;color:var(--accent);font-weight:700;
+  display:inline-flex;align-items:center;gap:5px}
+.branches .brbusy::before{content:"";width:11px;height:11px;border-radius:50%;
+  border:2px solid var(--acc-line);border-top-color:var(--accent);
+  animation:brspin .8s linear infinite}
+@keyframes brspin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.branches .brbusy::before{animation:none}}
 
 /* 이름으로 찾았을 때 고르는 목록 — 비슷한 이름이 여럿이라 우리가 고르면 안 된다 */
 .picks{display:flex;flex-direction:column;gap:6px;margin-top:10px}
@@ -1143,12 +1151,15 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         </div>
       </div>
 
+      <!-- 지점 줄은 두 탭 밖에 둔다.
+           처음에는 진단 화면 안에 넣었는데, 사장님이 채우기 도구에서 일하시다
+           지점을 바꾸려고 보면 화면에 아무것도 없었다. 지점은 진단에도 도구에도
+           똑같이 걸리는 값이라, 탭 하나에만 두면 반쪽만 쓰이는 기능이 된다. -->
+      <div class="branches" id="branches" style="display:none"></div>
+      <!-- 지점을 하나씩 갈아 끼우며 봐야 했다. 담아 둔 값으로 한 표에 놓는다. -->
+      <div class="brtable" id="brtable" style="display:none"></div>
+
   <div class="view" id="view-diag" role="tabpanel" aria-labelledby="tab-diag">
-  <!-- 지점 줄 - 가게가 하나뿐이면 안 보인다.
-       지점이 넷이면 옮길 때마다 다시 수집하셔야 했다. 담아 두고 눌러서 갈아 끼운다. -->
-  <div class="branches" id="branches" style="display:none"></div>
-  <!-- 지점을 하나씩 갈아 끼우며 봐야 했다. 담아 둔 값으로 한 표에 놓는다. -->
-  <div class="brtable" id="brtable" style="display:none"></div>
 
 
       <!-- 한눈에 보기 — 들어오면 제일 먼저 이 숫자 -->
@@ -7879,7 +7890,8 @@ function renderBranches(){
     const on = String(b.id) === now;
     const label = b.area || b.name;
     return `<span class="brwrap${on ? " on" : ""}">
-      <button type="button" class="br${on ? " on" : ""}" data-branch="${escH(b.id)}"
+      <button type="button" class="br${on ? " on" : ""}${BR_BUSY ? " wait" : ""}"
+        data-branch="${escH(b.id)}"${BR_BUSY ? " disabled" : ""}
         title="${escH(b.name)} — 누르면 이 지점을 지금 다시 진단합니다">${escH(label)}</button>
       <button type="button" class="brx" data-brdel="${escH(b.id)}" title="목록에서 빼기">×</button>
     </span>`;
@@ -7888,6 +7900,7 @@ function renderBranches(){
   box.innerHTML = `<b>지점</b>${chips}
     <button type="button" class="brall" id="br-add">＋ 지점 추가</button>
     ${list.length >= 2 ? `<button type="button" class="brall" id="br-all">📋 한눈에 보기</button>` : ""}
+    ${BR_BUSY ? `<span class="brbusy">${escH(BR_BUSY.name)} 수집하고 진단하는 중… <b>15초쯤 걸립니다</b></span>` : ""}
     <i>${list.length
       ? `누르면 <b>그 지점을 지금 수집해서 진단</b>합니다. 주소는 한 번만 넣어 두시면 됩니다.`
       : `<b>＋ 지점 추가</b>로 지점 주소를 한 번만 넣어 두세요. 그다음부터는 눌러서 오갑니다.`}</i>`;
@@ -8004,17 +8017,22 @@ function waitFor(sel, ms = 45000){
 }
 
 let BR_RUNNING = false;
+let BR_BUSY = null;          // 지금 돌리고 있는 지점 - 지점 줄에 그린다
 async function runBranch(id){
   if(BR_RUNNING) return;
   const b = readBranches().find(x => String(x.id) === String(id));
   if(!b){ alert("그 지점을 찾지 못했습니다."); return; }
   BR_RUNNING = true;
+  /* 채우기 도구에서 누르시면 수집은 진단 화면 안에서 돈다. 그쪽은 안 보이므로
+     여기에 진행을 적지 않으면 눌러도 아무 일이 없는 것처럼 보인다. */
+  BR_BUSY = { id: String(b.id), name: b.area || b.name };
   /* 지금 보고 계신 지점 값부터 담는다. 안 담으면 눌러 보는 것만으로 잃는다. */
   try{ stashBranch(); }catch{}
   window.__place = null;                 /* 이전 가게 재료가 남으면 섞인다 */
   try{ resetPlaceFields(); }catch{}
   window.__placeId = String(b.id);
   renderBranches();
+  $("branches")?.scrollIntoView({ behavior:"smooth", block:"nearest" });
   try{
     $("s-url").value = String(b.id);
     $("s-collect").click();
@@ -8025,7 +8043,7 @@ async function runBranch(id){
   }catch(e){
     const out = $("s-out");
     if(out) out.innerHTML = srvError(`${b.area || b.name} 진단이 끝나지 않았습니다`, { error:e.message });
-  }finally{ BR_RUNNING = false; }
+  }finally{ BR_RUNNING = false; BR_BUSY = null; renderBranches(); }
 }
 
 /* 지점 등록 - 주소는 한 번만 주시면 된다 */
