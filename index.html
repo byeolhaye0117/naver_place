@@ -669,6 +669,41 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .tcard em{display:block;font-style:normal;font-size:11.5px;font-weight:700;margin-top:8px;
   color:var(--accent);line-height:1.5;word-break:keep-all}
 .tcard em.mat{color:var(--muted);font-weight:600}
+/* 지점 한눈에 보기 — 갈아 끼우며 보던 것을 한 표에 놓는다 */
+.brtable{margin:0 0 16px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--radius);overflow:hidden}
+.brt-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;
+  padding:14px 15px 12px;border-bottom:1px solid var(--line)}
+.brt-h b{font-size:15px;font-weight:800;letter-spacing:-.02em}
+.brt-h span{font-size:12px;color:var(--muted)}
+.brt-h .btn{margin-left:auto}
+/* 표는 가로로 넘친다. 몸통을 밀지 말고 표 안에서만 밀리게 한다. */
+.brt-scroll{overflow-x:auto}
+.brtable table{border-collapse:collapse;width:100%;min-width:760px;font-size:13px}
+.brtable th,.brtable td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);
+  vertical-align:middle;white-space:nowrap}
+.brtable thead th{font-size:11.5px;font-weight:700;color:var(--muted);
+  background:var(--surface-2);letter-spacing:-.01em}
+.brtable tbody th{font-weight:600}
+.brtable tbody th b{display:block;font-size:13.5px;font-weight:800}
+.brtable tbody th i{display:block;font-style:normal;font-size:11px;color:var(--muted);
+  max-width:22ch;overflow:hidden;text-overflow:ellipsis}
+.brtable tbody th em{display:block;font-style:normal;font-size:10.5px;color:var(--muted);opacity:.75}
+.brtable td{font-variant-numeric:tabular-nums;font-weight:700}
+.brtable td i{display:block;font-style:normal;font-size:10.5px;font-weight:600;color:var(--muted)}
+.brtable td.bad{color:var(--accent)}
+.brtable td.bad i{color:var(--accent);opacity:.85}
+.brtable td .na{color:var(--muted);font-weight:500}
+.brtable tr.on{background:var(--accent-soft)}
+.brt-tip{margin:0;padding:13px 15px;font-size:12.5px;color:var(--muted);line-height:1.7;
+  border-top:1px solid var(--line);background:var(--surface-2)}
+.brt-tip b{color:var(--ink)}
+/* 이건 지점이 아니라 표를 여는 단추다. .br 로 두면 지점을 셀 때마다 하나 더 세진다. */
+.branches .brall{font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;
+  border:1px dashed var(--line);border-radius:999px;padding:6px 13px;
+  background:transparent;color:var(--muted);transition:.12s}
+.branches .brall:hover{border-color:var(--accent);color:var(--accent)}
+
 /* 이름으로 찾았을 때 고르는 목록 — 비슷한 이름이 여럿이라 우리가 고르면 안 된다 */
 .picks{display:flex;flex-direction:column;gap:6px;margin-top:10px}
 .pick{text-align:left;font-size:13.5px;font-weight:700;cursor:pointer;
@@ -1105,6 +1140,8 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
   <!-- 지점 줄 - 가게가 하나뿐이면 안 보인다.
        지점이 넷이면 옮길 때마다 다시 수집하셔야 했다. 담아 두고 눌러서 갈아 끼운다. -->
   <div class="branches" id="branches" style="display:none"></div>
+  <!-- 지점을 하나씩 갈아 끼우며 봐야 했다. 담아 둔 값으로 한 표에 놓는다. -->
+  <div class="brtable" id="brtable" style="display:none"></div>
 
 
       <!-- 한눈에 보기 — 들어오면 제일 먼저 이 숫자 -->
@@ -2387,7 +2424,7 @@ $("btn-run").addEventListener("click", ()=>{
   if($("need-diag")) $("need-diag").style.display = "none";
   /* 진단이 끝난 이 상태가 그 지점의 값이다. 여기서 담아 둬야 다른 지점을
      수집해도 잃지 않는다. 담고 나서 지점 줄을 다시 그린다. */
-  try{ stashBranch(); renderBranches(); }catch{}
+  try{ stashBranch(); renderBranches(); renderBranchTable(); }catch{}
   $("result").scrollIntoView({behavior:"smooth", block:"start"});
 });
 
@@ -7828,9 +7865,103 @@ function renderBranches(){
   box.innerHTML = `<b>지점</b>
     ${list.map(b => `<button type="button" class="br${String(b.id) === now ? " on" : ""}"
         data-branch="${escH(b.id)}" title="${escH(b.name)}">
-        ${escH(b.area || b.name)}${String(b.id) === now ? "" : ""}</button>`).join("")}
+        ${escH(b.area || b.name)}</button>`).join("")}
+    <button type="button" class="brall" id="br-all">📋 한눈에 보기</button>
     <i>누르면 그 지점 값으로 갈아 끼웁니다. 지금 것은 저장됩니다.</i>`;
 }
+
+/* ── 지점 한눈에 보기 ────────────────────────────────────────────────
+   "지점을 계속 분석하고 수집하려니까 귀찮아" - 맞는 말씀이다. 넷을 견주려면
+   갈아 끼우고 보고, 갈아 끼우고 보고를 세 번 해야 했다. 그러고 나면 앞에서
+   본 숫자는 이미 머리에서 흐려진다.
+
+   담아 둔 값이 이미 있으므로 새로 수집할 것이 없다. 한 표에 놓기만 하면 된다.
+   다만 이 숫자들은 "그때 잰 값"이다. 잰 때를 같이 적지 않으면 오늘 값으로
+   읽으시게 된다 - 그건 우리가 거짓말을 하는 것이다. */
+const BR_PHOTO_GOAL = 30;
+
+function branchRow(b){
+  const d = b.snap?.place?.data || {};
+  const m = b.snap?.place?.material || {};
+  const dv = b.snap?.place?.derived || {};
+  const kw = String(dv.repkw || b.snap?.["i-repkw"] || "").split(",").map(x=>x.trim()).filter(Boolean);
+  const name = b.name || d.name || "";
+  /* 등록명에 지역과 업종이 들어 있는지. 용곡점·두정점이 여기서 갈렸다. */
+  const area = b.area || dv.area || "";
+  const nameHasArea = Boolean(area) && name.replace(/\s/g,"").includes(area.replace(/\s/g,""));
+  const nameHasType = /헬스|피트니스|짐|PT|휘트니스/i.test(name);
+  return {
+    id: b.id, name, area, at: b.at,
+    photos: d.totalImages ?? null,
+    reviews: d.visitorReviewsTotal ?? d.visitorReviewCount ?? null,
+    score: d.visitorReviewsScore ?? d.visitorReviewScore ?? null,
+    blogs: d.cafeBlogReviewsTotal ?? null,
+    kw: kw.length,
+    menus: (m.menuNames || []).length,
+    feeds: (m.feeds || []).length,
+    open: (m.openReviews || []).filter(x=>x?.body).length,
+    nameOk: nameHasArea && nameHasType,
+  };
+}
+
+function renderBranchTable(){
+  const box = $("brtable"); if(!box) return;
+  const list = readBranches();
+  if(list.length < 2 || box.dataset.open !== "1"){
+    box.style.display = "none"; box.innerHTML = ""; return;
+  }
+  const rows = list.map(branchRow);
+  const now = String(window.__placeId || "");
+  const cell = (v, bad, note) => `<td class="${bad ? "bad" : ""}">${
+    v == null ? '<span class="na">모름</span>' : v}${note ? `<i>${note}</i>` : ""}</td>`;
+
+  box.style.display = "";
+  box.innerHTML = `
+    <div class="brt-h"><b>지점 한눈에 보기</b>
+      <span>담아 둔 값으로 만든 표입니다. 새로 수집하지 않았습니다.</span>
+      <button type="button" class="btn sm ghost" id="br-close">접기</button></div>
+    <div class="brt-scroll"><table>
+      <thead><tr>
+        <th>지점</th><th>사진</th><th>방문 리뷰</th><th>블로그</th>
+        <th>대표키워드</th><th>메뉴</th><th>소식</th><th>답글 밀림</th><th>등록명</th><th></th>
+      </tr></thead>
+      <tbody>${rows.map(r=>`<tr class="${String(r.id)===now?"on":""}">
+        <th scope="row"><b>${escH(r.area || r.name)}</b>
+          <i>${escH(r.name)}</i>
+          <em>${r.at ? whenText(r.at) : ""} 기준</em></th>
+        ${cell(r.photos != null ? `${r.photos}장` : null, r.photos != null && r.photos < BR_PHOTO_GOAL,
+               r.photos != null && r.photos < BR_PHOTO_GOAL ? `${BR_PHOTO_GOAL - r.photos}장 부족` : "")}
+        ${cell(r.reviews != null ? r.reviews.toLocaleString("ko-KR") : null, false,
+               r.score ? `평점 ${r.score}` : "")}
+        ${cell(r.blogs != null ? r.blogs.toLocaleString("ko-KR") : null, false, "")}
+        ${cell(`${r.kw}/5`, r.kw < 5, r.kw < 5 ? "빈칸 있음" : "")}
+        ${cell(`${r.menus}개`, r.menus === 0, "")}
+        ${cell(`${r.feeds}개`, r.feeds === 0, r.feeds === 0 ? "안 올림" : "")}
+        ${cell(`${r.open}개`, r.open > 0, r.open > 0 ? "오늘 할 일" : "")}
+        ${cell(r.nameOk ? "괜찮음" : "손볼 것", !r.nameOk,
+               r.nameOk ? "" : "지역·업종 없음")}
+        <td><button type="button" class="btn sm ghost" data-branch="${escH(r.id)}"
+          ${String(r.id)===now?"disabled":""}>${String(r.id)===now?"보는 중":"열기"}</button></td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <p class="brt-tip"><b>빨간 칸이 손댈 자리입니다.</b>
+      사진은 상위권 기준 ${BR_PHOTO_GOAL}장, 대표키워드는 5칸을 다 채워야 합니다.
+      <b>답글 밀림</b>은 오늘 바로 하실 수 있는 일이라 제일 먼저 보세요.
+      등록명에 지역과 업종이 없으면 그 검색어로는 잘 안 잡힙니다.</p>`;
+}
+
+document.addEventListener("click", e=>{
+  if(e.target.closest("#br-all")){
+    const box = $("brtable");
+    box.dataset.open = box.dataset.open === "1" ? "0" : "1";
+    renderBranchTable();
+    if(box.dataset.open === "1") box.scrollIntoView({ behavior:"smooth", block:"start" });
+    return;
+  }
+  if(e.target.closest("#br-close")){
+    const box = $("brtable"); box.dataset.open = "0"; renderBranchTable();
+  }
+});
 
 async function switchBranch(id){
   if(String(id) === String(window.__placeId || "")) return;
@@ -7842,7 +7973,7 @@ async function switchBranch(id){
   window.__placeId = b.id;
   if(b.snap && b.snap.place) window.__place = b.snap.place;
   try{ save(); }catch{}
-  renderBranches();
+  renderBranches(); renderBranchTable();
   /* 진단을 다시 돌려서 화면 전체를 그 지점 것으로 맞춘다.
      여기서 안 돌리면 위 숫자와 아래 문장이 서로 다른 가게 얘기를 하게 된다. */
   try{ $("btn-run")?.click(); }catch{}
