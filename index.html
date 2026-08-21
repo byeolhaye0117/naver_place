@@ -721,6 +721,13 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
   background:var(--card);color:var(--ink);transition:.12s}
 .branches .br:hover{border-color:var(--accent);color:var(--accent)}
 .branches .br.on{border-color:var(--accent);background:var(--accent);color:#fff}
+/* 빼기는 그 지점 위에 얹는다. 따로 두면 어느 지점 것인지 알 수 없다. */
+.branches .brwrap{position:relative;display:inline-flex}
+.branches .brx{position:absolute;top:-6px;right:-5px;width:18px;height:18px;line-height:1;
+  border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--muted);
+  font-size:12px;cursor:pointer;display:none;padding:0}
+.branches .brwrap:hover .brx{display:block}
+.branches .brx:hover{border-color:var(--accent);color:var(--accent)}
 .branches>i{flex:1 0 100%;font-style:normal;font-size:11.5px;color:var(--muted);margin-top:2px}
 
 /* 이번에 알릴 내용 — 수집으로는 절대 안 들어오는 값이라 사장님만 아신다 */
@@ -7849,40 +7856,41 @@ function stashBranch(){
   const id = window.__placeId;
   const name = ($("i-name")?.value || "").trim();
   if(!id || !name) return;
-  const list = readBranches().filter(b => String(b.id) !== String(id));
-  list.push({ id: String(id), name, area: ($("i-area")?.value || "").trim(),
-              at: new Date().toISOString(), snap: snapshot() });
+  const list = readBranches();
+  const at = list.findIndex(b => String(b.id) === String(id));
+  const row = { id: String(id), name, area: ($("i-area")?.value || "").trim(),
+                at: new Date().toISOString(), snap: snapshot() };
+  /* 이미 등록된 지점이면 그 자리에 그대로 둔다. 뒤로 밀면 지점 줄 차례가
+     누를 때마다 바뀌어서, 늘 있던 자리에 있던 버튼이 사라진다. */
+  if(at >= 0) list[at] = row; else list.push(row);
   writeBranches(list);
 }
 
 function renderBranches(){
   const box = $("branches"); if(!box) return;
   const list = readBranches();
-  /* 아직 아무것도 안 담겼으면 띄우지 않는다. 수집 전에 뜨면 무슨 말인지 모른다. */
-  if(!list.length){ box.style.display = "none"; box.innerHTML = ""; return; }
   const now = String(window.__placeId || "");
+  /* 아무것도 없고 수집도 안 하셨으면 띄우지 않는다. 처음 오신 분께는
+     무슨 말인지 모를 칸이다. 한 곳이라도 담기면 그때부터 보인다. */
+  if(!list.length && !now){ box.style.display = "none"; box.innerHTML = ""; return; }
 
-  /* 한 곳뿐일 때 안 띄우던 자리다. 그랬더니 "지점 줄에서 누르세요"라고 알려
-     드려도 화면에 아무것도 없었다 - 어디를 봐야 하는지 알 길이 없다.
-     한 곳뿐이면 지점을 담는 자리라는 것과 무엇을 하면 되는지를 적는다. */
-  if(list.length === 1){
-    const one = list[0];
-    box.style.display = "";
-    box.innerHTML = `<b>지점</b>
-      <button type="button" class="br on" data-branch="${escH(one.id)}"
-        title="${escH(one.name)}">${escH(one.area || one.name)}</button>
-      <i><b>지점이 더 있으시면 위 검색줄에 그 지점 이름을 넣고 수집을 누르세요.</b>
-        여기 같이 담겨서, 다음부터는 눌러서 오갈 수 있습니다.
-        두 곳부터는 <b>한눈에 보기</b>로 나란히 견줄 수 있습니다.</i>`;
-    return;
-  }
   box.style.display = "";
-  box.innerHTML = `<b>지점</b>
-    ${list.map(b => `<button type="button" class="br${String(b.id) === now ? " on" : ""}"
-        data-branch="${escH(b.id)}" title="${escH(b.name)}">
-        ${escH(b.area || b.name)}</button>`).join("")}
-    <button type="button" class="brall" id="br-all">📋 한눈에 보기</button>
-    <i>누르면 그 지점 값으로 갈아 끼웁니다. 지금 것은 저장됩니다.</i>`;
+  const chips = list.map(b => {
+    const on = String(b.id) === now;
+    const label = b.area || b.name;
+    return `<span class="brwrap${on ? " on" : ""}">
+      <button type="button" class="br${on ? " on" : ""}" data-branch="${escH(b.id)}"
+        title="${escH(b.name)} — 누르면 이 지점을 지금 다시 진단합니다">${escH(label)}</button>
+      <button type="button" class="brx" data-brdel="${escH(b.id)}" title="목록에서 빼기">×</button>
+    </span>`;
+  }).join("");
+
+  box.innerHTML = `<b>지점</b>${chips}
+    <button type="button" class="brall" id="br-add">＋ 지점 추가</button>
+    ${list.length >= 2 ? `<button type="button" class="brall" id="br-all">📋 한눈에 보기</button>` : ""}
+    <i>${list.length
+      ? `누르면 <b>그 지점을 지금 수집해서 진단</b>합니다. 주소는 한 번만 넣어 두시면 됩니다.`
+      : `<b>＋ 지점 추가</b>로 지점 주소를 한 번만 넣어 두세요. 그다음부터는 눌러서 오갑니다.`}</i>`;
 }
 
 /* ── 지점 한눈에 보기 ────────────────────────────────────────────────
@@ -7978,27 +7986,86 @@ document.addEventListener("click", e=>{
   }
 });
 
-async function switchBranch(id){
-  if(String(id) === String(window.__placeId || "")) return;
-  stashBranch();                         /* 지금 보고 계신 것부터 담는다 */
-  const b = readBranches().find(x => String(x.id) === String(id));
-  if(!b){ alert("그 지점 값을 찾지 못했습니다. 한 번 수집해 주세요."); return; }
-  window.__place = null;                 /* 이전 가게 재료가 남으면 섞인다 */
-  restore(b.snap);
-  window.__placeId = b.id;
-  if(b.snap && b.snap.place) window.__place = b.snap.place;
-  try{ save(); }catch{}
-  renderBranches(); renderBranchTable();
-  /* 진단을 다시 돌려서 화면 전체를 그 지점 것으로 맞춘다.
-     여기서 안 돌리면 위 숫자와 아래 문장이 서로 다른 가게 얘기를 하게 된다. */
-  try{ $("btn-run")?.click(); }catch{}
-  showToast(`${b.area || b.name} 값으로 바꿨습니다`);
-  $("branches")?.scrollIntoView({ behavior:"smooth", block:"start" });
+/* 지점 버튼을 누르면 그 자리에서 수집부터 진단까지 자동으로 돈다.
+
+   처음 판은 "이미 수집해 둔 값을 되살리는" 것이었다. 사장님이 바라신 것은
+   그게 아니었다 - 버튼 하나로 그 지점을 지금 다시 진단하는 것이다.
+   주소는 한 번만 등록해 두면 그다음부터 우리가 알아서 쓴다. */
+function waitFor(sel, ms = 45000){
+  return new Promise((done, fail)=>{
+    const t0 = Date.now();
+    (function look(){
+      const el = document.querySelector(sel);
+      if(el) return done(el);
+      if(Date.now() - t0 > ms) return fail(new Error("시간이 너무 걸립니다"));
+      setTimeout(look, 200);
+    })();
+  });
 }
 
-document.addEventListener("click", e=>{
+let BR_RUNNING = false;
+async function runBranch(id){
+  if(BR_RUNNING) return;
+  const b = readBranches().find(x => String(x.id) === String(id));
+  if(!b){ alert("그 지점을 찾지 못했습니다."); return; }
+  BR_RUNNING = true;
+  /* 지금 보고 계신 지점 값부터 담는다. 안 담으면 눌러 보는 것만으로 잃는다. */
+  try{ stashBranch(); }catch{}
+  window.__place = null;                 /* 이전 가게 재료가 남으면 섞인다 */
+  try{ resetPlaceFields(); }catch{}
+  window.__placeId = String(b.id);
+  renderBranches();
+  try{
+    $("s-url").value = String(b.id);
+    $("s-collect").click();
+    /* 수집이 끝나면 "맞아요, 진단 시작" 이 뜬다. 그것까지 우리가 누른다 -
+       사장님이 버튼을 두 번 더 누르실 이유가 없다. */
+    const go = await waitFor("#btn-confirm-run");
+    go.click();
+  }catch(e){
+    const out = $("s-out");
+    if(out) out.innerHTML = srvError(`${b.area || b.name} 진단이 끝나지 않았습니다`, { error:e.message });
+  }finally{ BR_RUNNING = false; }
+}
+
+/* 지점 등록 - 주소는 한 번만 주시면 된다 */
+function addBranchById(id, name){
+  const clean = String(id || "").trim();
+  if(!/^\d{5,}$/.test(clean)){ alert("플레이스 주소나 번호를 넣어 주세요."); return false; }
+  const list = readBranches();
+  if(list.some(x => String(x.id) === clean)){ alert("이미 담긴 지점입니다."); return false; }
+  list.push({ id: clean, name: String(name || "").trim() || `지점 ${clean}`, area: "", at: null, snap: null });
+  writeBranches(list);
+  renderBranches();
+  return true;
+}
+
+document.addEventListener("click", async e=>{
+  const add = e.target.closest("#br-add");
+  if(add){
+    const v = prompt("지점의 플레이스 주소나 번호를 넣어 주세요.\n\n" +
+      "예) https://map.naver.com/p/entry/place/11716617\n" +
+      "가게 이름으로 찾으시려면 위 검색줄에 이름을 넣고 수집을 누르세요.");
+    if(!v) return;
+    let id = String(v).trim();
+    const m = id.match(/place\/(\d{5,})|[?&]id=(\d{5,})|^(\d{5,})$/);
+    id = m ? (m[1] || m[2] || m[3]) : "";
+    if(!id){ alert("주소에서 번호를 찾지 못했습니다. 긴 주소(map.naver.com/p/entry/place/…)를 넣어 주세요."); return; }
+    const nm = prompt("이 지점을 뭐라고 부를까요?\n\n예) 두정점", "") || "";
+    if(addBranchById(id, nm)) runBranch(id);
+    return;
+  }
+  const del = e.target.closest("[data-brdel]");
+  if(del){
+    const id = del.dataset.brdel;
+    const b = readBranches().find(x=>String(x.id)===String(id));
+    if(!confirm(`${b?.area || b?.name || "이 지점"} 을 목록에서 뺍니다. 계속할까요?`)) return;
+    writeBranches(readBranches().filter(x=>String(x.id)!==String(id)));
+    renderBranches(); renderBranchTable();
+    return;
+  }
   const b = e.target.closest("[data-branch]"); if(!b) return;
-  switchBranch(b.dataset.branch);
+  runBranch(b.dataset.branch);
 });
 
 /* ── 짧은 문구 다시 만들기 ──────────────────────────────────────── */
