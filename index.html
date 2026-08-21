@@ -7959,7 +7959,11 @@ function placeKey(){
    자동 채우기는 이미 채워진 칸을 덮지 않는다 — 손으로 고친 값을 지키려는 규칙이다.
    가게가 바뀌면 그 규칙이 거짓 정보를 만들기 때문에 여기서 한 번 비운다. */
 function resetPlaceFields(){
-  ["i-name","i-area","i-price","i-intro","i-repkw","i-kw1","i-kw2","i-kw3","i-edge","rp-closing","rp-greet","rp-paste"]
+  /* 첫인사와 끝인사는 여기서 비우지 않는다. 그건 그 가게의 값이 아니라
+     사장님이 정하신 말투다. 첫인사는 {상호명} 자리표시를 쓰기 때문에 지점이
+     바뀌면 업체명만 알아서 바뀐다 - 비우면 지점을 옮길 때마다 다시 적으셔야 한다.
+     실제로 용곡점을 수집했더니 쌍용점에서 정해 두신 첫인사가 통째로 사라졌다. */
+  ["i-name","i-area","i-price","i-intro","i-repkw","i-kw1","i-kw2","i-kw3","i-edge","rp-paste"]
     .forEach(id => { const e = $(id); if(e) e.value = ""; });
   const ro = $("rp-out"); if(ro) ro.innerHTML = "";
   const t = $("i-type"); if(t) t.selectedIndex = 0;
