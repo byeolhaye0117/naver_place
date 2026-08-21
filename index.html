@@ -669,6 +669,18 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .tcard em{display:block;font-style:normal;font-size:11.5px;font-weight:700;margin-top:8px;
   color:var(--accent);line-height:1.5;word-break:keep-all}
 .tcard em.mat{color:var(--muted);font-weight:600}
+/* 지점 줄 — 지점이 둘 이상일 때만 보인다 */
+.branches{display:flex;flex-wrap:wrap;align-items:center;gap:7px;
+  margin:0 0 14px;padding:11px 13px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:10px}
+.branches>b{font-size:12.5px;font-weight:800;letter-spacing:-.02em;margin-right:2px}
+.branches .br{font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;
+  border:1px solid var(--line);border-radius:999px;padding:6px 13px;
+  background:var(--card);color:var(--ink);transition:.12s}
+.branches .br:hover{border-color:var(--accent);color:var(--accent)}
+.branches .br.on{border-color:var(--accent);background:var(--accent);color:#fff}
+.branches>i{flex:1 0 100%;font-style:normal;font-size:11.5px;color:var(--muted);margin-top:2px}
+
 /* 이번에 알릴 내용 — 수집으로는 절대 안 들어오는 값이라 사장님만 아신다 */
 .snip-ask{margin:12px 0;padding:13px 15px;background:var(--surface-2);
   border:1px solid var(--line);border-radius:10px}
@@ -1083,6 +1095,10 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       </div>
 
   <div class="view" id="view-diag" role="tabpanel" aria-labelledby="tab-diag">
+  <!-- 지점 줄 - 가게가 하나뿐이면 안 보인다.
+       지점이 넷이면 옮길 때마다 다시 수집하셔야 했다. 담아 두고 눌러서 갈아 끼운다. -->
+  <div class="branches" id="branches" style="display:none"></div>
+
 
       <!-- 한눈에 보기 — 들어오면 제일 먼저 이 숫자 -->
       <div id="topline" class="stats-wrap" style="display:none">
@@ -2362,6 +2378,9 @@ $("btn-run").addEventListener("click", ()=>{
   $("gonext").style.display = "";
   if(VIEW === "diag") document.querySelectorAll(".tab-dot").forEach(e=>e.classList.add("on"));
   if($("need-diag")) $("need-diag").style.display = "none";
+  /* 진단이 끝난 이 상태가 그 지점의 값이다. 여기서 담아 둬야 다른 지점을
+     수집해도 잃지 않는다. 담고 나서 지점 줄을 다시 그린다. */
+  try{ stashBranch(); renderBranches(); }catch{}
   $("result").scrollIntoView({behavior:"smooth", block:"start"});
 });
 
@@ -7759,6 +7778,76 @@ let rpGreetTimer;
     if($("rp-paste")?.value.trim()){ try{ makePastedReply(); }catch{} }
   }, 400);
 }));
+/* ── 지점 오가기 ──────────────────────────────────────────────────
+   지점이 넷이다. 쌍용점, 용곡점, 두정점, 성정점. 그런데 도구는 가게를 하나만
+   담고 있어서, 두정점을 수집하면 쌍용점 값이 통째로 덮였다. 지점을 옮길 때마다
+   1분씩 다시 수집하셔야 했고, 어제 본 쌍용점 숫자는 사라졌다.
+
+   수집이 끝날 때마다 그 상태를 지점으로 담아 둔다. 줄에서 누르면 갈아 끼운다.
+   담는 것은 snapshot() 이 만드는 그 값 그대로다 - 새 그릇을 만들면 저장·복원과
+   갈라져서 언젠가 한쪽만 고치게 된다.
+
+   첫인사·끝인사는 지점 공통이라 갈아 끼울 때 건드리지 않는다. */
+const BR_KEY = "gym-place-branches/v1";
+const BR_MAX = 8;
+
+function readBranches(){
+  try{ const v = JSON.parse(localStorage.getItem(BR_KEY)); return Array.isArray(v) ? v : []; }
+  catch{ return []; }
+}
+function writeBranches(list){
+  try{ localStorage.setItem(BR_KEY, JSON.stringify(list.slice(-BR_MAX))); }
+  catch{ /* 자리가 모자라면 조용히 넘어간다 - 지점 담기가 진단을 막으면 안 된다 */ }
+}
+
+/* 지금 화면을 지점으로 담는다. 같은 가게면 갈아 끼운다. */
+function stashBranch(){
+  const id = window.__placeId;
+  const name = ($("i-name")?.value || "").trim();
+  if(!id || !name) return;
+  const list = readBranches().filter(b => String(b.id) !== String(id));
+  list.push({ id: String(id), name, area: ($("i-area")?.value || "").trim(),
+              at: new Date().toISOString(), snap: snapshot() });
+  writeBranches(list);
+}
+
+function renderBranches(){
+  const box = $("branches"); if(!box) return;
+  const list = readBranches();
+  /* 가게가 하나뿐이면 이 줄은 아무 값도 없다. 안 띄운다. */
+  if(list.length < 2){ box.style.display = "none"; box.innerHTML = ""; return; }
+  const now = String(window.__placeId || "");
+  box.style.display = "";
+  box.innerHTML = `<b>지점</b>
+    ${list.map(b => `<button type="button" class="br${String(b.id) === now ? " on" : ""}"
+        data-branch="${escH(b.id)}" title="${escH(b.name)}">
+        ${escH(b.area || b.name)}${String(b.id) === now ? "" : ""}</button>`).join("")}
+    <i>누르면 그 지점 값으로 갈아 끼웁니다. 지금 것은 저장됩니다.</i>`;
+}
+
+async function switchBranch(id){
+  if(String(id) === String(window.__placeId || "")) return;
+  stashBranch();                         /* 지금 보고 계신 것부터 담는다 */
+  const b = readBranches().find(x => String(x.id) === String(id));
+  if(!b){ alert("그 지점 값을 찾지 못했습니다. 한 번 수집해 주세요."); return; }
+  window.__place = null;                 /* 이전 가게 재료가 남으면 섞인다 */
+  restore(b.snap);
+  window.__placeId = b.id;
+  if(b.snap && b.snap.place) window.__place = b.snap.place;
+  try{ save(); }catch{}
+  renderBranches();
+  /* 진단을 다시 돌려서 화면 전체를 그 지점 것으로 맞춘다.
+     여기서 안 돌리면 위 숫자와 아래 문장이 서로 다른 가게 얘기를 하게 된다. */
+  try{ $("btn-run")?.click(); }catch{}
+  showToast(`${b.area || b.name} 값으로 바꿨습니다`);
+  $("branches")?.scrollIntoView({ behavior:"smooth", block:"start" });
+}
+
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-branch]"); if(!b) return;
+  switchBranch(b.dataset.branch);
+});
+
 /* ── 짧은 문구 다시 만들기 ──────────────────────────────────────── */
 $("snip-remake")?.addEventListener("click", async ()=>{
   const btn = $("snip-remake"), msg = $("snip-ai-msg");
@@ -8196,6 +8285,7 @@ document.addEventListener("change", e=>{ if(e.target.closest("main")) save(); })
   try{ restore(saved); }catch{}
   seedGreet(saved);
   renderSaves();
+  try{ renderBranches(); }catch{}
   paintWho();
   paintFactsN();
   try{ paintBlogFound(); }catch{}
