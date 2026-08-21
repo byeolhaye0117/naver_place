@@ -2357,6 +2357,51 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, await collectPlace(target, q.get('type')));
     }
 
+    /* ── 이름으로 가게 찾기 ──────────────────────────────────
+       대시보드가 지점마다 플레이스 주소를 손으로 넣어야 했다. 지점이 넷이면
+       네 번, 새 지점이 생기면 또 한 번이고, 그때마다 네이버에서 주소를 복사해
+       와야 한다. 검색어만 주면 후보를 뽑아 주는 자리를 둔다.
+
+       고르는 것은 사람이 한다. 「MTO피트니스」처럼 지점이 여럿인 상호는 검색
+       결과에 쌍용·성정·용곡이 나란히 뜨고, 이름만으로는 못 가른다. 잘못 박히면
+       그 지점 답글마다 남의 가게 시설이 사실인 양 적힌다 — 빈 칸보다 나쁘다.
+       그래서 주소와 리뷰 수까지 같이 실어 보낸다. 그게 있어야 고를 수 있다.
+
+       순위를 재는 findRank 를 그대로 쓴다. 기준 아이디로 '0' 을 주는데, 그건
+       실제로 없는 값이라 「몇 위인가」는 안 나오고 목록만 남는다 —
+       경쟁사 찾기(rivalKeywords)도 같은 방법을 쓴다. */
+    if (u.pathname === '/api/find') {
+      const kw = String(q.get('keyword') || '').trim();
+      if (!kw) return sendJson(res, 400, { ok: false, error: 'keyword 파라미터가 필요합니다.' });
+      const n = Math.min(Math.max(Number(q.get('n') || 5), 1), 10);
+
+      const r = await findRank(kw, '0', 2);
+      const list = (r.ranked || []).slice(0, n);
+      if (!list.length) {
+        return sendJson(res, 200,
+          { ok: false, keyword: kw, error: r.error || '검색 결과를 읽지 못했습니다.' });
+      }
+
+      /* 얕게만 긁는다(deep:false). 필요한 값이 차면 바로 멈추므로 한 곳에
+         한 번씩만 두드린다 — 후보를 고르는 데 리뷰 탭까지 들를 이유가 없다. */
+      const items = [];
+      for (const p of list) {
+        let d = {};
+        try { d = (await collectPlace(p.id, null, { deep: false }))?.data || {}; }
+        catch { /* 못 읽어도 이름과 아이디는 있다 */ }
+        items.push({
+          id: String(p.id),
+          rank: p.rank,
+          name: String(d.name || p.name || '').trim(),
+          category: String(d.category || '').trim(),
+          address: String(d.roadAddress || d.address || '').trim(),
+          reviews: Number(d.visitorReviewCount || 0) || null,
+        });
+        await sleep(180);   // 연달아 두드리면 막힌다
+      }
+      return sendJson(res, 200, { ok: true, keyword: kw, items });
+    }
+
     if (u.pathname === '/api/rank') {
       const kw = q.get('keyword'), target = q.get('url');
       if (!kw || !target) return sendJson(res, 400, { ok: false, error: 'keyword, url 파라미터가 필요합니다.' });
