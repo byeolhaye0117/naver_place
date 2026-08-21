@@ -1674,6 +1674,42 @@ const RANK_STRATEGIES = [
   (q, p) => `https://pcmap.place.naver.com/place/list?query=${encodeURIComponent(q)}&page=${p}`,
 ];
 
+/* ── 가게 이름으로 찾기 ──────────────────────────────────────────────────
+   지점이 넷이면 링크를 넷 다 찾아 오시는 게 일이다. 네이버 지도에서 가게를
+   열고, 공유를 누르고, 주소를 복사해서 붙여넣기 - 지점마다 그걸 하셔야 했다.
+
+   순위 조회가 이미 목록을 읽고 있다. 같은 길로 이름을 넣어 찾으면 된다.
+   새로 만드는 것은 없고, 있는 것을 한 번 더 쓰는 것뿐이다. */
+async function findPlaces(query, n = 8) {
+  const q = String(query || '').trim();
+  if (q.length < 2) return { ok: false, error: '두 글자 이상 넣어 주세요.' };
+
+  const attempts = [];
+  for (const build of RANK_STRATEGIES) {
+    const url = build(q, 1);
+    try {
+      const r = await get(url);
+      const json = tryJson(r.text);
+      const places = json ? harvestPlaces(json) : placesFromListHtml(r.text);
+      if (places && places.length) {
+        /* 같은 가게가 여러 번 나오는 목록이 있다. id 로 한 번만 남긴다. */
+        const seen = new Set(), out = [];
+        for (const p of places) {
+          if (seen.has(p.id)) continue;
+          seen.add(p.id);
+          out.push({ id: p.id, name: p.name });
+          if (out.length >= n) break;
+        }
+        return { ok: true, query: q, places: out, attempts };
+      }
+      attempts.push({ url, status: r.status, result: places ? '업체 목록 없음' : '목록 파싱 실패' });
+    } catch (e) {
+      attempts.push({ url, result: `요청 실패: ${e.message}` });
+    }
+  }
+  return { ok: false, error: `"${q}" 로 찾은 가게가 없습니다.`, attempts };
+}
+
 async function findRank(keyword, placeId, maxPages = 3) {
   const attempts = [];
 
@@ -2497,6 +2533,10 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/kw-volume') {
       const list = String(q.get('keywords') || '').split(',').map(x => x.trim()).filter(Boolean);
       return sendJson(res, 200, await keywordVolume(list));
+    }
+
+    if (u.pathname === '/api/find') {
+      return sendJson(res, 200, await findPlaces(q.get('q'), Number(q.get('n') || 8)));
     }
 
     if (u.pathname === '/api/place') {

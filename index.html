@@ -669,6 +669,13 @@ table.kwf td.act{font-size:12px;color:var(--muted);line-height:1.65;min-width:0}
 .tcard em{display:block;font-style:normal;font-size:11.5px;font-weight:700;margin-top:8px;
   color:var(--accent);line-height:1.5;word-break:keep-all}
 .tcard em.mat{color:var(--muted);font-weight:600}
+/* 이름으로 찾았을 때 고르는 목록 — 비슷한 이름이 여럿이라 우리가 고르면 안 된다 */
+.picks{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.pick{text-align:left;font-size:13.5px;font-weight:700;cursor:pointer;
+  border:1px solid var(--line);border-radius:9px;padding:11px 13px;
+  background:var(--card);color:var(--ink);transition:.12s}
+.pick:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+
 /* 지점 줄 — 지점이 둘 이상일 때만 보인다 */
 .branches{display:flex;flex-wrap:wrap;align-items:center;gap:7px;
   margin:0 0 14px;padding:11px 13px;background:var(--surface-2);
@@ -1075,7 +1082,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
         <div class="crumb"><b id="crumb">대시보드</b></div>
         <div class="search">
           <i>🔍</i>
-          <input id="s-url" type="text" placeholder="플레이스 주소 또는 ID 붙여넣기">
+          <input id="s-url" type="text" placeholder="가게 이름을 넣거나, 플레이스 주소를 붙여넣기">
           <button class="btn dark" id="s-collect" type="button">수집</button>
         </div>
       </div>
@@ -1086,7 +1093,7 @@ footer{padding:32px 0 46px;text-align:center;font-size:12.5px;color:var(--muted)
       <div class="hello">
         <div>
           <h1 id="hi-title">안녕하세요 👋</h1>
-          <p id="hi-sub">위 칸에 플레이스 주소를 넣고 <b>수집</b>을 누르면 여기에 숫자가 채워집니다.</p>
+          <p id="hi-sub">위 칸에 <b>가게 이름</b>을 넣고 <b>수집</b>을 누르면 여기에 숫자가 채워집니다. 링크를 찾아오실 필요 없습니다.</p>
         </div>
         <div class="hb">
           <button class="btn ghost sm" id="s-rank" type="button">순위 조회</button>
@@ -8830,10 +8837,43 @@ function needServer(){
   return true;
 }
 
+/* 주소가 아니라 가게 이름을 넣으신 경우. 지점이 넷이면 링크를 넷 다 찾아
+   오시는 게 일이다 - 지도에서 열고, 공유를 누르고, 주소를 복사해서 붙여넣기.
+   순위 조회가 이미 목록을 읽고 있으므로 같은 길로 이름을 찾는다. */
+const looksLikeLink = t => /^\d{5,}$/.test(t) || /naver\.(com|me)/.test(t) || /place\/\d/.test(t);
+
+async function pickPlace(name){
+  const out = $("s-out");
+  if(out) out.innerHTML = `<div class="srv-res"><h5>"${escH(name)}" 로 찾는 중…</h5></div>`;
+  let r;
+  try{ r = await (await fetch(apiUrl(`/api/find?q=${encodeURIComponent(name)}`))).json(); }
+  catch(e){ if(out) out.innerHTML = srvError("가게를 찾지 못했습니다", { error:e.message }); return; }
+  if(!r.ok || !(r.places||[]).length){
+    if(out) out.innerHTML = `<div class="srv-res"><h5>${escH(r.error || "찾은 가게가 없습니다")}</h5>
+      <p class="hint">가게 이름을 조금 다르게 넣어 보시거나, 네이버 지도에서 그 가게를 열고
+        주소를 복사해 붙여넣으세요.</p></div>`;
+    return;
+  }
+  /* 이름이 비슷한 가게가 여럿이다. 우리가 골라 버리면 남의 가게를 수집한다. */
+  if(out) out.innerHTML = `<div class="srv-res"><h5>어느 가게입니까</h5>
+    <p class="hint">누르면 그 가게를 수집합니다. 지점이 여럿이면 하나씩 눌러 담아 두세요.</p>
+    <div class="picks">${r.places.map(x=>
+      `<button type="button" class="pick" data-pick="${escH(x.id)}">${escH(x.name)}</button>`).join("")}</div>
+    </div>`;
+}
+
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-pick]"); if(!b) return;
+  $("s-url").value = b.dataset.pick;
+  $("s-collect").click();
+});
+
 $("s-collect")?.addEventListener("click", async ()=>{
   const url = $("s-url").value.trim();
-  if(!url){ alert("위 검색줄에 플레이스 주소를 넣어 주세요."); $("s-url").focus(); return; }
+  if(!url){ alert("위 검색줄에 가게 이름이나 플레이스 주소를 넣어 주세요."); $("s-url").focus(); return; }
   if(needServer()) return;
+  /* 링크가 아니면 이름으로 보고 찾아 준다 */
+  if(!looksLikeLink(url)) return pickPlace(url);
   const btn = $("s-collect");
   btn.disabled = true; btn.textContent = "수집 중…";
 
